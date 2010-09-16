@@ -119,7 +119,7 @@ namespace ORTS
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
             // Adjust dome position so the bottom edge is not visible
-            Vector3 ViewerXNAPosition = new Vector3(Viewer.Camera.Location.X, Viewer.Camera.Location.Y-100, -Viewer.Camera.Location.Z);
+			Vector3 ViewerXNAPosition = new Vector3(Viewer.Camera.Location.X, Viewer.Camera.Location.Y - 100, -Viewer.Camera.Location.Z);
             Matrix XNASkyWorldLocation = Matrix.CreateTranslation(ViewerXNAPosition);
 
             if (worldLoc == null)
@@ -166,12 +166,12 @@ namespace ORTS
                 if (UserInput.IsKeyDown(Keys.OemPlus))
                 {
                     Viewer.Simulator.ClockTime += 120; // Two-minute (120 second) increments
-                    Viewer.PrecipDrawer.Reset();
+                    if( Viewer.PrecipDrawer != null ) Viewer.PrecipDrawer.Reset();
                 }
                 if (UserInput.IsKeyDown(Keys.OemMinus))
                 {
                     Viewer.Simulator.ClockTime -= 120;
-                    Viewer.PrecipDrawer.Reset();
+                    if( Viewer.PrecipDrawer != null ) Viewer.PrecipDrawer.Reset();
                 }
             }
 
@@ -218,7 +218,7 @@ namespace ORTS
             lunarDirection.Y = MathHelper.Lerp(lunarPosArray[step1].Y, lunarPosArray[step2].Y, diff);
             lunarDirection.Z = MathHelper.Lerp(lunarPosArray[step1].Z, lunarPosArray[step2].Z, diff);
 
-            frame.AddPrimitive(skyMaterial, SkyMesh, ref XNASkyWorldLocation);
+            frame.AddPrimitive(skyMaterial, SkyMesh, RenderPrimitiveGroup.World, ref XNASkyWorldLocation);
         }
     }
     #endregion

@@ -11,44 +11,57 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections;
-using System.Text;
+using System.Diagnostics;
 using System.IO;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Audio;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.GamerServices;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework.Net;
-using Microsoft.Xna.Framework.Storage;
 using MSTS;
 
 namespace ORTS
 {
+	[Flags]
+	public enum ShapeFlags
+	{
+		None = 0,
+		// Shape casts a shadow (scenery objects according to RE setting, and all train objects).
+		ShadowCaster = 1,
+		// Shape needs automatic z-bias to keep it out of trouble.
+		AutoZBias = 2,
+		// NOTE: Use powers of 2 for values!
+	}
+
     public class StaticShape
     {
-        public WorldPosition Location;
-        
-        public SharedShape SharedShape;
-        public Viewer3D Viewer;
+		public readonly Viewer3D Viewer;
+        public readonly WorldPosition Location;
+		public readonly ShapeFlags Flags;
+		public readonly SharedShape SharedShape;
 
         /// <summary>
         /// Construct and initialize the class
         /// This constructor is for objects described by a MSTS shape file
         /// </summary>
-        public StaticShape(Viewer3D viewer, string path, WorldPosition position)
+        public StaticShape(Viewer3D viewer, string path, WorldPosition position, ShapeFlags flags)
         {
             Viewer = viewer;
             Location = position;
+			Flags = flags;
             SharedShape = SharedShapeManager.Get(Viewer, path);
-        }      
+        }
 
-        public virtual void PrepareFrame(RenderFrame frame, float elapsedSeconds )
+        public virtual void PrepareFrame(RenderFrame frame, float elapsedSeconds)
         {
-            SharedShape.PrepareFrame(frame, Location);
+			SharedShape.PrepareFrame(frame, Location, Flags);
         }
     }
+
+	public class StaticTrackShape : StaticShape
+	{
+        public StaticTrackShape(Viewer3D viewer, string path, WorldPosition position)
+			: base(viewer, path, position, ShapeFlags.AutoZBias)
+        {
+        }
+	}
 
     /// <summary>
     /// Has a heirarchy of objects that can be moved by adjusting the XNAMatrices
@@ -61,17 +74,17 @@ namespace ORTS
         /// <summary>
         /// Construct and initialize the class
         /// </summary>
-        public PoseableShape(Viewer3D viewer, string path, WorldPosition initialPosition)
-            : base(viewer, path, initialPosition)
+		public PoseableShape(Viewer3D viewer, string path, WorldPosition initialPosition, ShapeFlags flags)
+			: base(viewer, path, initialPosition, flags)
         {
             XNAMatrices = new Matrix[SharedShape.Matrices.Length];
             for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                 XNAMatrices[iMatrix] = SharedShape.Matrices[iMatrix];
         }
 
-        public override void PrepareFrame(RenderFrame frame, float elapsedSeconds )
+        public override void PrepareFrame(RenderFrame frame, float elapsedSeconds)
         {
-            SharedShape.PrepareFrame( frame, Location, XNAMatrices);
+			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
 
         /// <summary>
@@ -110,9 +123,13 @@ namespace ORTS
                 KeyPosition position2 = controller[iKey2];
                 float frame2 = position2.Frame;
                 if (iKey2 == 0)
-                    frame2 = controller.Count;
+                    frame2 = SharedShape.Animations[0].FrameCount; //changed at V148 by Doug, was controller.Count;
 
-                float amount = (key - frame1) / (frame2 - frame1);
+                float amount;
+                if (Math.Abs(frame2 - frame1) > 0.0001)
+                    amount = (key - frame1) / Math.Abs(frame2 - frame1);
+                else
+                    amount = 0;
 
                 if (position1.GetType() == typeof(slerp_rot))  // rotate the existing matrix
                 {
@@ -161,12 +178,17 @@ namespace ORTS
         /// <summary>
         /// Construct and initialize the class
         /// </summary>
-        public AnimatedShape(Viewer3D viewer, string path, WorldPosition initialPosition)
-            : base(viewer, path, initialPosition)
-        {
-        }
+		public AnimatedShape(Viewer3D viewer, string path, WorldPosition initialPosition, ShapeFlags flags)
+			: base(viewer, path, initialPosition, flags)
+		{
+		}
 
-        public override void PrepareFrame(RenderFrame frame, float elapsedSeconds )
+		public AnimatedShape(Viewer3D viewer, string path, WorldPosition initialPosition)
+			: this(viewer, path, initialPosition, ShapeFlags.None)
+		{
+		}
+
+		public override void PrepareFrame(RenderFrame frame, float elapsedSeconds)
         {
             // if the shape has animations
             if (SharedShape.Animations != null && SharedShape.Animations[0].FrameCount > 1)
@@ -181,7 +203,7 @@ namespace ORTS
                 for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                     AnimateMatrix(iMatrix, AnimationKey);
             }
-            SharedShape.PrepareFrame(frame, Location, XNAMatrices);
+			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
     }
 
@@ -192,12 +214,13 @@ namespace ORTS
 
         protected float AnimationKey = 0.0f;  // tracks position of points as they move left and right
 
-        public SwitchTrackShape(Viewer3D viewer, string path, WorldPosition position, TrJunctionNode trj ): base( viewer, path, position )
-        {
-            TrJunctionNode = trj;
-            TrackShape TS = viewer.Simulator.TSectionDat.TrackShapes.Get(TrJunctionNode.ShapeIndex);
-            MainRoute = TS.MainRoute;
-        }
+		public SwitchTrackShape(Viewer3D viewer, string path, WorldPosition position, TrJunctionNode trj)
+			: base(viewer, path, position, ShapeFlags.AutoZBias)
+		{
+			TrJunctionNode = trj;
+			TrackShape TS = viewer.Simulator.TSectionDat.TrackShapes.Get(TrJunctionNode.ShapeIndex);
+			MainRoute = TS.MainRoute;
+		}
 
         public override void PrepareFrame(RenderFrame frame, float elapsedClockSeconds )
         {
@@ -217,7 +240,7 @@ namespace ORTS
             for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                 AnimateMatrix(iMatrix, AnimationKey);
 
-            SharedShape.PrepareFrame(frame, Location, XNAMatrices);
+			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
     } // class SwitchTrackShape
 
@@ -231,20 +254,21 @@ namespace ORTS
             if (  !SharedShapes.ContainsKey(path))
             {
                 // We haven't set up this shape yet, so go ahead and add it
-                try
-                {
-                    SharedShape shape = new SharedShape(viewer, path);
-                    SharedShapes.Add(path, shape);
-                    return shape;
-                }
-                catch (System.Exception error)
-                {
-                    Console.Error.WriteLine("Error loading shape: " + path + "\r\n   " + error.Message);
-                    if (EmptyShape == null)
-                        EmptyShape = new SharedShape(viewer);
-                    SharedShapes.Add(path, EmptyShape);
-                    return EmptyShape;
-                }
+				try
+				{
+					SharedShape shape = new SharedShape(viewer, path);
+					SharedShapes.Add(path, shape);
+					return shape;
+				}
+				catch (Exception error)
+				{
+					Trace.WriteLine(path);
+					Trace.WriteLine(error);
+					if (EmptyShape == null)
+						EmptyShape = new SharedShape(viewer);
+					SharedShapes.Add(path, EmptyShape);
+					return EmptyShape;
+				}
             }
             else
             {
@@ -261,13 +285,27 @@ namespace ORTS
     {
         public Material Material;
 
-        public SharedShape.VertexBufferSet VertexBufferSet;
+        SharedShape.VertexBufferSet vertexBufferSet;
+		int vertexBufferSetStrideSize;
         public IndexBuffer IndexBuffer;
         public int IndexCount;          // the number of indexes in the index buffer for each primitive
-        public int MinVertex;           // the first vertex index used by this primitive
-        public int NumVertices;         // the number of vertex indexes used by this primitive
+        public int MinVertex = 0;           // the first vertex index used by this primitive
+        public int NumVertices = 0;         // the number of vertex indexes used by this primitive
         public int iHierarchy;          // index into the hiearchy array which provides pose for this primitive
         public int[] Hierarchy;         // the hierarchy from the sub_object
+
+		public SharedShape.VertexBufferSet VertexBufferSet
+		{
+			get
+			{
+				return vertexBufferSet;
+			}
+			set
+			{
+				vertexBufferSet = value;
+				vertexBufferSetStrideSize = vertexBufferSet.Declaration.GetVertexStrideSize(0);
+			}
+		}
 
         /// <summary>
         /// This is called when the game should draw itself.
@@ -275,11 +313,14 @@ namespace ORTS
         /// </summary>
         public override void Draw(GraphicsDevice graphicsDevice)
         {
-            // TODO consider sorting by Vertex set so we can reduce the number of SetSources required.
-            graphicsDevice.VertexDeclaration = VertexBufferSet.Declaration;
-            graphicsDevice.Vertices[0].SetSource(VertexBufferSet.Buffer, 0, VertexBufferSet.Declaration.GetVertexStrideSize(0));
-            graphicsDevice.Indices = IndexBuffer;
-            graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, MinVertex, NumVertices, 0, IndexCount / 3);
+            if (NumVertices > 0)
+            {
+                // TODO consider sorting by Vertex set so we can reduce the number of SetSources required.
+                graphicsDevice.VertexDeclaration = VertexBufferSet.Declaration;
+				graphicsDevice.Vertices[0].SetSource(VertexBufferSet.Buffer, 0, vertexBufferSetStrideSize);
+                graphicsDevice.Indices = IndexBuffer;
+                graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, MinVertex, NumVertices, 0, IndexCount / 3);
+            }
         }
     }
 
@@ -337,11 +378,11 @@ namespace ORTS
                 {
                     globalPath = Viewer.Simulator.BasePath + @"\GLOBAL\SHAPES\" + Path.GetFileName(FilePath);
                     if (!File.Exists(globalPath))
-                        throw new System.Exception("Can't find file " + FilePath);
+                        throw new FileNotFoundException("Shape file '" + FilePath + "' does not exist.", FilePath);
                 }
                 FilePath = globalPath;
             }
-            Console.Write( "S" );
+            Trace.Write("S");
             SFile sFile = new SFile(FilePath);
 
             // Determine the correct texture folder. 
@@ -379,7 +420,7 @@ namespace ORTS
                 LodControls[i] = new LodControl( sFile.shape.lod_controls[i], sFile , this );
 
             if (LodControls.Length == 0)
-                throw new System.Exception("Shape file missing lod_control section");
+				throw new InvalidDataException("Shape file missing lod_control section");
 
             textureFolder = null;  // release it
 
@@ -397,7 +438,7 @@ namespace ORTS
                     DistanceLevels[i] = new DistanceLevel( MSTSlod_control.distance_levels[i], sFile, sharedShape );
 
                 if (DistanceLevels.Length == 0)
-                    throw new System.Exception("Shape file missing distance_level");
+					throw new InvalidDataException("Shape file missing distance_level");
             }
         }
 
@@ -422,7 +463,7 @@ namespace ORTS
                     SubObjects[i] = new SubObject( ref PrimCount, MSTSdistance_level.sub_objects[i], Hierarchy, sFile , sharedShape);
 
                 if (SubObjects.Length == 0)
-                    throw new System.Exception("Shape file missing sub_object");
+					throw new InvalidDataException("Shape file missing sub_object");
             }
         }
 
@@ -584,8 +625,6 @@ namespace ORTS
                         }
                     }
 
-                    shapePrimitive.ZBias = prim_state.ZBias; // -(float)dLevelPrimCount * 0.00001f;  //Auto zbias causes issues
-
                     int iMatrix = vtx_state.imatrix;
                     shapePrimitive.iHierarchy = iMatrix;
 
@@ -609,18 +648,25 @@ namespace ORTS
                     shapePrimitive.VertexBufferSet = vertexBufferSet;
 
                     // Record range of vertices involved in this primitive as MinVertex and NumVertices
-                    // TODO Extract this from the sub_object header
-                    bool vertex_set_found = false;
+                    bool found = false;
                     foreach (vertex_set vertex_set in sub_object.vertex_sets)
                         if (vertex_set.VtxStateIdx == prim_state.ivtx_state)
                         {
                             shapePrimitive.MinVertex = vertex_set.StartVtxIdx;
                             shapePrimitive.NumVertices = vertex_set.VtxCount;
-                            vertex_set_found = true;
+                            found = true;
                             break;
                         }
-                    if (!vertex_set_found)
-                        throw new System.Exception("vertex_set not found for vtx_state = " + prim_state.ivtx_state.ToString());
+
+                    // Note, we have a sample file Af2_4_25033-Lead.S where vertex_sets and vtx_states mismatch
+                    if (!found)
+                    {
+                        Trace.TraceWarning("Shape file missing vertex_set in {0}", sharedShape.FilePath);
+                        // so default to loading all vertices, instead of proper vertex_set
+                        shapePrimitive.MinVertex = 0;
+                        shapePrimitive.NumVertices = sub_object.vertices.Count;  // so we default to them all
+                    }
+
                     ShapePrimitives[iPrim] = shapePrimitive;
                     ++iPrim;
                     ++dLevelPrimCount;
@@ -723,57 +769,60 @@ namespace ORTS
         /// <summary>
         /// This is called by the individual instances of the shape when it should draw itself at the specified location
         /// </summary>
-        public void PrepareFrame( RenderFrame frame, WorldPosition location)
+		public void PrepareFrame(RenderFrame frame, WorldPosition location, ShapeFlags flags)
         {
-            PrepareFrame(frame, location, Matrices);
+            PrepareFrame(frame, location, Matrices, flags);
         }
 
         /// <summary>
         /// This is called by the individual instances of the shape when it should draw itself at the specified location
         /// with individual matrices animated as shown.
         /// </summary>
-        public void PrepareFrame( RenderFrame frame, WorldPosition location, Matrix[] animatedXNAMatrices )
+        public void PrepareFrame(RenderFrame frame, WorldPosition location, Matrix[] animatedXNAMatrices, ShapeFlags flags)
         {
             // Locate relative to the camera
             int dTileX = location.TileX - Viewer.Camera.TileX;
             int dTileZ = location.TileZ - Viewer.Camera.TileZ;
-            Matrix xnaDTileTranslation = Matrix.CreateTranslation(dTileX * 2048, 0, -dTileZ * 2048);  // object is offset from camera this many tiles
-            xnaDTileTranslation = location.XNAMatrix * xnaDTileTranslation;
+			Vector3 mstsLocation = location.Location + new Vector3(dTileX * 2048, 0, dTileZ * 2048);
 
-            Vector3 mstsLocation = new Vector3(xnaDTileTranslation.Translation.X, xnaDTileTranslation.Translation.Y, -xnaDTileTranslation.Translation.Z);
+			foreach (var lodControl in LodControls)
+			{
+				// Start with the furthest away distance, then look for a nearer one in range of the camera.
+				var chosenDistanceLevel = lodControl.DistanceLevels[lodControl.DistanceLevels.Length - 1];
+				foreach (var distanceLevel in lodControl.DistanceLevels)
+				{
+					if (Viewer.Camera.InRange(mstsLocation, distanceLevel.ViewSphereRadius + distanceLevel.ViewingDistance))
+					{
+						chosenDistanceLevel = distanceLevel;
+						break;
+					}
+				}
 
-            foreach (LodControl lodControl in LodControls)
-            {
-                if (Viewer.Camera.InFOV(mstsLocation, lodControl.DistanceLevels[0].ViewSphereRadius))
-                {
-                    foreach (DistanceLevel distanceLevel in lodControl.DistanceLevels)
-                    {
-                        if (Viewer.Camera.InRange(mstsLocation, distanceLevel.ViewingDistance + distanceLevel.ViewSphereRadius))
-                        {
-                            foreach (SubObject subObject in distanceLevel.SubObjects)
-                            {
-                                // for each primitive
-                                for (int iPrim = 0; iPrim < subObject.ShapePrimitives.Length; ++iPrim)
-                                {
-                                    ShapePrimitive shapePrimitive = subObject.ShapePrimitives[iPrim];
-                                    Matrix xnaMatrix = Matrix.Identity;
-                                    int iNode = shapePrimitive.iHierarchy;
-                                    while (iNode != -1)
-                                    {
-                                        xnaMatrix *= animatedXNAMatrices[iNode];         // TODO, can we reduce memory allocations during this matrix math
-                                        iNode = shapePrimitive.Hierarchy[iNode];
-                                    }
-                                    xnaMatrix *= xnaDTileTranslation;
+				Matrix xnaDTileTranslation = Matrix.CreateTranslation(dTileX * 2048, 0, -dTileZ * 2048);  // object is offset from camera this many tiles
+				xnaDTileTranslation = location.XNAMatrix * xnaDTileTranslation;
 
-                                    frame.AddPrimitive(shapePrimitive.Material, shapePrimitive, ref xnaMatrix );
-                                } // for each primitive
-                            }
-                            break; // only draw one distance level.
-                        }
-                    }
-                }
-            }
-        }// PrepareFrame()
+				foreach (var subObject in chosenDistanceLevel.SubObjects)
+				{
+					foreach (var shapePrimitive in subObject.ShapePrimitives)
+					{
+						Matrix xnaMatrix = Matrix.Identity;
+						int iNode = shapePrimitive.iHierarchy;
+						while (iNode != -1)
+						{
+							if (shapePrimitive.Hierarchy[iNode] != -1) // MSTS ignores root matrix,  ('floating objects problem' )
+								xnaMatrix *= animatedXNAMatrices[iNode];         // TODO, can we reduce memory allocations during this matrix math
+							iNode = shapePrimitive.Hierarchy[iNode];
+						}
+						xnaMatrix *= xnaDTileTranslation;
+
+						// TODO make shadows depend on shape overrides
+
+						frame.AddAutoPrimitive(mstsLocation, chosenDistanceLevel.ViewSphereRadius, chosenDistanceLevel.ViewingDistance, 
+                            shapePrimitive.Material, shapePrimitive, RenderPrimitiveGroup.World, ref xnaMatrix, flags);
+					}
+				}
+			}
+		}// PrepareFrame()
 
         public Matrix GetMatrixProduct(int iNode)
         {

@@ -35,8 +35,13 @@ namespace ORTS
     /// </summary>
     public class MSTSDieselLocomotive : MSTSLocomotive
     {
-        public MSTSDieselLocomotive(string wagFile)
-            : base(wagFile)
+        float IdleRPM = 0;
+        float MaxRPM = 0;
+        float MaxRPMChangeRate = 0;
+        float PercentChangePerSec = .2f;
+
+        public MSTSDieselLocomotive(string wagFile, TrainCar previousCar)
+            : base(wagFile, previousCar)
         {
         }
 
@@ -47,10 +52,18 @@ namespace ORTS
         {
             switch (lowercasetoken)
             {
+                case "engine(dieselengineidlerpm": IdleRPM = ParseW(f.ReadStringBlock(), f); break;
+                case "engine(dieselenginemaxrpm": MaxRPM = ParseN(f.ReadStringBlock(), f); break;
+                case "engine(dieselenginemaxrpmchangerate": MaxRPMChangeRate = ParseN(f.ReadStringBlock(), f); break;
                 // for example
                 //case "engine(sound": CabSoundFileName = f.ReadStringBlock(); break;
                 //case "engine(cabview": CVFFileName = f.ReadStringBlock(); break;
                 default: base.Parse(lowercasetoken, f); break;
+            }
+
+            if (IdleRPM != 0 && MaxRPM != 0 && MaxRPMChangeRate != 0)
+            {
+                PercentChangePerSec = MaxRPMChangeRate / (MaxRPM - IdleRPM);
             }
         }
 
@@ -110,6 +123,27 @@ namespace ORTS
         public override void Update(float elapsedClockSeconds)
         {
             base.Update(elapsedClockSeconds );
+
+            // Refined Variable2 setting to graduate
+            if (Variable2 != Variable1)
+            {
+                // Calculated value
+                float addition = PercentChangePerSec;
+                bool neg = false;
+
+                if (Variable1 < Variable2)
+                {
+                    addition *= -1;
+                    neg = true;
+                }
+
+                addition *= elapsedClockSeconds;
+
+                Variable2 += addition;
+
+                if ((neg && Variable2 < Variable1) || (!neg && Variable2 > Variable1))
+                    Variable2 = Variable1;
+            }
         }
 
         /// <summary>

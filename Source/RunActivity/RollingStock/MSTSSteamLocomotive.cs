@@ -16,13 +16,10 @@
 /// is prohibited without specific written permission from admin@openrails.org.
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using MSTS;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework;
+using System.Diagnostics;
 using System.IO;
+using Microsoft.Xna.Framework.Input;
+using MSTS;
 
 namespace ORTS
 {
@@ -35,6 +32,10 @@ namespace ORTS
     /// </summary>
     public class MSTSSteamLocomotive: MSTSLocomotive
     {
+        //Configure a default cutoff controller
+        //IF none is specified, this will be used, otherwise those values will be overwritten
+        MSTSNotchController CutoffController = new MSTSNotchController(-0.9f, 0.9f, 0.1f);
+
         // state variables
         float SteamUsageLBpS;       // steam used in cylinders
         float BoilerHeatBTU;        // total heat in water and steam in boiler
@@ -66,11 +67,28 @@ namespace ORTS
         Interpolator BurnRate;      // fuel burn rate given steam usage
         Interpolator EvaporationRate;   // steam generation rate given fuel burn rate
 
-        public MSTSSteamLocomotive(string wagFile)
-            : base(wagFile)
+        public MSTSSteamLocomotive(string wagFile, TrainCar previousCar)
+            : base(wagFile, previousCar)
         {
             //Console.WriteLine(" {0} {1} {2} {3}", NumCylinders, CylinderDiameterM, CylinderStrokeM, DriverWheelRadiusM);
             //Console.WriteLine(" {0} {1} {2} {3} {4}", MaxBoilerPressurePSI,MaxBoilerOutputLBpH,ExhaustLimitLBpH,BasicSteamUsageLBpS,BoilerVolumeFT3);
+            if (NumCylinders < 0 && ZeroError(NumCylinders, "NumCylinders", wagFile))
+                NumCylinders = 0;
+            if (ZeroError(CylinderDiameterM, "CylinderDiammeter", wagFile))
+                CylinderDiameterM= 1;
+            if (ZeroError(CylinderStrokeM, "CylinderStroke", wagFile))
+                CylinderStrokeM= 1;
+            if (ZeroError(DriverWheelRadiusM, "WheelRadius", wagFile))
+                DriverWheelRadiusM= 1;
+            if (ZeroError(MaxBoilerPressurePSI, "MaxBoilerPressure", wagFile))
+                MaxBoilerPressurePSI= 1;
+            if (ZeroError(MaxBoilerOutputLBpH, "MaxBoilerOutput", wagFile))
+                MaxBoilerOutputLBpH= 1;
+            if (ZeroError(ExhaustLimitLBpH, "ExhaustLimit", wagFile))
+                ExhaustLimitLBpH = MaxBoilerOutputLBpH;
+            if (ZeroError(BoilerVolumeFT3, "BoilerVolume", wagFile))
+                BoilerVolumeFT3 = 1;
+
             SteamUsageFactor = 2 * NumCylinders * 3.281f * CylinderDiameterM / 2 * 3.281f * CylinderDiameterM / 2 *
                 3.281f * CylinderStrokeM / (2 * DriverWheelRadiusM);
             SteamDensity = SteamTable.SteamDensityInterpolator();
@@ -130,7 +148,8 @@ namespace ORTS
                 CylinderPressureDrop[.5f] = 2;
                 CylinderPressureDrop[1] = 10;
                 CylinderPressureDrop[2] = 20;
-                CylinderPressureDrop.ScaleX(ExhaustLimitLBpH / 3600);
+                CylinderPressureDrop.ScaleX(ExhaustLimitLBpH);
+                CylinderPressureDrop.ScaleX(1 / 3600f);
             }
             if (BackPressure == null)
             {   // this table is not based on measurements
@@ -138,16 +157,12 @@ namespace ORTS
                 BackPressure[0] = 0;
                 BackPressure[1] = 6;
                 BackPressure[1.2f] = 30;
-                BackPressure.ScaleX(ExhaustLimitLBpH / 3600);
+                BackPressure.ScaleX(ExhaustLimitLBpH);
+                BackPressure.ScaleX(1 / 3600f);
             }
-            if (BurnRate == null)
-            {
-                BurnRate = new Interpolator(2);
-                BurnRate[0] = 2;
-                BurnRate[775] = 180;    // inverse of maximum EvaporationRate
-                BurnRate.ScaleX(MaxBoilerOutputLBpH / 775 / 3600);
-                BurnRate.ScaleY(MaxBoilerOutputLBpH / 775 / 3600);
-            }
+            float maxevap = 775;
+            float maxburn = 180;
+            float grateArea = MaxBoilerOutputLBpH / maxevap;
             if (EvaporationRate == null)
             {   // this table is from page 112 of The Steam Locomotive by R. P. Johnson (the 13000 BTU line) 
                 EvaporationRate = new Interpolator(11);
@@ -162,9 +177,24 @@ namespace ORTS
                 EvaporationRate[160] = 770;
                 EvaporationRate[180] = 775;
                 EvaporationRate[200] = 760;
-                EvaporationRate.ScaleX(MaxBoilerOutputLBpH / 775 / 3600);
-                EvaporationRate.ScaleY(MaxBoilerOutputLBpH / 775 / 3600);
+                EvaporationRate.ScaleX(grateArea / 3600);
+                EvaporationRate.ScaleY(grateArea / 3600);
             }
+            if (BurnRate == null)
+            {
+                BurnRate = new Interpolator(2);
+                BurnRate[0] = 2;
+                BurnRate[maxevap] = maxburn;    // inverse of maximum EvaporationRate
+                BurnRate.ScaleX(grateArea / 3600);
+                BurnRate.ScaleY(grateArea / 3600);
+            }
+        }
+        public bool ZeroError(float v, string name, string wagFile)
+        {
+            if (v > 0)
+                return false;
+            Trace.TraceError("Error in " + wagFile + "\r\n   Steam engine value "+name+" must be defined and greater than zero.");
+            return true;
         }
 
         /// <summary>
@@ -182,6 +212,13 @@ namespace ORTS
                 case "engine(maxboileroutput": MaxBoilerOutputLBpH = ParseLBpH(f.ReadStringBlock(),f); break;
                 case "engine(exhaustlimit": ExhaustLimitLBpH = ParseLBpH(f.ReadStringBlock(),f); break;
                 case "engine(basicsteamusage": BasicSteamUsageLBpS = ParseLBpH(f.ReadStringBlock(),f)/3600; break;
+                case "engine(enginecontrollers(cutoff": CutoffController.Parse(f); break;
+                case "engine(forcefactor1": ForceFactor1 = new Interpolator(f); break;
+                case "engine(forcefactor2": ForceFactor2 = new Interpolator(f); break;
+                case "engine(cylinderpressuredrop": CylinderPressureDrop = new Interpolator(f); break;
+                case "engine(backpressure": BackPressure = new Interpolator(f); break;
+                case "engine(burnrate": BurnRate = new Interpolator(f); break;
+                case "engine(evaporationrate": EvaporationRate = new Interpolator(f); break;
                 default: base.Parse(lowercasetoken, f); break;
             }
         }
@@ -222,6 +259,7 @@ namespace ORTS
             Heat2Pressure = new Interpolator(locoCopy.Heat2Pressure);
             BurnRate = new Interpolator(locoCopy.BurnRate);
             EvaporationRate = new Interpolator(locoCopy.EvaporationRate);
+            CutoffController = (MSTSNotchController)locoCopy.CutoffController.Clone();
 
             base.InitializeFromCopy(copy);  // each derived level initializes its own variables
         }
@@ -259,6 +297,7 @@ namespace ORTS
             Heat2Pressure.Save(outf);
             BurnRate.Save(outf);
             EvaporationRate.Save(outf);
+            ControllerFactory.Save(CutoffController, outf);            
             base.Save(outf);
         }
 
@@ -295,6 +334,7 @@ namespace ORTS
             Heat2Pressure = new Interpolator(inf);
             BurnRate = new Interpolator(inf);
             EvaporationRate = new Interpolator(inf);
+            CutoffController = (MSTSNotchController)ControllerFactory.Restore(inf);
             base.Restore(inf);
         }
 
@@ -315,7 +355,19 @@ namespace ORTS
         /// </summary>
         public override void Update(float elapsedClockSeconds)
         {
+            if (this.IsLeadLocomotive())
+            {
+                Train.MUReverserPercent = CutoffController.Update(elapsedClockSeconds) * 100.0f;
+                if (Train.MUReverserPercent >= 0)
+                    Train.MUDirection = Direction.Forward;
+                else
+                    Train.MUDirection = Direction.Reverse;
+            }
+            else
+                CutoffController.Update(elapsedClockSeconds);
+
             base.Update(elapsedClockSeconds);
+
             Variable1 = Math.Abs(SpeedMpS);   // Steam loco's seem to need this.
             Variable2 = 50;   // not sure what this ones for ie in an SMS file
 
@@ -340,10 +392,18 @@ namespace ORTS
             float backPressure = BackPressure[SteamUsageLBpS];
             MotiveForceN = (Direction == Direction.Forward ? 1 : -1) *
                 (backPressure * ForceFactor1[cutoff] + cylinderPressure * ForceFactor2[cutoff]);
+            if (float.IsNaN(MotiveForceN))
+                MotiveForceN = 0;
+            else if (MotiveForceN > MaxForceN)
+                MotiveForceN = MaxForceN;
+            else if (MotiveForceN < -MaxForceN)
+                MotiveForceN = -MaxForceN;
             if (speed == 0 && cutoff < .5f)
                 MotiveForceN = 0;   // valves assumed to be closed
             // usage calculated as moving average to minimize chance of oscillation
             SteamUsageLBpS = .6f * SteamUsageLBpS + .4f * speed * SteamUsageFactor * (cutoff + .07f) * (CylinderSteamDensity[cylinderPressure] - CylinderSteamDensity[backPressure]);
+            if (SteamUsageLBpS < BasicSteamUsageLBpS)
+                SteamUsageLBpS = BasicSteamUsageLBpS; // automatic blower
 
             float burnRate = BurnRate[SteamUsageLBpS];
             Evaporation = EvaporationRate[burnRate];
@@ -371,16 +431,27 @@ namespace ORTS
                 BoilerPressurePSI.ToString("F0"),evap.ToString("F0"),usage.ToString("F0"));
                 //BoilerHeatBTU,BoilerMassLB,WaterFraction.ToString("F2"));
         }
-        public void ChangeReverser(float percent)
+
+        public void StartReverseIncrease()
         {
-            Train.MUReverserPercent += percent;
-            if (Train.MUReverserPercent >= 0)
-                Train.MUDirection = Direction.Forward;
-            else
-                Train.MUDirection = Direction.Reverse;
-            if (Train.MUReverserPercent < -90) Train.MUReverserPercent = -90;
-            if (Train.MUReverserPercent > 90) Train.MUReverserPercent = 90;
+            CutoffController.StartIncrease();
         }
+
+        public void StopReverseIncrease()
+        {
+            CutoffController.StopIncrease();
+        }
+
+        public void StartReverseDecrease()
+        {
+            CutoffController.StartDecrease();
+        }
+
+        public void StopReverseDecrease()
+        {
+            CutoffController.StopDecrease();
+        }
+
 
         /// <summary>
         /// Used when someone want to notify us of an event
@@ -420,11 +491,16 @@ namespace ORTS
         /// </summary>
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
-            // for example
-            // if (UserInput.IsPressed(Keys.W)) Locomotive.SetDirection(Direction.Forward);
-            if (UserInput.IsPressed(Keys.W)) SteamLocomotive.ChangeReverser(10);
-            else if (UserInput.IsPressed(Keys.S)) SteamLocomotive.ChangeReverser(-10);
-            else base.HandleUserInput(elapsedTime);
+            if (UserInput.IsPressed(Keys.W))
+                SteamLocomotive.StartReverseIncrease();
+            else if (UserInput.IsReleased(Keys.W))
+                SteamLocomotive.StopReverseIncrease();
+            else if (UserInput.IsPressed(Keys.S))
+                SteamLocomotive.StartReverseDecrease();
+            else if (UserInput.IsReleased(Keys.S))
+                SteamLocomotive.StopReverseDecrease();
+            else
+                base.HandleUserInput(elapsedTime);
         }
 
         /// <summary>

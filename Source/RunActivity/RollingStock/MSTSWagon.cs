@@ -16,18 +16,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Audio;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.GamerServices;
-using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework.Media;
-using Microsoft.Xna.Framework.Net;
-using Microsoft.Xna.Framework.Storage;
+using System.Diagnostics;
 using System.IO;
+using Microsoft.Xna.Framework;
 using MSTS;
 
 namespace ORTS
@@ -51,6 +42,7 @@ namespace ORTS
         // wag file data
         public string MainShapeFileName = null;
         public string FreightShapeFileName = null;
+        public float FreightAnimHeight = 0;
         public string InteriorShapeFileName = null; // passenger view shape file name
         public string MainSoundFileName = null;
         public string InteriorSoundFileName = null;
@@ -60,10 +52,12 @@ namespace ORTS
         public float DavisAN = 0;       // davis equation constant
         public float DavisBNSpM = 0;    // davis equation constant for speed
         public float DavisCNSSpMM = 0;  // davis equation constant for speed squared
+        public List<MSTSCoupling> Couplers = new List<MSTSCoupling>();
 
         public MSTSBrakeSystem MSTSBrakeSystem { get { return (MSTSBrakeSystem)base.BrakeSystem; } }
 
-        public MSTSWagon(string wagFilePath): base( wagFilePath )
+        public MSTSWagon(string wagFilePath, TrainCar previousCar)
+            : base(wagFilePath, previousCar)
         {
             if (CarManager.LoadedCars.ContainsKey(wagFilePath))
             {
@@ -82,6 +76,11 @@ namespace ORTS
         /// </summary>
         public virtual void InitializeFromWagFile(string wagFilePath)
         {
+            string dir = Path.GetDirectoryName(wagFilePath);
+            string file = Path.GetFileName(wagFilePath);
+            string orFile = dir + @"\openrails\" + file;
+            if (File.Exists(orFile))
+                wagFilePath = orFile;
             STFReader f = new STFReader(wagFilePath);
             while (!f.EOF())
             {
@@ -108,7 +107,7 @@ namespace ORTS
             switch (lowercasetoken)
             {
                 case "wagon(wagonshape": MainShapeFileName = f.ReadStringBlock(); break;
-                case "wagon(freightanim": f.VerifyStartOfBlock(); FreightShapeFileName = f.ReadToken(); f.SkipRestOfBlock(); break; // TODO complete parse
+                case "wagon(freightanim": ParseFreightAnim(f); break;
                 case "wagon(size": f.VerifyStartOfBlock(); f.ReadFloat(); f.ReadFloat(); Length = f.ReadFloat(); f.VerifyEndOfBlock(); break;
                 case "wagon(mass": MassKG = f.ReadFloatBlock(); break;
                 case "wagon(inside(sound": InteriorSoundFileName = f.ReadStringBlock(); break;
@@ -122,15 +121,32 @@ namespace ORTS
                 case "wagon(sound": MainSoundFileName = f.ReadStringBlock(); break;
                 case "wagon(friction": ParseFriction(f); break;
                 case "wagon(brakesystemtype":
-                    brakeSystemType = f.ReadStringBlock();
-                    // TODO parse brakeSystemType to set up the correct type
-                    BrakeSystem = new AirSinglePipe(this);
+                    brakeSystemType = f.ReadStringBlock().ToLower();
+                    BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
+                    break;
+                case "wagon(coupling": Couplers.Add(new MSTSCoupling()); break;
+                case "wagon(coupling(couplinghasrigidconnection": Couplers[Couplers.Count - 1].Rigid = f.ReadBoolBlock(); break;
+                case "wagon(coupling(spring(stiffness":
+                    f.VerifyStartOfBlock();
+                    Couplers[Couplers.Count - 1].SetStiffness(f.ReadFloat(), f.ReadFloat());
+                    f.VerifyEndOfBlock();
+                    break;
+                case "wagon(coupling(spring(r0":
+                    f.VerifyStartOfBlock();
+                    Couplers[Couplers.Count - 1].SetR0(f.ReadFloat(), f.ReadFloat());
+                    f.VerifyEndOfBlock();
                     break;
                 default:
                     if (MSTSBrakeSystem != null)
                         MSTSBrakeSystem.Parse(lowercasetoken, f);
                     break;
-//                case "wagon(lights": try {Lights = new Lights(f, this);} catch {Lights = null;} break;
+                case "wagon(lights": 
+                    if (Program.TrainLightsEnabled) 
+                    { 
+                        try { Lights = new Lights(f, this); } 
+                        catch { Lights = null; } 
+                    } 
+                    break;
             }
         }
 
@@ -145,6 +161,7 @@ namespace ORTS
         {
             MainShapeFileName = copy.MainShapeFileName;
             FreightShapeFileName = copy.FreightShapeFileName;
+            FreightAnimHeight = copy.FreightAnimHeight;
             InteriorShapeFileName = copy.InteriorShapeFileName;
             MainSoundFileName = copy.MainSoundFileName;
             InteriorSoundFileName = copy.InteriorSoundFileName;
@@ -156,16 +173,26 @@ namespace ORTS
             DavisCNSSpMM = copy.DavisCNSSpMM;
             Length = copy.Length;
             MassKG = copy.MassKG;
-            //Lights = copy.Lights;
+            Lights = copy.Lights;
             foreach (ViewPoint passengerViewPoint in copy.PassengerViewpoints)
                 PassengerViewpoints.Add(passengerViewPoint);
             foreach (ViewPoint frontCabViewPoint in copy.FrontCabViewpoints)
                 FrontCabViewpoints.Add(frontCabViewPoint);
             foreach (ViewPoint rearCabViewPoint in copy.RearCabViewpoints)
                 RearCabViewpoints.Add(rearCabViewPoint);
+            foreach (MSTSCoupling coupler in copy.Couplers)
+                Couplers.Add(coupler);
 
-            BrakeSystem = new AirSinglePipe(this);  // TODO - select different types
+            brakeSystemType = copy.brakeSystemType;
+            BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
             MSTSBrakeSystem.InitializeFromCopy(copy.BrakeSystem);
+        }
+        public void ParseFreightAnim(STFReader f)
+        {
+            f.VerifyStartOfBlock();
+            FreightShapeFileName = f.ReadToken();
+            FreightAnimHeight = f.ReadFloat() - f.ReadFloat();
+            f.VerifyEndOfBlock();
         }
         public void ParseFriction(STFReader f)
         {
@@ -262,7 +289,7 @@ namespace ORTS
             catch (System.Exception)
             {
                 string msg = String.Format("invalid force value or units {0}, newtons expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -294,7 +321,7 @@ namespace ORTS
             catch (System.Exception)
             {
                 string msg = String.Format("invalid power value or units {0}, watts expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -308,6 +335,17 @@ namespace ORTS
                 token = token.Substring(0, i);
                 scale = .44704f;
             }
+            else
+            {
+                i = token.IndexOf("kph");
+                if (i == -1) i = token.IndexOf("kmh");
+                if (i == -1) i = token.IndexOf("km/h");
+                if (i != -1)
+                {
+                    token = token.Substring(0, i);
+                    scale = .27778f;
+                }
+            }
             try
             {
                 return scale * float.Parse(token, new System.Globalization.CultureInfo("en-US"));
@@ -315,7 +353,7 @@ namespace ORTS
             catch (System.Exception)
             {
                 string msg = String.Format("invalid speed value or units {0}, meters per second expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -336,7 +374,7 @@ namespace ORTS
             catch (System.Exception)
             {
                 string msg = String.Format("invalid volume value or units {0}, cubic feet expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -355,7 +393,7 @@ namespace ORTS
             catch (System.Exception)
             {
                 string msg = String.Format("invalid pressure value or units {0}, pounds per square inch expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -374,7 +412,7 @@ namespace ORTS
             catch (System.Exception)
             {
                 string msg = String.Format("invalid steaming rate value or units {0}, pounds per hour expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -387,14 +425,19 @@ namespace ORTS
             {
                 token = token.Substring(0, i);
             }
+            i = token.IndexOf("/m/s");
+            if (i != -1)
+            {
+                token = token.Substring(0, i);
+            }
             try
             {
-                return scale * float.Parse(token);
+                return scale * float.Parse(token, new System.Globalization.CultureInfo("en-US"));
             }
             catch (System.Exception)
             {
                 string msg= String.Format("invalid friction value or units {0}, Newtons per meters per second expected", token);
-                STFError.Report(f, msg);
+                STFException.ReportError(f, msg);
                 return ParseFloat(token);
             }
         }
@@ -427,6 +470,9 @@ namespace ORTS
             outf.Write(DavisAN);
             outf.Write(DavisBNSpM);
             outf.Write(DavisCNSSpMM);
+            outf.Write(Couplers.Count);
+            foreach (MSTSCoupling coupler in Couplers)
+                coupler.Save(outf);
             base.Save(outf);
         }
 
@@ -443,6 +489,12 @@ namespace ORTS
             DavisAN = inf.ReadSingle();
             DavisBNSpM = inf.ReadSingle();
             DavisCNSSpMM = inf.ReadSingle();
+            int n = inf.ReadInt32();
+            for (int i = 0; i < n; i++)
+            {
+                Couplers.Add(new MSTSCoupling());
+                Couplers[i].Restore(inf);
+            }
             base.Restore(inf);
         }
 
@@ -458,10 +510,11 @@ namespace ORTS
         {
             base.Update(elapsedClockSeconds);
 
-            if (SpeedMpS < 0.1)
+            float s = Math.Abs(SpeedMpS);
+            if (s < 0.1)
                 FrictionForceN = Friction0N;
             else
-                FrictionForceN = DavisAN + SpeedMpS * (DavisBNSpM + SpeedMpS * DavisCNSSpMM);
+                FrictionForceN = DavisAN + s * (DavisBNSpM + s * DavisCNSSpMM);
 
             MSTSBrakeSystem.Update(elapsedClockSeconds);
         }
@@ -478,6 +531,103 @@ namespace ORTS
 
         // sound sources or and viewers can register them selves to get direct notification of an event
         public List<CarEventHandler> EventHandlers = new List<CarEventHandler>();
+
+        public MSTSCoupling Coupler
+        {
+            get
+            {
+                if (Couplers.Count == 0) return null;
+                if (Flipped && Couplers.Count > 1) return Couplers[1];
+                return Couplers[0];
+            }
+        }
+        public override float GetCouplerZeroLengthM()
+        {
+            return Coupler != null ? Coupler.R0 : base.GetCouplerZeroLengthM();
+        }
+
+        public override float GetCouplerStiffnessNpM()
+        {
+            return Coupler != null && Coupler.R0 == 0 ? 7 * (Coupler.Stiffness1NpM + Coupler.Stiffness2NpM) : base.GetCouplerStiffnessNpM();
+        }
+
+        public override float GetMaximumCouplerSlack1M()
+        {
+            if (Coupler == null)
+                return base.GetMaximumCouplerSlack1M();
+            return Coupler.Rigid ? 0.0001f : Coupler.R0Diff;
+        }
+
+        public override float GetMaximumCouplerSlack2M()
+        {
+            if (Coupler == null)
+                return base.GetMaximumCouplerSlack2M();
+            return Coupler.Rigid ? 0.0002f : base.GetMaximumCouplerSlack2M();
+        }
+    }
+
+    public class MSTSCoupling
+    {
+        public bool Rigid = false;
+        public float R0 = 0;
+        public float R0Diff = .012f;
+        public float Stiffness1NpM = 1e7f;
+        public float Stiffness2NpM = 2e7f;
+        public MSTSCoupling()
+        {
+        }
+        public MSTSCoupling(MSTSCoupling copy)
+        {
+            Rigid = copy.Rigid;
+            R0 = copy.R0;
+            R0Diff = copy.R0Diff;
+        }
+        public void SetR0(float a, float b)
+        {
+            R0 = a;
+            if (a == 0)
+                R0Diff = b / 2 * Stiffness2NpM / (Stiffness1NpM + Stiffness2NpM);
+            else
+                R0Diff = .012f;
+            if (R0Diff < .001)
+                R0Diff = .001f;
+            else if (R0Diff > .1)
+                R0Diff = .1f;
+            //Console.WriteLine("setR0 {0} {1} {2} {3} {4} {5}", a, b, R0, R0Diff, Stiffness1NpM, Stiffness2NpM);
+        }
+        public void SetStiffness(float a, float b)
+        {
+            if (a + b < 0)
+                return;
+            Stiffness1NpM = a;
+            Stiffness2NpM = b;
+        }
+
+        /// <summary>
+        /// We are saving the game.  Save anything that we'll need to restore the 
+        /// status later.
+        /// </summary>
+        public void Save(BinaryWriter outf)
+        {
+            outf.Write(Rigid);
+            outf.Write(R0);
+            outf.Write(R0Diff);
+            outf.Write(Stiffness1NpM);
+            outf.Write(Stiffness2NpM);
+        }
+
+        /// <summary>
+        /// We are restoring a saved game.  The TrainCar class has already
+        /// been initialized.   Restore the game state.
+        /// </summary>
+        public void Restore(BinaryReader inf)
+        {
+            Rigid = inf.ReadBoolean();
+            R0 = inf.ReadSingle();
+            R0Diff = inf.ReadSingle();
+            Stiffness1NpM = inf.ReadSingle();
+            Stiffness2NpM = inf.ReadSingle();
+        }
     }
 
     ///////////////////////////////////////////////////
@@ -509,10 +659,11 @@ namespace ORTS
             string wagonFolderSlash = Path.GetDirectoryName(car.WagFilePath) + @"\";
             string shapePath = wagonFolderSlash + car.MainShapeFileName;
 
-            TrainCarShape = new PoseableShape(viewer, shapePath, car.WorldPosition);
+            TrainCarShape = new PoseableShape(viewer, shapePath, car.WorldPosition, ShapeFlags.ShadowCaster);
+
             if (car.FreightShapeFileName != null)
             {
-                FreightShape = new AnimatedShape(viewer, wagonFolderSlash + car.FreightShapeFileName, car.WorldPosition);
+                FreightShape = new AnimatedShape(viewer, wagonFolderSlash + car.FreightShapeFileName, car.WorldPosition, ShapeFlags.ShadowCaster);
             }
             if (car.InteriorShapeFileName != null)
             {
@@ -576,7 +727,6 @@ namespace ORTS
             }
 
             car.SetupWheels();
-
         }
 
         public override void HandleUserInput(ElapsedTime elapsedTime)
@@ -591,22 +741,23 @@ namespace ORTS
         /// </summary>
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-            UpdateSound(elapsedTime);
+			if (Viewer.SettingsInt[(int)IntSettings.SoundDetailLevel] > 0)
+				UpdateSound(elapsedTime);
             UpdateAnimation(frame, elapsedTime);
         }
 
 
         public void UpdateSound(ElapsedTime elapsedTime)
         {
-            try
-            {
-                foreach (SoundSource soundSource in SoundSources)
-                    soundSource.Update(elapsedTime);
-            }
-            catch( System.Exception error )
-            {
-                Console.Error.WriteLine("Updating Sound: " + error.Message);
-            }
+			try
+			{
+				foreach (SoundSource soundSource in SoundSources)
+					soundSource.Update(elapsedTime);
+			}
+			catch (Exception error)
+			{
+				Trace.WriteLine(error);
+			}
         }
 
 
@@ -618,7 +769,8 @@ namespace ORTS
             if (RunningGearPartIndexes.Count > 0 && MSTSWagon.DriverWheelRadiusM > 0.001 )  // skip this if there is no running gear and only engines can have running gear
             {
                 float driverWheelCircumferenceM = 3.14159f * 2.0f * MSTSWagon.DriverWheelRadiusM;
-                float framesAdvanced = (float)TrainCarShape.SharedShape.Animations[0].FrameCount * distanceTravelledM / driverWheelCircumferenceM;
+                //float framesAdvanced = (float)TrainCarShape.SharedShape.Animations[0].FrameCount * distanceTravelledM / driverWheelCircumferenceM;
+                float framesAdvanced = (float)TrainCarShape.SharedShape.Animations[0].FrameRate * 8/30f * distanceTravelledM / driverWheelCircumferenceM;
                 DriverRotationKey += framesAdvanced;  // ie, with 8 frames of animation, the key will advance from 0 to 8 at the specified speed.
                 while (DriverRotationKey >= TrainCarShape.SharedShape.Animations[0].FrameCount) DriverRotationKey -= TrainCarShape.SharedShape.Animations[0].FrameCount;
                 while (DriverRotationKey < -0.00001) DriverRotationKey += TrainCarShape.SharedShape.Animations[0].FrameCount;
@@ -640,9 +792,10 @@ namespace ORTS
             }
 
             // truck angle animation
-            for (int i = 1; i < Car.Parts.Count; i++)
+            foreach (var p in Car.Parts)
             {
-                TrainCarPart p = Car.Parts[i];
+                if (p.iMatrix <= 0)
+                    continue;
                 Matrix m = Matrix.Identity;
                 m.Translation= TrainCarShape.SharedShape.Matrices[p.iMatrix].Translation;
                 m.M11 = p.Cos;
@@ -653,12 +806,15 @@ namespace ORTS
             }
 
             if (FreightShape != null)
+            {
+                FreightShape.XNAMatrices[0].M42 = MSTSWagon.FreightAnimHeight;
                 FreightShape.PrepareFrame(frame, elapsedTime.ClockSeconds);
+            }
 
             // Control visibility of passenger cabin when inside it
-            if (Viewer.Camera.AttachedToCar == this.MSTSWagon
+            if (Viewer.Camera.AttachedCar == this.MSTSWagon
                  && //( Viewer.ViewPoint == Viewer.ViewPoints.Cab ||  // TODO, restore when we complete cab views - 
-                     Viewer.Camera.ViewPoint == Camera.ViewPoints.Passenger)
+                     Viewer.Camera.Style == Camera.Styles.Passenger)
             {
                 // We are in the passenger cabin
                 if (InteriorShape != null)
@@ -668,6 +824,11 @@ namespace ORTS
             }
             else
             {
+                // Skip drawing if CAB view - draw 2D view instead - by GeorgeS
+                if (Viewer.Camera.AttachedCar == this.MSTSWagon &&
+                    Viewer.Camera.Style == Camera.Styles.Cab)
+                    return;
+                
                 // We are outside the passenger cabin
                 TrainCarShape.PrepareFrame(frame, elapsedTime.ClockSeconds);
             }
@@ -712,7 +873,7 @@ namespace ORTS
                 smsFilePath = Viewer.Simulator.BasePath + @"\sound\" + filename;
             if (!File.Exists(smsFilePath))
             {
-                Console.Error.WriteLine(wagonFolderSlash + " - can't find " + filename);
+                Trace.TraceError(wagonFolderSlash + " - can't find " + filename);
                 return;
             }
 
@@ -745,7 +906,7 @@ namespace ORTS
                 path = Viewer.Simulator.BasePath + @"\SOUND\" + filename;
             if (!File.Exists(path))
             {
-                Console.Error.WriteLine("ttype.dat - can't find " + filename);
+                Trace.TraceError("ttype.dat - can't find " + filename);
                 return;
             }
             SoundSources.Add(new SoundSource(Viewer, MSTSWagon, path));

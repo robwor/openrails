@@ -42,8 +42,9 @@ namespace ORTS
 
             this.numericWorldObjectDensity.Value = 10;
             this.numericSoundDetailLevel.Value = 5;
-            this.comboBox1.Items.AddRange(strContents);
-            this.comboBox1.Text = "1024x768";
+            this.comboBoxWindowSize.Items.AddRange(strContents);
+            this.comboBoxWindowSize.Text = "1024x768";
+            this.numericBrakePipeChargingRatePSIpS.Value = 21;
 
             
 
@@ -53,8 +54,16 @@ namespace ORTS
             {
                 this.numericWorldObjectDensity.Value = (int)RK.GetValue("WorldObjectDensity", (int)numericWorldObjectDensity.Value);
                 this.numericSoundDetailLevel.Value = (int)RK.GetValue("SoundDetailLevel", (int)numericSoundDetailLevel.Value);
-                this.comboBox1.Text = (string)RK.GetValue("WindowSize", (string)comboBox1.Text);
-            }
+                this.comboBoxWindowSize.Text = (string)RK.GetValue("WindowSize", (string)comboBoxWindowSize.Text);
+                this.checkBoxTrainLights.Checked = ( 1 ==  (int)RK.GetValue("TrainLights", 0));
+                this.checkBoxPrecipitation.Checked = ( 1 == (int)RK.GetValue("Precipitation", 0));
+                this.checkBoxWire.Checked = (1 == (int)RK.GetValue("Wire", 0));
+                this.numericBrakePipeChargingRatePSIpS.Value = (int)RK.GetValue("BrakePipeChargingRate", (int)numericBrakePipeChargingRatePSIpS.Value);
+                this.checkBoxGraduatedRelease.Checked = (1 == (int)RK.GetValue("GraduatedRelease", 0));
+				this.checkBoxShadows.Checked = (1 == (int)RK.GetValue("DynamicShadows", 0));
+				this.checkBoxWindowGlass.Checked = (1 == (int)RK.GetValue("WindowGlass", 0));
+                this.checkBoxBINSound.Checked = (1 == (int)RK.GetValue("MSTSBINSound", 0));
+			}
         }
 
         private void buttonOK_Click(object sender, EventArgs e)
@@ -65,21 +74,22 @@ namespace ORTS
             {
                 RK.SetValue("WorldObjectDensity", (int)this.numericWorldObjectDensity.Value);
                 RK.SetValue("SoundDetailLevel", (int)this.numericSoundDetailLevel.Value);
-                RK.SetValue("WindowSize", (string)this.comboBox1.Text);
+                RK.SetValue("WindowSize", (string)this.comboBoxWindowSize.Text);
+                RK.SetValue("TrainLights", this.checkBoxTrainLights.Checked ? 1 : 0);
+                RK.SetValue("Precipitation", this.checkBoxPrecipitation.Checked ? 1 : 0);
+                RK.SetValue("Wire", this.checkBoxWire.Checked ? 1 : 0);
+                RK.SetValue("BrakePipeChargingRate", (int)this.numericBrakePipeChargingRatePSIpS.Value);
+                RK.SetValue("GraduatedRelease", this.checkBoxGraduatedRelease.Checked ? 1 : 0);
+                RK.SetValue("DynamicShadows", this.checkBoxShadows.Checked ? 1 : 0);
+                RK.SetValue("WindowGlass", this.checkBoxWindowGlass.Checked ? 1 : 0);
+                RK.SetValue("MSTSBINSound", this.checkBoxBINSound.Checked ? 1 : 0);
             }
+			Close();
+        }
 
+        private void buttonCancel_Click(object sender, EventArgs e)
+        {
             Close();
-
-        }
-
-        private void label2_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void label3_Click(object sender, EventArgs e)
-        {
-
         }
     }
 }

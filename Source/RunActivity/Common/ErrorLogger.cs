@@ -1,78 +1,120 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
-using System.IO;
 
 namespace ORTS
 {
-    public class ErrorLogger : Logger
-    {
-        public ErrorLogger(string filename)
-            : base(filename)
-        {
-        }
+	public class FileTeeLogger : TextWriter
+	{
+		public readonly string FileName;
+		public readonly TextWriter Console;
 
-        public override void WriteLine(string value)
-        {
-            console.WriteLine();
-            console.WriteLine("ERROR: " + value);
-            console.WriteLine();
-            Warn("ERROR: " + value);
-        }
-    }
+		public FileTeeLogger(string fileName, TextWriter console)
+		{
+			FileName = fileName;
+			Console = console;
+		}
 
-    public class Logger : TextWriter
-    {
-        static string WarningLogFileName = null;
-        static protected TextWriter console = null;
+		public override Encoding Encoding
+		{
+			get
+			{
+				return Encoding.UTF8;
+			}
+		}
 
-        public Logger(string filename)
-            : base()
-        {
-            if (WarningLogFileName == null)
-                WarningLogFileName = filename;
-            if (console == null)
-                console = Console.Out;
-        }
+		public override void Write(char value)
+		{
+			// Everything in TextWriter boils down to Write(char), but
+			// actually implementing just this would be horribly inefficient
+			// since we open and close the file every time. Instead, we
+			// implement Write(string) and Write(char[], int, int) which
+			// should mean we only end up here if called directly by user
+			// code. Which we won't support unless necessary.
+			throw new NotImplementedException();
+		}
 
-        public override void WriteLine(string value)
-        {
-            console.WriteLine(value);
-            Warn(value);
-        }
+		public override void Write(string value)
+		{
+			Console.Write(value);
+			using (var writer = new StreamWriter(FileName, true, Encoding))
+			{
+				writer.Write(value);
+			}
+		}
 
-        public override void Write(string value)
-        {
-            console.Write(value);
-        }
+		public override void Write(char[] buffer, int index, int count)
+		{
+			Write(new String(buffer, index, count));
+		}
+	}
 
-        public override void WriteLine()
-        {
-            console.WriteLine();
-        }
+	public class ORTraceListener : TraceListener
+	{
+		public readonly TextWriter Writer;
 
-        public override System.Text.Encoding Encoding
-        {
-            get { return System.Text.Encoding.ASCII; }
-        }
+		public ORTraceListener(TextWriter writer)
+		{
+			Writer = writer;
+		}
 
-        public void Warn(string s)
-        {
-            StreamWriter f;
-            if (!File.Exists(WarningLogFileName))
-            {
-                f = new StreamWriter(WarningLogFileName);
-            }
-            else
-            {
-                f = new StreamWriter(WarningLogFileName, true); // append
-            }
+		public override void TraceEvent(TraceEventCache eventCache, string source, TraceEventType eventType, int id, string format, params object[] args)
+		{
+			if ((Filter == null) || Filter.ShouldTrace(eventCache, source, eventType, id, format, args, null, null))
+			{
+				var output = new StringBuilder();
+				output.AppendLine();
+				output.AppendLine();
+				output.AppendFormat("{0} : {1} : {2} : ", source, eventType, id);
+				output.AppendFormat(format, args);
+				if (eventCache.LogicalOperationStack.Contains(LogicalOperationWriteException))
+				{
+					var error = (Exception)args[0];
+					output.AppendLine(error.ToString());
+					output.AppendLine();
+				}
+				else
+				{
+					output.AppendLine();
+					if ((TraceOutputOptions & TraceOptions.Callstack) != 0)
+						output.AppendLine(new StackTrace(true).ToString());
+					else
+						output.AppendLine();
+				}
+				Write(output);
+			}
+		}
 
-            f.WriteLine(s);
-            f.WriteLine();
-            f.Close();
-        }
+		public override void Write(string message)
+		{
+			Writer.Write(message);
+		}
 
-    }
+		public override void WriteLine(string message)
+		{
+			Writer.WriteLine(message);
+		}
+
+		public override void WriteLine(object o)
+		{
+			if (o is Exception)
+			{
+				Trace.CorrelationManager.StartLogicalOperation(LogicalOperationWriteException);
+				Trace.TraceError("", o);
+				Trace.CorrelationManager.StopLogicalOperation();
+			}
+			else
+			{
+				base.WriteLine(o);
+			}
+		}
+
+		static readonly LogicalOperation LogicalOperationWriteException = new LogicalOperation();
+
+		class LogicalOperation
+		{
+		}
+	}
 }

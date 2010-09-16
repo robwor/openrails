@@ -31,22 +31,15 @@
 ///    Wayne Campbell
 /// Contributors:
 ///    Rick Grout
+///    Walt Niehoff
 ///     
 
 using System;
 using System.Collections.Generic;
-using System.Text;
+using System.Diagnostics;
 using System.IO;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Audio;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.GamerServices;
-using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework.Net;
-using Microsoft.Xna.Framework.Storage;
 using MSTS;
-using System.Threading;
 
 namespace ORTS
 {
@@ -116,8 +109,10 @@ namespace ORTS
                           || Math.Abs(tile.TileZ - viewerTileZ) > 1)
                         {
                             // if not, unload the wFile
-                            Console.Write("w");
+                            Trace.Write("w");
                             WorldFiles[i] = null;
+                            // World sounds - By GeorgeS
+                            Viewer.WorldSounds.RemoveByTile(tile.TileX, tile.TileZ);
                         }
                     }
                 }
@@ -153,13 +148,15 @@ namespace ORTS
             for (int i = 0; i < WorldFiles.Length; ++i)
                 if (WorldFiles[i] == null)  // we found one
                 {
-                    Console.Write("W");
+                    Trace.Write("W");
                     WorldFiles[i] = new WorldFile(Viewer, tileX, tileZ);
+                    // Load world sounds - By GeorgeS
+                    Viewer.WorldSounds.AddByTile(tileX, tileZ);
                     return;
                 }
 
             // otherwise we didn't find an available spot - this shouldn't happen
-            System.Diagnostics.Debug.Assert(false, "Program Bug - didn't expect TerrainTiles array to be full.");
+            Debug.Fail("Program Bug - didn't expect TerrainTiles array to be full.");
         }
 
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
@@ -225,7 +222,7 @@ namespace ORTS
             // create all the individual scenery objects specified in the WFile
             foreach (WorldObject worldObject in WFile.Tr_Worldfile)
             {
-                if (worldObject.StaticDetailLevel > viewer.WorldObjectDensity)
+                if (worldObject.StaticDetailLevel > viewer.SettingsInt[(int)IntSettings.WorldObjectDensity])
                     continue;
 
                 // determine the full file path to the shape file for this scenery object 
@@ -258,14 +255,14 @@ namespace ORTS
                     }
                     else // it's some type of track other than a switch track
                     {
-                        SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix));
+                        SceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
                     }
                 }
                 else if (worldObject.GetType() == typeof(MSTS.DyntrackObj))
                 {
-                    DyntrackObj dTrackObj = (DyntrackObj)worldObject;
-                    dTrackList.Add(new DynatrackDrawer(viewer, dTrackObj, worldMatrix));
-                }
+                    // Add DyntrackDrawers for individual subsections
+                    DyntrackAddAtomic(viewer, (DyntrackObj)worldObject, worldMatrix);
+                } // end else if DyntrackObj
                 else if (worldObject.GetType() == typeof(MSTS.ForestObj))
                 {
                     ForestObj forestObj = (ForestObj)worldObject;
@@ -273,11 +270,114 @@ namespace ORTS
                 }
                 else // It's some other type of object - not one of the above.
                 {
-                    SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix));
+					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0;
+					SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
                 }
             }
 
         } // WorldFile constructor
+
+        private void DyntrackAddAtomic(Viewer3D viewer, DyntrackObj dTrackObj, WorldPosition worldMatrix)
+        {
+            // DYNAMIC TRACK
+            // =============
+            // Objectives:
+            // 1-Decompose multi-subsection DT into individual sections.  
+            // 2-Create updated transformation objects (instances of WorldPosition) to reflect 
+            //   root of next subsection.
+            // 3-Distribute elevation change for total section through subsections. (ABANDONED)
+            // 4-For each meaningful subsection of dtrack, build a separate DynatrackMesh.
+            //
+            // Method: Iterate through each subsection, updating WorldPosition for the root of
+            // each subsection.  The rotation component changes only in heading.  The translation 
+            // component steps along the path to reflect the root of each subsection.
+
+            // The following vectors represent local positioning relative to root of original (5-part) section:
+            Vector3 localV = Vector3.Zero; // Local position (in x-z plane)
+            Vector3 localProjectedV; // Local next position (in x-z plane)
+            Vector3 displacement;  // Local displacement (from y=0 plane)
+            Vector3 heading = Vector3.Forward; // Local heading (unit vector)
+
+            float realRun; // Actual run for subsection based on path
+
+
+            WorldPosition nextRoot = new WorldPosition(worldMatrix); // Will become initial root
+            Vector3 sectionOrigin = worldMatrix.XNAMatrix.Translation; // Save root position
+            worldMatrix.XNAMatrix.Translation = Vector3.Zero; // worldMatrix now rotation-only
+
+            // Iterate through all subsections
+            for (int iTkSection = 0; iTkSection < dTrackObj.trackSections.Count; iTkSection++)
+            {
+                float length = dTrackObj.trackSections[iTkSection].param1; // meters if straight; radians if curved
+                if (length == 0.0) continue; // Consider zero-length subsections vacuous
+
+                // Create new DT object copy; has only one meaningful subsection
+                DyntrackObj subsection = new DyntrackObj(dTrackObj, iTkSection);
+
+                //uint uid = subsection.trackSections[0].UiD; // for testing
+               
+                // Create a new WorldPosition for this subsection, initialized to nextRoot,
+                // which is the WorldPosition for the end of the last subsection.
+                // In other words, beginning of present subsection is end of previous subsection.
+                WorldPosition root = new WorldPosition(nextRoot);
+
+                // Now we need to compute the position of the end (nextRoot) of this subsection,
+                // which will become root for the next subsection.
+
+                // Clear nextRoot's translation vector so that nextRoot matrix contains rotation only
+                nextRoot.XNAMatrix.Translation = Vector3.Zero;
+
+                // Straight or curved subsection?
+                if (subsection.trackSections[0].isCurved == 0) // Straight section
+                {   // Heading stays the same; translation changes in the direction oriented
+                    // Rotate Vector3.Forward to orient the displacement vector
+                    localProjectedV = localV + length * heading;
+                    displacement = TDBTraveller.MSTSInterpolateAlongStraight(localV, heading, length,
+                                                            worldMatrix.XNAMatrix, out localProjectedV);
+                    realRun = length;
+                }
+                else // Curved section
+                {   // Both heading and translation change 
+                    // nextRoot is found by moving from Point-of-Curve (PC) to
+                    // center (O)to Point-of-Tangent (PT).
+                    float radius = subsection.trackSections[0].param2; // meters
+                    Vector3 left = radius * Vector3.Cross(Vector3.Up, heading); // Vector from PC to O
+                    Matrix rot = Matrix.CreateRotationY(-length); // Heading change (rotation about O)
+                    // Shared method returns displacement from present world position and, by reference,
+                    // local position in x-z plane of end of this section
+                    displacement = TDBTraveller.MSTSInterpolateAlongCurve(localV, left, rot, 
+                                            worldMatrix.XNAMatrix, out localProjectedV);
+
+                    heading = Vector3.Transform(heading, rot); // Heading change
+                    nextRoot.XNAMatrix = rot * nextRoot.XNAMatrix; // Store heading change
+                    realRun = radius * ((length > 0) ? length : -length); // Actual run (meters)
+                }
+
+                // Update nextRoot with new translation component
+                nextRoot.XNAMatrix.Translation = sectionOrigin + displacement;
+
+                // THE FOLLOWING COMMENTED OUT CODE IS NOT COMPATIBLE WITH THE NEW MESH GENERATION METHOD.
+                // IF deltaY IS STORED AS ANYTHING OTHER THAN 0, THE VALUE WILL GET USED FOR MESH GENERATION,
+                // AND BOTH THE TRANSFORMATION AND THE ELEVATION CHANGE WILL GET USED, IN ESSENCE DOUBLE COUNTING.
+                /*
+                // Update subsection ancillary data
+                subsection.trackSections[0].realRun = realRun;
+                if (iTkSection == 0)
+                {
+                    subsection.trackSections[0].deltaY = displacement.Y;
+                }
+                else
+                {
+                    // Increment-to-increment change in elevation
+                    subsection.trackSections[0].deltaY = nextRoot.XNAMatrix.Translation.Y - root.XNAMatrix.Translation.Y;
+                }
+                */
+                
+                // Create a new DynatrackDrawer for the subsection
+                dTrackList.Add(new DynatrackDrawer(viewer, subsection, root, nextRoot));
+                localV = localProjectedV; // Next subsection
+            }
+        } // end DyntrackAddAtomic
 
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {

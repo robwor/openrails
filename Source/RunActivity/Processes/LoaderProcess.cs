@@ -21,9 +21,6 @@ namespace ORTS
 
         ProcessState State = new ProcessState();   // manage interprocess signalling
 
-        // Profiling
-        public Stopwatch LoaderTimer = new Stopwatch();
-
         public LoaderProcess(Viewer3D viewer )
         {
             Viewer = viewer;
@@ -68,17 +65,31 @@ namespace ORTS
 
         public void LoadLoop()
         {
+			Viewer.LoaderProfiler = new Profiler("Loader");
+
             while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
             {
                 // Wait for a new Update() command
                 State.WaitTillStarted();
-                LoaderTimer.Start();
-                Viewer.Load(Viewer.RenderProcess);  // complete scan and load as necessary
+				Viewer.LoaderProfiler.Start();
+
+				try
+				{
+					Viewer.Load(Viewer.RenderProcess);  // complete scan and load as necessary
+				}
+				catch (Exception error)
+				{
+					if (!(error is ThreadAbortException))
+					{
+						// Unblock anyone waiting for us, report error and die.
+						State.SignalFinish();
+						Viewer.ProcessReportError(error);
+						return;
+					}
+				}
 
                 State.SignalFinish();
-
-                LoaderTimer.Stop();
-
+				Viewer.LoaderProfiler.Stop();
             }
 
         }

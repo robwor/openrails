@@ -12,10 +12,8 @@
  */
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Diagnostics;
 using System.IO;
-using Microsoft.Xna.Framework;
 using MSTS;
 
 namespace ORTS
@@ -38,13 +36,14 @@ namespace ORTS
         {
             Simulator = simulator;
             //Console.WriteLine("AI {0} {1} {2} {3}", ClockTime, st.Hour, st.Minute, st.Second);
-            if( simulator.Activity.Tr_Activity.Tr_Activity_File.Traffic_Definition != null )
+            if (simulator.Activity != null && simulator.Activity.Tr_Activity.Tr_Activity_File.Traffic_Definition != null)
                 foreach (Service_Definition sd in simulator.Activity.Tr_Activity.Tr_Activity_File.Traffic_Definition)
                 {
-                    if (sd.Time < Simulator.ClockTime)
+                    AITrain train = CreateAITrain(sd);
+                    if (train == null)
                         continue;
-                    AITrainDictionary.Add(sd.UiD, CreateAITrain(sd));
-                    //Console.WriteLine("AIQ {0} {1} {2}", sd.Service, sd.Time, sd.UiD);
+                    AITrainDictionary.Add(sd.UiD, train);
+                    //Console.WriteLine("AIQ {0} {1} {2} {3}", sd.Service, sd.Time, sd.UiD, Simulator.ClockTime);
                 }
             Dispatcher = new Dispatcher(this);
             foreach (KeyValuePair<int, AITrain> kvp in AITrainDictionary)
@@ -132,7 +131,7 @@ namespace ORTS
                     Simulator.Trains.Remove(kvp.Value);
                 FirstUpdate = false;
             }
-            Dispatcher.Update(Simulator.ClockTime);
+            Dispatcher.Update(Simulator.ClockTime, elapsedClockSeconds);
             while (StartQueue.GetMinKey() < Simulator.ClockTime)
             {
                 AITrain train = StartQueue.GetMinValue();
@@ -147,7 +146,7 @@ namespace ORTS
             }
             bool remove = false;
             foreach (AITrain train in AITrains)
-                if (train.NextStopNode == null || train.RearNode == null || train.Cars.Count == 0 || train.Cars[0].Train != train)
+                if (train.NextStopNode == null || train.TrackAuthority.StartNode == null || train.Cars.Count == 0 || train.Cars[0].Train != train)
                     remove = true;
                 else
                     train.AIUpdate( elapsedClockSeconds, Simulator.ClockTime);
@@ -168,23 +167,40 @@ namespace ORTS
             SRVFile srvFile = new SRVFile(Simulator.RoutePath + @"\SERVICES\" + sd.Service + ".SRV");
             string consistFileName = srvFile.Train_Config;
             CONFile conFile = new CONFile(Simulator.BasePath + @"\TRAINS\CONSISTS\" + consistFileName + ".CON");
-            string pathFileName = srvFile.PathID;
+            string pathFileName = Simulator.RoutePath + @"\PATHS\" + srvFile.PathID + ".PAT";
 
-            PATFile patFile = new PATFile(Simulator.RoutePath + @"\PATHS\" + pathFileName + ".PAT");
-            AITrain train = new AITrain(sd.UiD, this, new AIPath(patFile, Simulator.TDB, Simulator.TSectionDat), sd.Time);
+            PATFile patFile = new PATFile(pathFileName);
+            AITrain train = new AITrain(sd.UiD, this, new AIPath(patFile, Simulator.TDB, Simulator.TSectionDat, pathFileName), sd.Time);
 
+            if (conFile.Train.TrainCfg.MaxVelocity.A > 0 && srvFile.Efficiency > 0)
+                train.MaxSpeedMpS = conFile.Train.TrainCfg.MaxVelocity.A * srvFile.Efficiency;
+
+            train.Path.AlignAllSwitches();
             // This is the position of the back end of the train in the database.
             //PATTraveller patTraveller = new PATTraveller(Simulator.RoutePath + @"\PATHS\" + pathFileName + ".PAT");
-            WorldLocation wl = train.RearNode.Location;
+            WorldLocation wl = train.Path.FirstNode.Location;
             train.RearTDBTraveller = new TDBTraveller(wl.TileX, wl.TileZ, wl.Location.X, wl.Location.Z, 0, Simulator.TDB, Simulator.TSectionDat);
             // figure out if the next waypoint is forward or back
             //patTraveller.NextWaypoint();
-            wl = train.GetNextNode(train.RearNode).Location;
+            wl = train.GetNextNode(train.Path.FirstNode).Location;
             if (train.RearTDBTraveller.DistanceTo(wl.TileX, wl.TileZ, wl.Location.X, wl.Location.Y, wl.Location.Z) < 0)
                 train.RearTDBTraveller.ReverseDirection();
             //train.PATTraveller = patTraveller;
+            if (sd.Time < Simulator.ClockTime)
+            {
+                float dtS = (float)(Simulator.ClockTime - sd.Time);
+                if (train.RearTDBTraveller.Move(dtS * train.MaxSpeedMpS) > 0.01 || train.RearTDBTraveller.TN.TrEndNode != null)
+                    return null;
+                //Console.WriteLine("initial move {0} {1}", dtS * train.MaxSpeedMpS, train.MaxSpeedMpS);
+                AIPathNode node = train.Path.FirstNode;
+                while (node != null && node.NextMainTVNIndex != train.RearTDBTraveller.TrackNodeIndex)
+                    node = node.NextMainNode;
+                if (node != null)
+                    train.Path.FirstNode = node;
+            }
 
             // add wagons
+            TrainCar previousCar = null;
             foreach (Wagon wagon in conFile.Train.TrainCfg.Wagons)
             {
 
@@ -195,15 +211,17 @@ namespace ORTS
 
                 try
                 {
-                    TrainCar car = RollingStock.Load(wagonFilePath);
+                    TrainCar car = RollingStock.Load(wagonFilePath, previousCar);
                     car.Flipped = wagon.Flip;
                     train.Cars.Add(car);
                     car.Train = train;
                     car.SignalEvent(EventID.PantographUp);
+                    previousCar = car;
                 }
-                catch (System.Exception error)
+                catch (Exception error)
                 {
-                    Console.Error.WriteLine("Couldn't open " + wagonFilePath + "\n" + error.Message);
+					Trace.WriteLine(wagonFilePath);
+					Trace.WriteLine(error);
                 }
 
             }// for each rail car
@@ -211,9 +229,11 @@ namespace ORTS
             train.CalculatePositionOfCars(0);
             for (int i = 0; i < train.Cars.Count; i++)
                 train.Cars[i].WorldPosition.XNAMatrix.M42 -= 1000;
+            if (train.FrontTDBTraveller.TN.TrEndNode != null)
+                return null;
 
-            if (conFile.Train.TrainCfg.MaxVelocity.A > 0 && srvFile.Efficiency > 0)
-                train.MaxSpeedMpS = conFile.Train.TrainCfg.MaxVelocity.A * srvFile.Efficiency;
+            train.AITrainDirectionForward = true;
+            train.BrakeLine3PressurePSI = 0;
 
             //AITrains.Add(train);
             Simulator.Trains.Add(train);
@@ -229,7 +249,7 @@ namespace ORTS
         {
             List<AITrain> removeList = new List<AITrain>();
             foreach (AITrain train in AITrains)
-                if (train.NextStopNode == null || train.RearNode == null || train.Cars.Count == 0 || train.Cars[0].Train != train)
+                if (train.NextStopNode == null || train.TrackAuthority.StartNode == null || train.Cars.Count == 0 || train.Cars[0].Train != train)
                     removeList.Add(train);
             foreach (AITrain train in removeList)
             {

@@ -111,6 +111,7 @@ namespace MSTS
                         case TokenID.QDirection: QDirection = new STFQDirectionItem(subBlock); break;
                         case TokenID.Matrix3x3: Matrix3x3 = new Matrix3x3(subBlock); break;
                         case TokenID.VDbId: VDbId = subBlock.ReadUInt(); break;
+                        case TokenID.StaticFlags: StaticFlags = subBlock.ReadFlags(); break;
                         default: subBlock.Skip(); break;
                     }
                 }
@@ -194,12 +195,37 @@ namespace MSTS
             }
         }
 
+        // DyntrackObj copy constructor with a single TrackSection
+        public DyntrackObj(DyntrackObj copy, int iTkSection)
+        {
+            this.SectionIdx = copy.SectionIdx;
+            this.Elevation = copy.Elevation;
+            this.CollideFlags = copy.CollideFlags;
+            this.StaticFlags = copy.StaticFlags;
+            this.Position = new STFPositionItem(copy.Position);
+            this.QDirection = new STFQDirectionItem(copy.QDirection);
+            this.VDbId = copy.VDbId;
+            this.FileName = copy.FileName;
+            this.StaticDetailLevel = copy.StaticDetailLevel;
+            this.UID = copy.UID;
+            //this.totalRealRun = copy.totalRealRun;
+            //this.mstsTotalRise = copy.mstsTotalRise;
+            // Copy only the single subsection specified
+            this.trackSections = new TrackSections(copy.trackSections[iTkSection]);
+        }
+
         public class TrackSections : ArrayList
         {
             public new TrackSection this[int i]
             {
                 get { return (TrackSection)base[i]; }
                 set { base[i] = value; }
+            }
+
+            // Build a TrackSections array list with one TrackSection
+            public TrackSections(TrackSection TS)
+            {
+                this.Add(new TrackSection(TS));
             }
 
             public TrackSections()
@@ -231,6 +257,7 @@ namespace MSTS
             public uint UiD;
             public float param1;
             public float param2;
+            public float deltaY; // Elevation change for this subsection
 
             public TrackSection(SBR block, bool isUnicode, int count)
             {
@@ -254,8 +281,20 @@ namespace MSTS
                 param1 = block.ReadFloat();
                 param2 = block.ReadFloat();
                 block.VerifyEndOfBlock();
+                deltaY = 0;
+            }
+
+            // Copy constructor
+            public TrackSection(TrackSection copy)
+            {
+                this.UiD = copy.UiD;
+                this.isCurved = copy.isCurved;
+                this.param1 = copy.param1;
+                this.param2 = copy.param2;
+                this.deltaY = copy.deltaY;
             }
         }//TrackSection
+
     }//DyntrackObj
 
     public class ForestObj : WorldObject
@@ -343,6 +382,18 @@ namespace MSTS
 
         }//TreeSize
     }//ForestObj
+
+    // These relate to the general properties settable for scenery objects in RE
+    public enum StaticFlag
+    {
+        RoundShadow = 0x00002000,
+        RectangularShadow = 0x00004000,
+        TreelineShadow = 0x00008000,
+        DynamicShadow = 0x00010000,
+        AnyShadow = 0x0001E000,
+        Terrain = 0x00040000,
+        Animate = 0x00080000
+    }
 
     public abstract class WorldObject
     {

@@ -5,20 +5,13 @@
 /// 
 /// Principal Author:
 ///    Rick Grout
-/// 
+/// Contributor:
+///    
 ///     
 using System;
-using System.Collections.Generic;
-using System.Text;
-using System.IO;
+using System.Diagnostics;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Audio;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.GamerServices;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework.Net;
-using Microsoft.Xna.Framework.Storage;
 using MSTS;
 
 namespace ORTS
@@ -26,14 +19,14 @@ namespace ORTS
     #region ForestDrawer
     public class ForestDrawer
     {
-        Viewer3D Viewer;
-        Material forestMaterial;
+        readonly Viewer3D Viewer;
+        readonly Material forestMaterial;
 
         // Classes reqiring instantiation
         public ForestMesh forestMesh;
 
         #region Class variables
-        public WorldPosition worldPosition;
+        public readonly WorldPosition worldPosition;
         #endregion
 
         #region Constructor
@@ -54,7 +47,7 @@ namespace ORTS
             forestMaterial = Materials.Load(Viewer.RenderProcess, "ForestMaterial", texturePath, 0, 0);
 
             // Instantiate classes
-            forestMesh = new ForestMesh(Viewer.RenderProcess, this, forest);
+            forestMesh = new ForestMesh(Viewer.RenderProcess, Viewer.Tiles, this, forest);
         }
         #endregion
 
@@ -63,18 +56,12 @@ namespace ORTS
             // Locate relative to the camera
             int dTileX = worldPosition.TileX - Viewer.Camera.TileX;
             int dTileZ = worldPosition.TileZ - Viewer.Camera.TileZ;
-            Matrix xnaDTileTranslation = Matrix.CreateTranslation(dTileX * 2048, 0, -dTileZ * 2048);  // object is offset from camera this many tiles
-            xnaDTileTranslation = worldPosition.XNAMatrix * xnaDTileTranslation;
-            xnaDTileTranslation.M42 = forestMesh.refElevation;
-            Vector3 mstsLocation = new Vector3(xnaDTileTranslation.Translation.X, xnaDTileTranslation.Translation.Y, -xnaDTileTranslation.Translation.Z);
-            
-            float objectRadius = forestMesh.objectRadius;
+			var xnaTranslation = worldPosition.XNAMatrix.Translation;
+			Vector3 mstsLocation = new Vector3(xnaTranslation.X + dTileX * 2048, forestMesh.refElevation, -xnaTranslation.Z + dTileZ * 2048);
+			Matrix xnaPatchMatrix = Matrix.CreateTranslation(mstsLocation.X, mstsLocation.Y, -mstsLocation.Z);
             float viewingDistance = 2000; // Arbitrary, but historically in MSTS it was only 1000.
-            if (Viewer.Camera.InFOV(mstsLocation, objectRadius))
-            {
-                if (Viewer.Camera.InRange(mstsLocation, viewingDistance + objectRadius))
-                    frame.AddPrimitive(forestMaterial, forestMesh, ref xnaDTileTranslation);
-            }
+			frame.AddAutoPrimitive(mstsLocation, forestMesh.objectRadius, viewingDistance + forestMesh.objectRadius, forestMaterial, forestMesh, 
+                RenderPrimitiveGroup.World, ref xnaPatchMatrix, ShapeFlags.None);
         }
     }
     #endregion
@@ -84,12 +71,12 @@ namespace ORTS
     {
         // Vertex declaration
         public VertexDeclaration treeVertexDeclaration;
-        private VertexPositionNormalTexture[] trees;
+        public VertexBuffer Buffer;
+        public int PrimitiveCount;
 
         // Forest variables
         Random random;
         ForestDrawer Drawer;
-        string tileFolderNameSlash;
         public float objectRadius;
         public float refElevation;
 
@@ -106,16 +93,22 @@ namespace ORTS
         /// <summary>
         /// Constructor.
         /// </summary>
-        public ForestMesh(RenderProcess renderProcess, ForestDrawer drawer, ForestObj forest)
+        public ForestMesh(RenderProcess renderProcess, Tiles tiles, ForestDrawer drawer, ForestObj forest)
         {
             Drawer = drawer;
-            string path = renderProcess.Viewer.Simulator.RoutePath;
-            tileFolderNameSlash = path + @"\tiles\";
 
             // Initialize local variables from WFile data
             treeTexture = forest.TreeTexture;
             scaleRange1 = forest.scaleRange.scaleRange1;
             scaleRange2 = forest.scaleRange.scaleRange2;
+            if (scaleRange1 > scaleRange2)
+            {
+                Trace.TraceWarning("Forest " + forest.TreeTexture + " in tile " + drawer.worldPosition.TileX + "," + drawer.worldPosition.TileZ + " has scale range with minimum greater than maximum");
+                float scaleRangeSwap = scaleRange2;
+                scaleRange2 = scaleRange1;
+                scaleRange1 = scaleRangeSwap;
+            }
+
             areaDim1 = Math.Abs(forest.forestArea.areaDim1);
             areaDim2 = Math.Abs(forest.forestArea.areaDim2);
             population = (int)(0.75f * (float)forest.Population) + 1;
@@ -125,17 +118,23 @@ namespace ORTS
             objectRadius = Math.Max(areaDim1, areaDim2) / 2;
 
             // Instantiate classes
-            random = new Random();
-            trees = new VertexPositionNormalTexture[population * 6];
+            // to get consistent tree placement between sessions, derive the seed from the location
+            int seed = (int)(1000.0*(drawer.worldPosition.Location.X + drawer.worldPosition.Location.Z + drawer.worldPosition.Location.Y));
+            random = new Random(seed);
+            VertexPositionNormalTexture[] trees = new VertexPositionNormalTexture[population * 6];
             treeVertexDeclaration = new VertexDeclaration(renderProcess.GraphicsDevice, VertexPositionNormalTexture.VertexElements);
 
-            InitForestVertices();
+            InitForestVertices(tiles, trees);
+
+            PrimitiveCount = trees.Length / 3;
+            Buffer = new VertexBuffer(renderProcess.GraphicsDevice, VertexPositionNormalTexture.SizeInBytes * trees.Length, BufferUsage.WriteOnly);
+            Buffer.SetData(trees);
         }
 
         /// <summary>
         /// Forest tree array intialization. 
         /// </summary>
-        private void InitForestVertices()
+        private void InitForestVertices(Tiles tiles, VertexPositionNormalTexture[] trees)
         {
             // Create the tree position and size arrays.
             Vector3[] treePosition = new Vector3[population];
@@ -145,34 +144,29 @@ namespace ORTS
             Matrix XNAWorldLocation = Drawer.worldPosition.XNAMatrix;
             Drawer.worldPosition.XNAMatrix = Matrix.Identity;
             Drawer.worldPosition.XNAMatrix.Translation = XNAWorldLocation.Translation;
-            int YtileX, YtileZ;
-            Tile tile = new Tile(Drawer.worldPosition.TileX, Drawer.worldPosition.TileZ, tileFolderNameSlash);
+            float YtileX, YtileZ;
             // Get the Y elevation of the base object itself. Tree elevations are referenced to this.
-            YtileX = (int)MathHelper.Clamp((((int)XNAWorldLocation.M41 * 0.125f) + 127.5f), 0, 255);
-            YtileZ = (int)MathHelper.Clamp((((int)XNAWorldLocation.M43 * 0.125f) + 127.5f), 0, 255);
-            refElevation = tile.GetElevation(YtileX, YtileZ);
-            //refElevation = GetTerrainHeight(XNAWorldLocation.M41, XNAWorldLocation.M43);
+            YtileX = (XNAWorldLocation.M41 + 1024) / 8;
+            YtileZ = (XNAWorldLocation.M43 + 1024) / 8;
+            refElevation = tiles.GetElevation(Drawer.worldPosition.TileX, Drawer.worldPosition.TileZ, (int)YtileX, (int)YtileZ);
             float scale;
             for (int i = 0; i < population; i++)
             {
                 // Set the XZ position of each tree at random.
-                treePosition[i].X = random.Next(-(int)areaDim1 / 4, (int)areaDim1 / 4);
+                treePosition[i].X = random.Next(-(int)areaDim1 / 2, (int)areaDim1 / 2);
                 treePosition[i].Y = 0;
-                treePosition[i].Z = random.Next(-(int)areaDim2 / 4, (int)areaDim2 / 4);
+                treePosition[i].Z = random.Next(-(int)areaDim2 / 2, (int)areaDim2 / 2);
                 // Orient each treePosition to its final position on the tile so we can get its Y value.
-                // Do this by transforming a a copy of the object to its final orientation on the terrain.
+                // Do this by transforming a copy of the object to its final orientation on the terrain.
                 tempPosition[i] = Vector3.Transform(treePosition[i], XNAWorldLocation);
                 treePosition[i] = tempPosition[i] - XNAWorldLocation.Translation;
                 // Get the terrain height at each position and set Y.
-                // First convert to Y file metrics
-                YtileX = (int)MathHelper.Clamp((((int)tempPosition[i].X * 0.125f) + 127.5f), 0, 255);
-                YtileZ = (int)MathHelper.Clamp((((int)tempPosition[i].Z * 0.125f) + 127.5f), 0, 255);
-                treePosition[i].Y = tile.GetElevation(YtileX, YtileZ) - refElevation;
-                //treePosition[i].Y = GetTerrainHeight(tempPosition[i].X, tempPosition[i].Z) -refElevation;
+				// TODO: What is this -0.8 here for?
+				treePosition[i].Y = tiles.GetElevation(Drawer.worldPosition.TileX, Drawer.worldPosition.TileZ, (tempPosition[i].X + 1024) / 8, (tempPosition[i].Z + 1024) / 8) - refElevation - 0.8f;
                 // WVP transformation of the complete object takes place in the vertex shader.
 
                 // Randomize the tree size
-                scale = 0.8f * (float)random.Next((int)(scaleRange1 * 1000), (int)(scaleRange2 * 1000)) / 1000;
+                scale = (float)random.Next((int)(scaleRange1 * 1000), (int)(scaleRange2 * 1000)) / 1000;
                 treeSize[i].X = treeSize1 * scale;
                 treeSize[i].Y = treeSize2 * scale;
                 treeSize[i].Z = 1.0f;
@@ -198,62 +192,13 @@ namespace ORTS
             }
         }
 
-        public float GetTerrainHeight(float X, float Z)
-        {
-            int YtileX, YtileZ;
-            Tile tile = new Tile(Drawer.worldPosition.TileX, Drawer.worldPosition.TileZ, tileFolderNameSlash);
-
-            X = X * 0.125f + 127.5f; // 256 / 2048 = 0.125
-            Z = Z * 0.125f + 127.5f;
-
-            int xLower = (int)X;
-            int xHigher = xLower + 1;
-            float xRelative = X - xLower;
-
-            int zLower = (int)Z;
-            int zHigher = zLower + 1;
-            float zRelative = Z - zLower;
-
-            YtileX = xLower;
-            YtileZ = zLower;
-            float heightLxLz = tile.GetElevation(YtileX, YtileZ);
-
-            YtileX = xLower;
-            YtileZ = zHigher;
-            float heightLxHz = tile.GetElevation(YtileX, YtileZ);
-
-            YtileX = xHigher;
-            YtileZ = zLower;
-            float heightHxLz = tile.GetElevation(YtileX, YtileZ);
-
-            YtileX = xHigher;
-            YtileZ = zHigher;
-            float heightHxHz = tile.GetElevation(YtileX, YtileZ);
-
-            bool isAboveLowerTriangle = (xRelative + zRelative < 1);
-
-            float finalHeight;
-            if (isAboveLowerTriangle)
-            {
-                finalHeight = heightLxLz;
-                finalHeight += zRelative * (heightLxHz - heightLxLz);
-                finalHeight += xRelative * (heightHxLz - heightLxLz);
-            }
-            else
-            {
-                finalHeight = heightHxHz;
-                finalHeight += (1.0f - zRelative) * (heightHxLz - heightHxHz);
-                finalHeight += (1.0f - xRelative) * (heightLxHz - heightHxHz);
-            }
-
-            return finalHeight;
-        }
-
         public override void Draw(GraphicsDevice graphicsDevice)
         {
+            
             // Place the vertex declaration on the graphics device
             graphicsDevice.VertexDeclaration = treeVertexDeclaration;
-            graphicsDevice.DrawUserPrimitives<VertexPositionNormalTexture>(PrimitiveType.TriangleList, trees, 0, trees.Length / 3);
+            graphicsDevice.Vertices[0].SetSource(Buffer, 0, treeVertexDeclaration.GetVertexStrideSize(0));
+            graphicsDevice.DrawPrimitives(PrimitiveType.TriangleList, 0, PrimitiveCount);
         }
     }
     #endregion

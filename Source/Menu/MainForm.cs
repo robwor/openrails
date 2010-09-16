@@ -21,10 +21,17 @@ namespace ORTS
     {
         public string SelectedRoutePath { get{   return routePaths[listBoxRoutes.SelectedIndex]; } }
         public string SelectedActivityPath { get { return activityPaths[listBoxActivities.SelectedIndex]; } }
+        public string SelectedPath { get { return ExplorePatFile; } }
+        public string SelectedConsist { get { return ExploreConFile; } }
 
         List<string> folderPaths = new List<string>();
         List<string> routePaths = new List<string>();
         List<string> activityPaths;
+        public string ExplorePatFile = null;
+        public string ExploreConFile = null;
+        public int ExploreSeason = 0;
+        public int ExploreWeather = 0;
+        public int ExploreStartHour = 12;
 
         string FolderDataFileName = "folder.dat";
 
@@ -62,14 +69,15 @@ namespace ORTS
 
 
             // Restore retained settings
-            RegistryKey RK = Registry.CurrentUser.OpenSubKey(Program.RegistryKey);
+            RegistryKey RK = Registry.CurrentUser.OpenSubKey(Program.RegistryKey, true);
             if (RK != null)
             {
                 checkBoxFullScreen.Checked = (int)RK.GetValue("Fullscreen", 0) == 1 ? true : false;
                 checkBoxWarnings.Checked = (int)RK.GetValue("Warnings", 1) == 1 ? true : false;
             }
 
-            listBoxFolder.Items.Clear();
+
+            listBoxFolders.Items.Clear();
 
 
             if (File.Exists(FolderDataFileName))
@@ -88,7 +96,7 @@ namespace ORTS
                 try
                 {
                     folderPaths.Add(MSTSPath.Base());
-                    listBoxFolder.Items.Add("- Default -");
+                    listBoxFolders.Items.Add("- Default -");
                 }
                 catch (System.Exception)
                 {
@@ -96,9 +104,9 @@ namespace ORTS
                 }
             }
             if (folderPaths.Count > 0)
-                listBoxFolder.SelectedIndex = 0;
+                listBoxFolders.SelectedIndex = 0;
             else
-                listBoxFolder.ClearSelected();
+                listBoxFolders.ClearSelected();
         }
 
         void listBoxRoutes_DoubleClick(object sender, EventArgs e)
@@ -111,21 +119,18 @@ namespace ORTS
             DisplayActivityDetails();
         }
 
-        private void MainForm_Load(object sender, EventArgs e)
-        {
-        }
-
         private void listBoxFolder_SelectedIndexChanged(object sender, EventArgs e)
         {
             listBoxRoutes.Items.Clear();
             listBoxRoutes.Refresh();
             listBoxActivities.Items.Clear();
             listBoxActivities.Refresh();
+            ExploreConFile = null;
 
             try
             {
-                if (listBoxFolder.SelectedIndex < 0) return;
-                string folderPath = folderPaths[listBoxFolder.SelectedIndex];
+                if (listBoxFolders.SelectedIndex < 0) return;
+                string folderPath = folderPaths[listBoxFolders.SelectedIndex];
                 routePaths.Clear();
                 string[] directories = Directory.GetDirectories(folderPath + @"\ROUTES");
 
@@ -168,6 +173,9 @@ namespace ORTS
                 activityPaths = new List<string>();
                 string[] allActivityPaths = Directory.GetFiles(SelectedRoutePath + @"\ACTIVITIES", "*.act");
 
+                listBoxActivities.Items.Add("Explore Route");
+                activityPaths.Add(null);
+                ExplorePatFile = null;
 
                 // create a list of activities
                 foreach (string activityPath in allActivityPaths)
@@ -198,31 +206,47 @@ namespace ORTS
 
         private void buttonStart_Click(object sender, EventArgs e)
         {
-            if (listBoxActivities.SelectedIndex >= 0 )
+			SaveOptions();
+			if (listBoxActivities.SelectedIndex == 0)
+            {
+                if (GetExploreInfo() && ExploreConFile != null && ExplorePatFile != null)
+                    DialogResult = DialogResult.OK;
+            }
+            else if (listBoxActivities.SelectedIndex >= 0 )
             {              
                 DialogResult = DialogResult.OK;
             }
-            
         }
+
+		private void SaveOptions()
+		{
+			// Retain settings for convenience
+			RegistryKey RK = Registry.CurrentUser.CreateSubKey(Program.RegistryKey);
+			if (RK != null)
+			{
+				RK.SetValue("Fullscreen", checkBoxFullScreen.Checked ? 1 : 0);
+				RK.SetValue("Warnings", checkBoxWarnings.Checked ? 1 : 0);
+			}
+		}
 
         private void buttonAddFolder_Click(object sender, EventArgs e)
         {
             string folderPath = "";
-            if( listBoxFolder.SelectedIndex >= 0 )
-                folderPath = folderPaths[listBoxFolder.SelectedIndex];
+            if( listBoxFolders.SelectedIndex >= 0 )
+                folderPath = folderPaths[listBoxFolders.SelectedIndex];
             FolderBrowserDialog f = new FolderBrowserDialog();
             f.SelectedPath = folderPath;
             f.Description = "Navigate to your alternate MSTS installation folder.";
             f.ShowNewFolderButton = false;
-            if (f.ShowDialog() == DialogResult.OK)
+            if (f.ShowDialog(this) == DialogResult.OK)
             {
                 FormFolderName form = new FormFolderName();
-                if (form.ShowDialog() == DialogResult.OK)
+                if (form.ShowDialog(this) == DialogResult.OK)
                 {
-                    listBoxFolder.Items.Add(form.Description);
+                    listBoxFolders.Items.Add(form.Description);
                     folderPaths.Add(f.SelectedPath);
-                    if (listBoxFolder.SelectedIndex < 0 && listBoxFolder.Items.Count > 0 )
-                        listBoxFolder.SelectedIndex = 0;
+                    if (listBoxFolders.SelectedIndex < 0 && listBoxFolders.Items.Count > 0 )
+                        listBoxFolders.SelectedIndex = 0;
                     SaveFolderDat();
                 }
             }
@@ -238,7 +262,7 @@ namespace ORTS
                 for (int i = 0; i < folderPaths.Count; ++i)
                 {
                     outf.Write(folderPaths[i]);
-                    outf.Write((string)listBoxFolder.Items[i]);
+                    outf.Write((string)listBoxFolders.Items[i]);
                 }
             }
         }
@@ -253,39 +277,33 @@ namespace ORTS
                 for (int i = 0; i < count; ++i)
                 {
                     folderPaths.Add(inf.ReadString());
-                    listBoxFolder.Items.Add(inf.ReadString());
+                    listBoxFolders.Items.Add(inf.ReadString());
                 }
             }
         }
 
         private void buttonRemove_Click(object sender, EventArgs e)
         {
-            if (listBoxFolder.SelectedIndex >= 0)
+            if (listBoxFolders.SelectedIndex >= 0)
             {
-                int i = listBoxFolder.SelectedIndex;
-                listBoxFolder.ClearSelected();
-                listBoxFolder.Items.RemoveAt(i);
+                int i = listBoxFolders.SelectedIndex;
+                listBoxFolders.ClearSelected();
+                listBoxFolders.Items.RemoveAt(i);
                 folderPaths.RemoveAt(i);
                 SaveFolderDat();
-                if( listBoxFolder.Items.Count > 0 )
-                    listBoxFolder.SelectedIndex = 0;
+                if( listBoxFolders.Items.Count > 0 )
+                    listBoxFolders.SelectedIndex = 0;
             }
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-            // Retain settings for convenience
-            RegistryKey RK = Registry.CurrentUser.CreateSubKey(Program.RegistryKey);
-            if (RK != null)
-            {
-                RK.SetValue("Fullscreen", checkBoxFullScreen.Checked ? 1 : 0);
-                RK.SetValue("Warnings", checkBoxWarnings.Checked ? 1 : 0);
-            }
+			SaveOptions();
         }
 
         private void buttonOptions_Click(object sender, EventArgs e)
         {
-            (new OptionsForm()).ShowDialog();
+            (new OptionsForm()).ShowDialog(this);
         }
 
         private void DisplayRouteDetails()
@@ -295,21 +313,39 @@ namespace ORTS
                 DetailsForm frmDetails = new DetailsForm();
                 if (frmDetails.RouteDetails(SelectedRoutePath))
                 {
-                    frmDetails.ShowDialog();
+                    frmDetails.ShowDialog(this);
                 }
             }
         }
 
         private void DisplayActivityDetails()
         {
-            if (listBoxActivities.SelectedIndex >= 0)
+            if (listBoxActivities.SelectedIndex == 0)
+                GetExploreInfo();
+            else if (listBoxActivities.SelectedIndex > 0)
             {
                 DetailsForm frmDetails = new DetailsForm();
                 if (frmDetails.ActivityDetails(SelectedActivityPath))
                 {
-                    frmDetails.ShowDialog();
+                    frmDetails.ShowDialog(this);
                 }
             }
+        }
+
+        private bool GetExploreInfo()
+        {
+            ExploreForm form = new ExploreForm();
+            form.LoadData(folderPaths[listBoxFolders.SelectedIndex], SelectedRoutePath, ExplorePatFile, ExploreConFile, ExploreSeason, ExploreWeather, ExploreStartHour);
+            if (form.ShowDialog(this) == DialogResult.OK)
+            {
+                ExplorePatFile = form.SelectedPath;
+                ExploreConFile = form.SelectedConsist;
+                ExploreStartHour = form.SelectedStartHour;
+                ExploreSeason = form.SelectedSeason;
+                ExploreWeather = form.SelectedWeather;
+                return true;
+            }
+            return false;
         }
 
         private void buttonRouteDtls_Click(object sender, EventArgs e)
@@ -326,6 +362,5 @@ namespace ORTS
         {
             DialogResult = DialogResult.Retry;
         }
-
     }
 }

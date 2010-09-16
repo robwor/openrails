@@ -45,6 +45,15 @@ namespace ORTS
         public int TileZ;
         public Matrix XNAMatrix = new Matrix();   // relative to center of tile
 
+        public WorldPosition() { }
+        
+        public WorldPosition(WorldPosition copy) // Copy constructor
+        {
+            TileX = copy.TileX;
+            TileZ = copy.TileZ;
+            XNAMatrix = copy.XNAMatrix;
+        }
+        
         public WorldLocation WorldLocation   // provided in MSTS coordinates
         {
             get
@@ -82,22 +91,22 @@ namespace ORTS
 
             while (TileLocation.X > 1024)
             {
-                TileLocation.X -= 1024;
+                TileLocation.X -= 2048;
                 TileX++;
             }
             while (TileLocation.X < -1024)
             {
-                TileLocation.X += 1024;
+				TileLocation.X += 2048;
                 TileX--;
             }
             while (TileLocation.Z > 1024)
             {
-                TileLocation.Z -= 1024;
+				TileLocation.Z -= 2048;
                 TileZ++;
             }
             while (TileLocation.Z < -1024)
             {
-                TileLocation.Z += 1024;
+				TileLocation.Z += 2048;
                 TileZ--;
             }
 
@@ -112,11 +121,18 @@ namespace ORTS
         public int TileZ;
         public Vector3 Location = new Vector3();  // relative to center of tile in MSTS coordinates
 
-        public WorldLocation()
-        {
-        }
+		public WorldLocation()
+		{
+		}
 
-        public WorldLocation(int tileX, int tileZ, float x, float y, float z)
+		public WorldLocation(WorldLocation worldLocation)
+		{
+			TileX = worldLocation.TileX;
+			TileZ = worldLocation.TileZ;
+			Location = worldLocation.Location;
+		}
+
+		public WorldLocation(int tileX, int tileZ, float x, float y, float z)
         {
             TileX = tileX;
             TileZ = tileZ;
@@ -139,22 +155,22 @@ namespace ORTS
         {
             while (Location.X > 1024)
             {
-                Location.X -= 1024;
+				Location.X -= 2048;
                 TileX++;
             }
             while (Location.X < -1024)
             {
-                Location.X += 1024;
+				Location.X += 2048;
                 TileX--;
             }
             while (Location.Z > 1024)
             {
-                Location.Z -= 1024;
+				Location.Z -= 2048;
                 TileZ++;
             }
             while (Location.Z < -1024)
             {
-                Location.Z += 1024;
+				Location.Z += 2048;
                 TileZ--;
             }
         }
@@ -169,5 +185,15 @@ namespace ORTS
 
             return dx * dx + dy * dy + dz * dz;
         }
-    }
+
+		public static Vector3 GetDistance(WorldLocation location1, WorldLocation location2)
+		{
+			return new Vector3(location2.Location.X - location1.Location.X + (location2.TileX - location1.TileX) * 2048, location2.Location.Y - location1.Location.Y, location2.Location.Z - location1.Location.Z + (location2.TileZ - location1.TileZ) * 2048);
+		}
+
+		public static Vector2 GetDistance2D(WorldLocation location1, WorldLocation location2)
+		{
+			return new Vector2(location2.Location.X - location1.Location.X + (location2.TileX - location1.TileX) * 2048, location2.Location.Z - location1.Location.Z + (location2.TileZ - location1.TileZ) * 2048);
+		}
+	}
 }

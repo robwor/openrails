@@ -20,13 +20,13 @@
 
 
 using System;
-using System.Windows.Forms;
-using System.IO;
-using MSTS;
-using System.Threading;
-using Microsoft.Win32;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Windows.Forms;
+using Microsoft.Win32;
+using MSTS;
 
 namespace ORTS
 {
@@ -41,66 +41,120 @@ namespace ORTS
         public static Random Random = new Random();  // primary random number generator used throughout the program
         public static Simulator Simulator; 
         private static Viewer3D Viewer;
+        public static bool TrainLightsEnabled = false;  // control parsing and displaying of train lights
+        public static int BrakePipeChargingRatePSIpS = 21; // temporary option to control player train brakes
+        public static bool GraduatedRelease = false;
 
 
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
-        static void Main(string[] args)
-        {
-            SetBuildRevision();
+		static void Main(string[] args)
+		{
+			SetBuildRevision();
 
-            UserDataFolder = Path.GetDirectoryName( Path.GetDirectoryName(Application.UserAppDataPath));
+			UserDataFolder = Path.GetDirectoryName(Path.GetDirectoryName(Application.UserAppDataPath));
 
-            RegistryKey = "SOFTWARE\\OpenRails\\ORTS";
+			RegistryKey = "SOFTWARE\\OpenRails\\ORTS";
 
-            if (IsWarningsOn()) EnableLogging();
+			EnableLogging();
 
-            if (!ValidateArgs(args)) return;
+			try
+			{
+				RegistryKey RK = Registry.CurrentUser.OpenSubKey(Program.RegistryKey);
+				if (RK != null)
+				{
+					TrainLightsEnabled = (1 == (int)RK.GetValue("TrainLights", 0));
+					BrakePipeChargingRatePSIpS = (int)RK.GetValue("BrakePipeChargingRate", (int)21);
+					GraduatedRelease = (1 == (int)RK.GetValue("GraduatedRelease", 0));
+                    if ((1 == (int)RK.GetValue("MSTSBINSound", 0)))
+                        EventID.SetMSTSBINCompatible();
+				}
+			}
+			catch (Exception error)
+			{
+				Trace.WriteLine(error);
+			}
 
-            if (args[0] == "-runtest")
+			// Look for an action to perform.
+			var action = "";
+			var actions = new[] { "start", "resume", "random", "runtest" };
+			foreach (var possibleAction in actions)
+				if (args.Contains("-" + possibleAction) || args.Contains("/" + possibleAction))
+					action = possibleAction;
 
-                Testing.Test();
+			// Collect all non-action settings.
+			var settings = args.Where(a => (a.StartsWith("-") || a.StartsWith("/")) && !actions.Contains(a.Substring(1))).Select(a => a.Substring(1));
 
-            else if (args[0] == "-random")
+			// Collect all non-options as data.
+			var data = args.Where(a => !a.StartsWith("-") && !a.StartsWith("/")).ToArray();
 
-                Start(Testing.GetRandomActivity());
+			// No action, check for data; for now assume any data is good data.
+			if ((action.Length == 0) && (data.Length > 0))
+				action = "start";
 
-            else if (args[0] == "-resume")
-
-                Resume();
-
-            else
-
-                Start(args[0]);
-
-        }
+			// Do the action specified or write out some help.
+			switch (action)
+			{
+				case "start":
+				case "start-profile":
+					Start(settings, data);
+					break;
+				case "resume":
+					Resume(settings);
+					break;
+				case "random":
+					Start(settings, new[] { Testing.GetRandomActivity() });
+					break;
+				case "runtest":
+					Testing.Test();
+					break;
+				default:
+					Console.WriteLine("Missing activity file name");
+					Console.WriteLine("   ie RunActivity \"c:\\program files\\microsoft games\\train simulator\\routes\\usa1\\activites\\xxx.act\"");
+					Console.WriteLine();
+					Console.WriteLine("Or launch the OpenRails program and select from the menu.");
+					Console.ReadKey();
+					break;
+			}
+		}
 
 
         /// <summary>
         /// Run the specified activity from the beginning.
         /// </summary>
-        public static void Start(string parameter)
-        {
-            try
-            {
-                ActivityPath = parameter;
+		static void Start(IEnumerable<string> settings, string[] args)
+		{
+			try
+			{
+				ActivityPath = args[0];
 
-                Console.WriteLine("Starting Activity = " + ActivityPath);
-                Console.WriteLine();
-                Console.WriteLine("------------------------------------------------");
+				if (args.Length == 1)
+					Console.WriteLine("Starting Activity = " + args[0]);
+				else
+					Console.WriteLine("Starting Explore = " + args[0] + " " + args[1]);
+				Console.WriteLine();
+				Console.WriteLine("------------------------------------------------");
 
-                Simulator = new Simulator(ActivityPath);
-                Simulator.Start();
-                Viewer = new Viewer3D(Simulator);
-                Viewer.Run();
-            }
-            catch (System.Exception error)
-            {
-                Console.Error.WriteLine(error.Message);
-                MessageBox.Show(error.Message);
-            }
-        }
+				Simulator = new Simulator(args[0]);
+				if (args.Length == 1)
+					Simulator.SetActivity(args[0]);
+				else
+					Simulator.SetExplore(args[0], args[1], args[2], args[3], args[4]);
+				Simulator.Start();
+				Viewer = new Viewer3D(Simulator);
+				if (!settings.Contains("skip-user-settings"))
+					Viewer.LoadUserSettings();
+				SetViewerSettings(Viewer, settings);
+				Viewer.Initialize();
+				Viewer.Run();
+			}
+			catch (Exception error)
+			{
+				Trace.WriteLine(error);
+				MessageBox.Show(error.ToString());
+			}
+		}
 
 
         /// <summary>
@@ -116,67 +170,68 @@ namespace ORTS
                 using (BinaryWriter outf = new BinaryWriter(new FileStream(UserDataFolder + "\\SAVE.BIN", FileMode.Create, FileAccess.Write)))
                 {
                     outf.Write(ActivityPath);
+                    outf.Write(Simulator.ExploreConFile != null);
+                    if (Simulator.ExploreConFile != null)
+                        outf.Write(Simulator.ExploreConFile);
                     Simulator.Save(outf);
                     Viewer.Save(outf);
                     Console.WriteLine("\nSaved");
                 }
             }
-            catch (System.Exception error)
+            catch (Exception error)
             {
-                Console.Error.WriteLine("While Saving: " + error.Message);
+				Trace.WriteLine(error);
+                MessageBox.Show(error.ToString());
             }
         }
 
         /// <summary>
         /// Resume a saved game.
         /// </summary>
-        public static void Resume()
+		static void Resume(IEnumerable<string> settings)
         {
             try
             {
                 using( BinaryReader inf = new BinaryReader( new FileStream( UserDataFolder + "\\SAVE.BIN", FileMode.Open, FileAccess.Read )) )
                 {
                     ActivityPath = inf.ReadString();
+                    bool explore = inf.ReadBoolean();
+                    string conFile = null;
+                    if (explore)
+                        conFile = inf.ReadString();
 
                     Console.WriteLine("Restoring Activity = " + ActivityPath);
                     Console.WriteLine();
                     Console.WriteLine("------------------------------------------------");
 
                     Simulator = new Simulator(ActivityPath);
+                    if (explore)
+                        Simulator.SetExplore(ActivityPath, conFile, "12", "0", "0");
+                    else
+                        Simulator.SetActivity(ActivityPath);
                     Simulator.Restore(inf);
                     Viewer = new Viewer3D(Simulator);
-                    Viewer.Restore(inf);
+					if (!settings.Contains("skip-user-settings"))
+						Viewer.LoadUserSettings();
+					SetViewerSettings(Viewer, settings);
+					Viewer.Initialize();
+					Viewer.Restore(inf);
                 }
                 Viewer.Run();
             }
-            catch (System.Exception error)
+            catch (Exception error)
             {
-                Console.Error.WriteLine("While restoring: " + error.Message);
+				Trace.WriteLine(error);
+                MessageBox.Show(error.ToString());
             }
         }
 
-
-        /// <summary>
-        /// If the command line arguments are invalid, 
-        /// display an error message and return false.
-        /// </summary>
-        /// <param name="args"></param>
-        public static bool ValidateArgs(string[] args)
-        {
-            if (args.Length == 0)
-            {
-                Console.WriteLine("Missing activity file name\r\n   ie RunActivity \"c:\\program files\\microsoft games\\train simulator\\routes\\usa1\\activites\\xxx.act\"\r\n\r\nOr launch the OpenRails program and select from the menu.");
-                Console.ReadKey();
-                return false;
-            }
-            return true;
-        }
 
         /// <summary>
         /// Check the registry and return true if the OpenRailsLog.TXT
         /// file should be created.
         /// </summary>
-        public static bool IsWarningsOn()
+        static bool IsWarningsOn()
         {
             // TODO Read from Registry
             return true;
@@ -186,26 +241,58 @@ namespace ORTS
         /// <summary>
         /// Set up to capture all console and error I/O into a  log file.
         /// </summary>
-        public static void EnableLogging()
+        static void EnableLogging()
         {
-            string warningLogFileName = System.Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + @"\OpenRailsLog.txt";
-            File.Delete(warningLogFileName);
-            ErrorLogger errorLogger = new ErrorLogger(warningLogFileName);
-            TraceListener traceListener = new System.Diagnostics.TextWriterTraceListener(errorLogger);
-            System.Diagnostics.Debug.Listeners.Insert(0, traceListener);
-            System.Diagnostics.Trace.Listeners.Insert(0, traceListener);
-            Console.SetError(errorLogger);
-            Console.SetOut(new Logger(warningLogFileName));
-            Console.WriteLine("SVN V = " + Revision);
-            Console.WriteLine("BUILD = " + Build);
-            Console.WriteLine();
+			if (IsWarningsOn())
+			{
+				string logFileName = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) + @"\OpenRailsLog.txt";
+				File.Delete(logFileName);
+
+				// Make Console.Out go to the log file AND the output stream.
+				Console.SetOut(new FileTeeLogger(logFileName, Console.Out));
+				// Make Console.Error go to the new Console.Out.
+				Console.SetError(Console.Out);
+			}
+
+			// Captures Trace.Trace* calls and others and formats.
+			var traceListener = new ORTraceListener(Console.Out);
+			traceListener.TraceOutputOptions = TraceOptions.Callstack;
+			// Trace.Listeners and Debug.Listeners are the same list.
+			Trace.Listeners.Add(traceListener);
+
+			Console.WriteLine("SVN V = " + Revision);
+			Console.WriteLine("BUILD = " + Build);
+			Console.WriteLine();
         }
+
+		static void SetViewerSettings(Viewer3D viewer, IEnumerable<string> settings)
+		{
+			foreach (var setting in settings)
+			{
+				var data = setting.ToLowerInvariant().Split('=', ':');
+				if (Enum.GetNames(typeof(BoolSettings)).Contains(data[0], StringComparer.OrdinalIgnoreCase))
+				{
+					viewer.SettingsBool[(int)Enum.Parse(typeof(BoolSettings), data[0], true)] = (data.Length == 1) || new[] { "true", "yes", "on", "1" }.Contains(data[1]);
+				}
+				else if (Enum.GetNames(typeof(IntSettings)).Contains(data[0], StringComparer.OrdinalIgnoreCase))
+				{
+					if (data.Length < 2)
+						Console.WriteLine("Option '" + setting + "' missing value.");
+					else
+						viewer.SettingsInt[(int)Enum.Parse(typeof(IntSettings), data[0], true)] = int.Parse(data[1]);
+				}
+				else if (data[0] != "skip-user-settings")
+				{
+					Console.WriteLine("Option '" + data[0] + "' is unknown.");
+				}
+			}
+		}
 
         /// <summary>
         /// Set up the global Build and Revision variables
         /// from assembly data and the revision.txt file.
         /// </summary>
-        public static void SetBuildRevision()
+        static void SetBuildRevision()
         {
             try
             {
@@ -301,9 +388,10 @@ namespace ORTS
                     {
                         WFile file = new WFile(filename);
                     }
-                    catch (System.Exception error)
+                    catch (Exception error)
                     {
-                        Console.Error.WriteLine("While testing " + filename + "\r\n   " + error.Message );
+                        Trace.WriteLine(filename);
+						Trace.WriteLine(error);
                     }
 
             } // TestAll

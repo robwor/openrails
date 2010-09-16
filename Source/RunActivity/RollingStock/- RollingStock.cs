@@ -1,17 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using MSTS;
+using System.Diagnostics;
 using System.IO;
-using Microsoft.Xna.Framework;
 using System.Reflection;
+using MSTS;
 
 namespace ORTS
 {
     public static class RollingStock
     {
-        public static TrainCar Load(string wagFilePath)
+        public static TrainCar Load(string wagFilePath, TrainCar previousCar)
         {
             GenericWAGFile wagFile = SharedGenericWAGFileManager.Get(wagFilePath);  
             TrainCar car;
@@ -28,30 +26,30 @@ namespace ORTS
                     car = (TrainCar)customDLL.CreateInstance("ORTS.CustomCar", true, BindingFlags.CreateInstance, null, args, null, null);
                     return car;
                 }
-                catch (System.Exception error)
+                catch (Exception error)
                 {
-                    Console.Error.WriteLine(error.Message);
+                    Trace.WriteLine(error);
                     // on error, fall through and try loading without the custom dll
                 }
             }
             if (!wagFile.IsEngine)
             {   
                 // its an ordinary MSTS wagon
-                car = new MSTSWagon(wagFilePath);
+                car = new MSTSWagon(wagFilePath, previousCar);
             }
             else
             {   
                 // its an ordinary MSTS engine of some type.
                 if (wagFile.Engine.Type == null)
-                    throw new System.Exception(wagFilePath + "\r\n\r\nEngine type missing");
+                    throw new InvalidDataException(wagFilePath + "\r\n\r\nEngine type missing");
 
                 switch (wagFile.Engine.Type.ToLower())
                 {
                         // TODO complete parsing of proper car types
-                    case "electric": car = new MSTSElectricLocomotive(wagFilePath); break;
-                    case "steam": car = new MSTSSteamLocomotive(wagFilePath); break;
-                    case "diesel": car = new MSTSDieselLocomotive(wagFilePath); break;
-                    default: throw new System.Exception(wagFilePath + "\r\n\r\nUnknown engine type: " + wagFile.Engine.Type);
+                    case "electric": car = new MSTSElectricLocomotive(wagFilePath, previousCar); break;
+                    case "steam": car = new MSTSSteamLocomotive(wagFilePath, previousCar); break;
+                    case "diesel": car = new MSTSDieselLocomotive(wagFilePath, previousCar); break;
+					default: throw new InvalidDataException(wagFilePath + "\r\n\r\nUnknown engine type: " + wagFile.Engine.Type);
                 }
             }
             return car;
@@ -64,9 +62,9 @@ namespace ORTS
             wagon.Save(outf);
         }
 
-        public static TrainCar Restore(BinaryReader inf, Train train)
+        public static TrainCar Restore(BinaryReader inf, Train train, TrainCar previousCar)
         {
-            TrainCar car = Load(inf.ReadString());
+            TrainCar car = Load(inf.ReadString(), previousCar);
             car.Train = train;
             car.Restore(inf);
             return car;

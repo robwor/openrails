@@ -11,27 +11,38 @@
 
 
 using System;
-using System.Collections;
-using System.IO;
+using System.Collections.Generic;
 using System.Diagnostics;
-using Microsoft.Win32;
+using System.Globalization;
+using System.IO;
 using System.Text;
 using Microsoft.Xna.Framework;
 
 namespace MSTS
 {
-	public class STFError: System.Exception
-		// STF errors display the last few lines of the STF file when reporting errors.
+	public class STFException : Exception
+	// STF errors display the last few lines of the STF file when reporting errors.
 	{
-        public static void Report(STFReader f, string message) { Console.Error.WriteLine("STF Error in " + f.FileName + "\r\n   Line " + f.LineNumber.ToString() + ": " + message); }
-
-        
-		public STFError( STFReader f, string message ): base( "STF Error in " + f.FileName + "\r\n   Line " + f.LineNumber.ToString() + ": " + message )
+		public static void Report(STFReader reader, Exception error)
 		{
-			ProblemFile = f;
+			Trace.TraceError("STF error in {0}:line {1}", reader.FileName, reader.LineNumber);
+			Trace.WriteLine(error);
 		}
-		STFReader ProblemFile;
-         
+
+		public static void ReportError(STFReader reader, string message)
+		{
+			Trace.TraceError("{2} in {0}:line {1}", reader.FileName, reader.LineNumber, message);
+		}
+
+		public static void ReportWarning(STFReader reader, string message)
+		{
+			Trace.TraceWarning("{2} in {0}:line {1}", reader.FileName, reader.LineNumber, message);
+		}
+
+		public STFException(STFReader reader, string message)
+			: base(String.Format("{2} in {0}:line {1}", reader.FileName, reader.LineNumber, message))
+		{
+		}
 	}
 
 
@@ -41,6 +52,7 @@ namespace MSTS
 		public string FileName;  // only needed for error reporting purposes
         public int LineNumber = 1;    // current line number for error reporting
         public string Header;
+        private STFReader IncludeReader = null;
        
 		public STFReader( string filename )
         {
@@ -72,7 +84,7 @@ namespace MSTS
             {
                 c = f.Read();
                 if( c != -1 )
-                    throw new System.Exception("Problem peeking eof in compressed file.");
+                    throw new InvalidDataException("Problem peeking eof in compressed file.");
             }
             return c; 
         }
@@ -136,15 +148,42 @@ namespace MSTS
             return ReadString();
         }
 
+        public string ReadTokenNoComment()
+        {
+            for (; ; )
+            {
+                string token = ReadString();
+                if (token.StartsWith("_") || token.StartsWith("#"))
+                    SkipBlock();
+                else
+                {
+                    string lower = token.ToLower();
+                    if (lower == "skip" || lower == "comment")
+                        SkipBlock();
+                    else
+                        return token;
+                }
+            }
+        }
+
         /// <summary>
         /// 
         /// </summary>
         /// <returns></returns>
         public string ReadString()
         {
+            if (IncludeReader != null)
+            {
+                string s = IncludeReader.ReadString();
+                UpdateTree(s);
+                if (s != "" || !IncludeReader.EOF())
+                    return s;
+                IncludeReader = null;
+            }
+
             int c = 0;
 
-            StringBuilder stringText = new StringBuilder("", 1000);
+            var stringText = new StringBuilder();
 
             // Read leading whitespace 
             while (true)
@@ -226,8 +265,17 @@ namespace MSTS
                 }
                 while ( !IsWhiteSpace(c) );
             }
-            UpdateTree(stringText.ToString());
-            return stringText.ToString();
+
+            string result= stringText.ToString();
+            if (treeLevel == 0 && result == "include")
+            {
+                string filename = ReadStringBlock();
+                IncludeReader = new STFReader(Path.GetDirectoryName(FileName) + @"\" + filename);
+                return ReadString();
+            }
+
+            UpdateTree(result);
+            return result;
         }
 
 
@@ -288,7 +336,7 @@ namespace MSTS
                 case "comment": SkipBlock(); break;
                 default: 
                     if (!token.StartsWith("#"))
-                        STFError.Report(this, "Unexpected " + token);
+                        STFException.ReportError(this, "Unexpected " + token);
                     SkipBlock();
                     break;
             }
@@ -329,7 +377,7 @@ namespace MSTS
                 && !extraTokens.StartsWith( "comment", StringComparison.OrdinalIgnoreCase ) 
                 && !extraTokens.StartsWith( "skip", StringComparison.OrdinalIgnoreCase ) 
                 )
-                STFError.Report(this, "Ignoring extra data: " + extraTokens);
+                STFException.ReportWarning(this, "Ignoring extra data: " + extraTokens);
 
         }
 		
@@ -344,185 +392,156 @@ namespace MSTS
             if (s != target)
             {
                 if (s == "")
-                    STFError.Report(this, "Unexpected end of file");
+                    STFException.ReportError(this, "Unexpected end of file");
                 else
-                    STFError.Report(this, target + " Not Found - instead found " + s);
+                    STFException.ReportError(this, target + " Not Found - instead found " + s);
             }
 		}
 
 
 
 		public int ReadHex()
-			// Note:  end of file should return FormatException.
-			/* Throws:
-				IOException An I/O error occurs. 
-				STFError			
-			*/
+		// Note:  end of file should return FormatException.
+		/* Throws:
+			IOException An I/O error occurs. 
+			STFError			
+		*/
 		{
 			string token = ReadToken();
 			try
 			{
-				return int.Parse( token, System.Globalization.NumberStyles.HexNumber );
+				return int.Parse(token, System.Globalization.NumberStyles.HexNumber);
 			}
-			catch( System.Exception e )
+			catch (Exception e)
 			{
-				STFError.Report( this, e.Message ) ;
-                return 0;
+				STFException.Report(this, e);
+				return 0;
 			}
-
 		}
 
-        public uint ReadFlags()
-        {
-            string token = ReadToken();
-            try
-            {
-                return uint.Parse(token, System.Globalization.NumberStyles.HexNumber);
-            }
-            catch (System.Exception e)
-            {
-                STFError.Report(this, e.Message);
-                return 0;
-            }
-        }
+		public uint ReadFlags()
+		{
+			string token = ReadToken();
+			try
+			{
+				return uint.Parse(token, System.Globalization.NumberStyles.HexNumber);
+			}
+			catch (Exception e)
+			{
+				STFException.Report(this, e);
+				return 0;
+			}
+		}
 
 		public int ReadInt()
-			// Note:  end of file should return FormatException.
-			/* Throws:
-				IOException An I/O error occurs. 
-				STFError			
-			*/
 		{
-			try
-			{
-                double value = ReadDouble();
-				return (int) value;
-			}
-			catch( System.Exception e )
-			{
-				STFError.Report( this, e.Message ) ;
-                return 0;
-			}
-
+			return (int)ReadDouble();
 		}
-		public uint ReadUInt()
-			// Note:  end of file should return FormatException.
-			/* Throws:
-				IOException An I/O error occurs. 
-				STFError
-			*/
-		{
-			try
-			{
-                double value = ReadDouble();
-				return (uint) value;
-			}
-			catch( System.Exception e )
-			{
-				STFError.Report( this, e.Message );
-                return 0;
-			}
 
+		public uint ReadUInt()
+		{
+			return (uint)ReadDouble();
 		}
 
         public float ReadFloat()
-        {
-            return (float)ReadDouble();
-        }
+		{
+			return (float)ReadDouble();
+		}
 
 		/// <summary>
 		/// Return double, scaled to meters, grams, newtons if needed
 		/// </summary>
 		/// <returns></returns>
 		public double ReadDouble()
-			// Note:  end of file should return FormatException.
-			/* Throws:
-				IOException An I/O error occurs. 
-				STFError
-			*/
-			// TODO, complete parsing of units ie, km, etc - some are done but not all
+		// Note:  end of file should return FormatException.
+		/* Throws:
+			IOException An I/O error occurs. 
+			STFError
+		*/
 		{
 			double scale = 1.0;
 			string token = ReadToken();
-            token = token.ToLower();
+
+			// TODO complete parsing of units ie, km, etc - some are done but not all.
+			token = token.ToLower();
 			int i;
 			// Add handling of units
-			i = token.IndexOf( "/2" );
-			if( i != -1 )
+			i = token.IndexOf("/2", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale /= 2;
-				token = token.Substring( 0,i );
+				token = token.Substring(0, i);
 			}
-			i = token.IndexOf( "cm" );
-			if( i != -1 )
+			i = token.IndexOf("cm", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 0.01;
-				token = token.Substring( 0,i );
+				token = token.Substring(0, i);
 			}
-			i = token.IndexOf( "mm" );
-			if( i != -1 )
+			i = token.IndexOf("mm", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 0.001;
-				token = token.Substring( 0,i );
+				token = token.Substring(0, i);
 			}
-			i = token.IndexOf( "ft" );
-			if( i != -1 )
+			i = token.IndexOf("ft", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 0.3048;
-				token = token.Substring( 0,i );
+				token = token.Substring(0, i);
 			}
-			i = token.IndexOf( "in" );
-			if( i != -1 )
+			i = token.IndexOf("in", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 0.0254;
-				token = token.Substring( 0,i );
+				token = token.Substring(0, i);
 			}
-			i = token.IndexOf( "kn" );
-			if( i != -1 )
+			i = token.IndexOf("kn", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 1e3;
-				token = token.Substring( 0,i );
+				token = token.Substring(0, i);
 			}
-            i = token.IndexOf("n");
-            if (i != -1)
-            {
-                scale *= 1e0;
-                token = token.Substring(0, i);
-            }
-            i = token.IndexOf("t");
-			if( i != -1 )
+			i = token.IndexOf("n", StringComparison.Ordinal);
+			if (i != -1)
+			{
+				scale *= 1e0;
+				token = token.Substring(0, i);
+			}
+			i = token.IndexOf("t", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 1e3;
-				token = token.Substring( 0,i ); // return kg
+				token = token.Substring(0, i); // return kg
 			}
-			i = token.IndexOf( "kg" );
-			if( i != -1 )
+			i = token.IndexOf("kg", StringComparison.Ordinal);
+			if (i != -1)
 			{
 				scale *= 1;
-				token = token.Substring( 0,i ); // return kg
+				token = token.Substring(0, i); // return kg
 			}
-            i = token.IndexOf("lb");
-            if (i != -1)
-            {
-                scale *= 0.00045359237;  
-                token = token.Substring(0, i); // return kg
-            }
-            i = token.IndexOf('m');
-			if( i != -1 )
-				token = token.Substring(0,i );
+			i = token.IndexOf("lb", StringComparison.Ordinal);
+			if (i != -1)
+			{
+				scale *= 0.00045359237;
+				token = token.Substring(0, i); // return kg
+			}
+			i = token.IndexOf("m", StringComparison.Ordinal);
+			if (i != -1)
+				token = token.Substring(0, i);
 
-            i = token.IndexOf(',');   // MSTS ignores a comma at the end of the number
-            if (i != -1)
-                token = token.Substring(0, i); 
-			
+			i = token.IndexOf(",", StringComparison.Ordinal);   // MSTS ignores a comma at the end of the number
+			if (i != -1)
+				token = token.Substring(0, i);
+
 			try
 			{
-				return double.Parse( token, new System.Globalization.CultureInfo( "en-US") ) * scale;
+				return double.Parse(token, CultureInfo.InvariantCulture) * scale;
 			}
-			catch( System.Exception e )
+			catch (Exception e)
 			{
-				STFError.Report( this, e.Message );
-                return 0;
+				STFException.Report(this, e);
+				return 0;
 			}
 		}
 
@@ -540,40 +559,40 @@ namespace MSTS
 			return s;
 		}
 		public uint ReadUIntBlock()
-			// Reads a () enclosed int
-			/* Throws
-					STFError( this, "( Not Found" )
-					IOException An I/O error occurs. 
-			*/
+		// Reads a () enclosed int
+		/* Throws
+				STFError( this, "( Not Found" )
+				IOException An I/O error occurs. 
+		*/
 		{
 			try
 			{
-                double value = ReadDoubleBlock();                
+				double value = ReadDoubleBlock();
 				return (uint)value;
 			}
-			catch( System.Exception e )
+			catch (Exception e)
 			{
-				STFError.Report( this, e.Message );
-                return 0;
+				STFException.Report(this, e);
+				return 0;
 			}
 		}
 
 		public int ReadIntBlock()
-			// Reads a () enclosed int
-			/* Throws
-					STFError( this, ") Not Found" )
-					IOException An I/O error occurs. 
-			*/
+		// Reads a () enclosed int
+		/* Throws
+				STFError( this, ") Not Found" )
+				IOException An I/O error occurs. 
+		*/
 		{
 			try
 			{
-                double value = ReadDoubleBlock();
-                return (int)value;
+				double value = ReadDoubleBlock();
+				return (int)value;
 			}
-			catch( System.Exception e )
+			catch (Exception e)
 			{
-				STFError.Report( this, e.Message );
-                return 0;
+				STFException.Report(this, e);
+				return 0;
 			}
 		}
 
@@ -596,27 +615,27 @@ namespace MSTS
 		}
 
 		public bool ReadBoolBlock()
-			// Reads a () enclosed bool block
-			/* Throws
-					STFError - syntax or numeric conversion
-					IOException An I/O error occurs. 
-			*/
+		// Reads a () enclosed bool block
+		/* Throws
+				STFError - syntax or numeric conversion
+				IOException An I/O error occurs. 
+		*/
 		{
-            VerifyStartOfBlock();
+			VerifyStartOfBlock();
 			string s = ReadToken();
-			if( s == ")" )
+			if (s == ")")
 				return true;  // assume a null block is true
 			int i;
 			try
 			{
 				i = int.Parse(s);
 			}
-			catch( System.Exception e )
+			catch (Exception e)
 			{
-				STFError.Report( this, e.Message );
-                return false;
+				STFException.Report(this, e);
+				return false;
 			}
-            VerifyEndOfBlock();
+			VerifyEndOfBlock();
 			return i != 0;
 		}
 
@@ -671,7 +690,7 @@ namespace MSTS
                 string token = this.ReadDelimitedToken();
                 s += token;
                 if (token.Trim() == "")
-                    throw (new STFError(this, "Missing )"));
+                    throw (new STFException(this, "Missing )"));
                 if (token.Trim() == "(")
                     ++depth;
                 if (token.Trim() == ")")
@@ -690,7 +709,7 @@ namespace MSTS
         {
             int c = 0;
 
-            StringBuilder tokenText = new StringBuilder("", 1000);
+            var tokenText = new StringBuilder();
 
             // Read leading whitespace 
             while (true)
@@ -780,65 +799,42 @@ namespace MSTS
         /// <param name="token"></param>
         public void ThrowUnknownToken(string token)
         {
-            throw new STFError(this, "Unknown token " + token);
+            throw new STFException(this, "Unknown token " + token);
         }
 
 
 		// HIERARCHICAL TREE VIEW OF FILE POSITION
 
-		private StringBuilder tree = new StringBuilder( "", 1000 );
+		private List<string> tree = new List<string>();
 		private int treeLevel = 0;
 
 		public string Tree
 		{
-			get{ return tree.ToString(); }
+			get { return String.Join("", tree.ToArray()); }
 		}
 
-        private int IndexOf(StringBuilder tree, char target, int iStart)
-        {
-            for (int i = iStart; i < tree.Length; ++i)
-                if (tree[i] == target)
-                    return i;
-            return -1;
-        }
-
-        private void UpdateTree(string delimitedToken)
+		private void UpdateTree(string delimitedToken)
 		// A delimited token may include leading and trailing whitespace characters
-
 		{
 			string token = delimitedToken.Trim();
-			if( token == "(" )
+			if (token == "(")
 			{
-				tree.Append( "(" );
 				++treeLevel;
+				tree.Add("(");
 			}
-			else if( token ==  ")"  )
+			else if (token == ")")
 			{
-				int i = -1;
-				for( int n = 0; n < treeLevel; ++n )
-				{
-					++i;
-					i = IndexOf(tree,'(',i );
-				}
-				if( i < 0 )
-                    i = 0;  // S/B throw new STFError(this, "Mismatched parenthesis"); but MSTS just ignores these errors so we will also.
-				tree.Length = i;       // remove (
-				-- treeLevel;
+				if (treeLevel > 0)
+					--treeLevel;
+				tree.RemoveRange(treeLevel * 2 + 1, tree.Count - treeLevel * 2 - 1);
 			}
 			else
 			{
-				int n = treeLevel;
-				int i = 0;
-				while( n-- > 0 )
-				{
-					i = IndexOf( tree, '(',i );
-					++i;
-				}
-				tree.Length = i;
-				tree.Append( token );
+				if (tree.Count > treeLevel * 2)
+					tree[treeLevel * 2] = token;
+				else
+					tree.Add(token);
 			}
 		}
 	}
-
-
 }

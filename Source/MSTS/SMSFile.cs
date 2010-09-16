@@ -168,7 +168,7 @@ namespace MSTS
             }
 
             if (count != this.Count)
-                STFError.Report(f,"Stream count mismatch");  
+                STFException.ReportError(f,"Stream count mismatch");  
         }
     }
 
@@ -225,7 +225,7 @@ namespace MSTS
                 case "variable1controlled": Control = Controls.Variable1Controlled; break;
                 case "variable2controlled": Control = Controls.Variable2Controlled; break;
                 case "variable3controlled": Control = Controls.Variable3Controlled; break;
-                default: STFError.Report(f, "Unexpected " + controlString); break; 
+                default: STFException.ReportError(f, "Unexpected " + controlString); break; 
             }
             while (!f.EndOfBlock())
             {
@@ -245,6 +245,14 @@ namespace MSTS
                         break;
                     case "granularity": Granularity = f.ReadFloatBlock(); break;
                     default: f.SkipUnknownBlock(token); break;
+                }
+            }
+
+            if (Control == Controls.Variable2Controlled && CurvePoints[CurvePoints.Length - 1].X <= 1)
+            {
+                for (int i = 0; i < CurvePoints.Length; i++)
+                {
+                    CurvePoints[i].X *= 100f;
                 }
             }
         }
@@ -283,7 +291,7 @@ namespace MSTS
 
             foreach (Trigger trigger in this)
                 if (trigger.SoundCommand == null)
-                    STFError.Report( f, "Trigger lacks a sound command");
+                    STFException.ReportError( f, "Trigger lacks a sound command");
         }
     }
 
@@ -307,7 +315,7 @@ namespace MSTS
                 case "setstreamvolume":
                     ++playcommandcount;
                     if (playcommandcount > 1)
-                        STFError.Report( f, "MultiplePlayCommands");
+                        STFException.ReportError( f, "MultiplePlayCommands");
                     break;
                 default:
                     break;
@@ -388,7 +396,7 @@ namespace MSTS
                 case "variable3_inc_past": Event = Events.Variable3_Inc_Past; break;
                 case "variable3_dec_past": Event = Events.Variable3_Dec_Past; break;
                 default:
-                    STFError.Report(f, "Unexpected " + eventString);
+                    STFException.ReportError(f, "Unexpected " + eventString);
                     break;  // MSTS ignores unrecognized tokens
             }
 
@@ -532,7 +540,7 @@ namespace MSTS
                         }
                         else  // MSTS skips extra files
                         {
-                            STFError.Report(f, "File count mismatch");
+                            STFException.ReportError(f, "File count mismatch");
                             f.SkipBlock();
                         }
                         break;
@@ -543,7 +551,7 @@ namespace MSTS
                         {
                             case "randomselection": SelectionMethod = SelectionMethods.RandomSelection; break;
                             case "sequentialselection": SelectionMethod = SelectionMethods.SequentialSelection; break;
-                            default: STFError.Report(f, "Unknown selection method " + s); break;
+                            default: STFException.ReportError(f, "Unknown selection method " + s); break;
                         }
                         f.VerifyEndOfBlock(); 
                         break;

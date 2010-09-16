@@ -9,12 +9,10 @@
 /// Use of the code for any other purpose or distribution of the code to anyone else
 /// is prohibited without specific written permission from admin@openrails.org.
  */
-using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Diagnostics;
 using System.IO;
-using Microsoft.Xna.Framework;
+using System.Linq;
 using MSTS;
 
 namespace ORTS
@@ -33,7 +31,7 @@ namespace ORTS
         /// First creates all the nodes and then links them together into a main list
         /// with optional parallel siding list.
         /// </summary>
-        public AIPath(PATFile patFile, TDBFile TDB, TSectionDatFile tsectiondat)
+        public AIPath(PATFile patFile, TDBFile TDB, TSectionDatFile tsectiondat, string filename)
         {
             TrackDB = TDB.TrackDB;
             TSectionDat = tsectiondat;
@@ -51,6 +49,11 @@ namespace ORTS
                     node.NextMainTVNIndex = node.FindTVNIndex(node.NextMainNode, TDB, tsectiondat);
                     if (node.JunctionIndex >= 0)
                         node.IsFacingPoint = TestFacingPoint(node.JunctionIndex, node.NextMainTVNIndex);
+                    if (node.NextMainTVNIndex < 0)
+                    {
+                        node.NextMainNode = null;
+                        Trace.TraceWarning("Broken path in " + filename + "\r\n  Cannot find main track for path node " + i);
+                    }
                 }
                 if (tpn.C != 0xffffffff)
                 {
@@ -58,6 +61,11 @@ namespace ORTS
                     node.NextSidingTVNIndex = node.FindTVNIndex(node.NextSidingNode, TDB, tsectiondat);
                     if (node.JunctionIndex >= 0)
                         node.IsFacingPoint = TestFacingPoint(node.JunctionIndex, node.NextSidingTVNIndex);
+                    if (node.NextSidingTVNIndex < 0)
+                    {
+                        node.NextSidingNode = null;
+						Trace.TraceWarning("Broken path in " + filename + "\r\n  Cannot find siding track for path node " + i);
+                    }
                 }
                 if (node.NextMainNode != null && node.NextSidingNode != null)
                     node.Type = AIPathNodeType.SidingStart;
@@ -140,6 +148,19 @@ namespace ORTS
             return;
         }
 
+        public void AlignAllSwitches()
+        {
+            AIPathNode prevNode = null;
+            for (AIPathNode node = FirstNode; node != null; node = node.NextMainNode)
+            {
+                if (node.IsFacingPoint)
+                    AlignSwitch(node.JunctionIndex, node.NextMainTVNIndex);
+                else if (prevNode != null)
+                    AlignSwitch(node.JunctionIndex, prevNode.NextMainTVNIndex);
+                prevNode = node;
+            }
+        }
+
         /// <summary>
         /// returns true if the switch for the specified juction node is aligned
         /// so that the specified vector node will be used as the selected route.
@@ -192,7 +213,7 @@ namespace ORTS
                 if (node.NextMainTVNIndex == trackNodeIndex || node.NextSidingTVNIndex == trackNodeIndex)
                     return node;
                 for (AIPathNode node1 = node.NextSidingNode; node1 != null; node1 = node1.NextSidingNode)
-                    if (node.NextMainTVNIndex == trackNodeIndex || node.NextSidingTVNIndex == trackNodeIndex)
+                    if (node1.NextMainTVNIndex == trackNodeIndex || node1.NextSidingTVNIndex == trackNodeIndex)
                         return node1;
             }
             return null;

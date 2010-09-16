@@ -38,8 +38,8 @@ namespace ORTS
     {
         public bool Pan = false;     // false = down;
 
-        public MSTSElectricLocomotive(string wagFile)
-            : base( wagFile)
+        public MSTSElectricLocomotive(string wagFile, TrainCar previousCar)
+            : base(wagFile, previousCar)
         {
         }
 
@@ -53,6 +53,7 @@ namespace ORTS
                 // for example
                 //case "engine(sound": CabSoundFileName = f.ReadStringBlock(); break;
                 //case "engine(cabview": CVFFileName = f.ReadStringBlock(); break;
+                case "engine(enginecontrollers(throttle": ThrottleController = new MSTSNotchController(f); break;
                 default: base.Parse(lowercasetoken, f); break;
             }
         }
@@ -110,6 +111,7 @@ namespace ORTS
         public override void Update(float elapsedClockSeconds)
         {
             base.Update(elapsedClockSeconds);
+            Variable2 = Variable1;
         }
 
         /// <summary>
@@ -117,12 +119,14 @@ namespace ORTS
         /// </summary>
         public override void SignalEvent( EventID eventID)
         {
-            switch (eventID)
+            // Modified according to replacable IDs - by GeorgeS
+            //switch (eventID)
+            do
             {
-                case EventID.PantographUp: Pan = true; break;  // pan up
-                case EventID.PantographDown : Pan = false; break; // pan down
-                case EventID.PantographToggle: Pan = !Pan; break;  // pan toggle
-            }
+                if (eventID == EventID.PantographUp) { Pan = true; break; }  // pan up
+                if (eventID == EventID.PantographDown) { Pan = false; break; } // pan down
+                if (eventID == EventID.PantographToggle) { Pan = !Pan; break; } // pan toggle
+            } while (false) ;
             base.SignalEvent(eventID);
         }
 

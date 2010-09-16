@@ -23,9 +23,6 @@ namespace ORTS
         public bool Finished { get { return State.Finished; } }
         ProcessState State = new ProcessState();  // manage interprocess signalling
 
-        // Profiling
-        public Stopwatch UpdateTimer = new Stopwatch();
-
         public UpdaterProcess( Viewer3D viewer )
         {
             Viewer = viewer;
@@ -64,38 +61,50 @@ namespace ORTS
             State.SignalStart();   
         }
 
-
-
         public void UpdateLoop()
         {
+			Viewer.UpdaterProfiler = new Profiler("Updater");
+
             while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
             {
                 // Wait for a new Update() command
                 State.WaitTillStarted();
 
-                UpdateTimer.Start();
+				Viewer.UpdaterProfiler.Start();
                 Program.RealTime = NewRealTime;
                 ElapsedTime frameElapsedTime = Viewer.RenderProcess.GetFrameElapsedTime();
 
-                Viewer.RenderProcess.ComputeFPS( frameElapsedTime.RealSeconds );
+				try
+				{
+					Viewer.RenderProcess.ComputeFPS(frameElapsedTime.RealSeconds);
 
-                // Update the simulator 
-                Viewer.Simulator.Update( frameElapsedTime.ClockSeconds );
+					// Update the simulator 
+					Viewer.Simulator.Update(frameElapsedTime.ClockSeconds);
 
-                // Handle user input, its was read is in RenderProcess thread
-                if (UserInput.Ready)
-                {
-                    Viewer.HandleUserInput( Viewer.RenderProcess.GetUserInputElapsedTime() );
-                    UserInput.Handled();
-                }
+					// Handle user input, its was read is in RenderProcess thread                
+					Viewer.HandleUserInput(Viewer.RenderProcess.GetUserInputElapsedTime());
+					UserInput.Handled();
 
-                // Prepare the frame for drawing
-                if (Frame != null)
-                {
-                    Frame.Clear();
-                    Viewer.PrepareFrame(Frame, frameElapsedTime );
-                    Frame.Sort();
-                }
+					Viewer.HandleMouseMovement();
+
+					// Prepare the frame for drawing
+					if (Frame != null)
+					{
+						Frame.Clear();
+						Viewer.PrepareFrame(Frame, frameElapsedTime);
+						Frame.Sort();
+					}
+				}
+				catch (Exception error)
+				{
+					if (!(error is ThreadAbortException))
+					{
+						// Unblock anyone waiting for us, report error and die.
+						State.SignalFinish();
+						Viewer.ProcessReportError(error);
+						return;
+					}
+				}
 
                 // Signal finished so RenderProcess can start drawing
                 State.SignalFinish();
@@ -104,7 +113,7 @@ namespace ORTS
                 if (Program.RealTime - Viewer.LoaderProcess.LastUpdate > LoaderProcess.UpdatePeriod)
                     Viewer.LoaderProcess.StartUpdate();
 
-                UpdateTimer.Stop();
+				Viewer.UpdaterProfiler.Stop();
             }
         }
 
