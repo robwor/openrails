@@ -9,6 +9,7 @@
 /// Use of the code for any other purpose or distribution of the code to anyone else
 /// is prohibited without specific written permission from admin@openrails.org.
  */
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -70,6 +71,7 @@ namespace ORTS
                 if (node.NextMainNode != null && node.NextSidingNode != null)
                     node.Type = AIPathNodeType.SidingStart;
             }
+            //Console.WriteLine("path {0}", filename);
             Dictionary<int, AIPathNode> lastUse = new Dictionary<int, AIPathNode>();
             for (AIPathNode node1 = FirstNode; node1 != null; node1 = node1.NextMainNode)
             {
@@ -144,7 +146,9 @@ namespace ORTS
             TrackNode tn = TrackDB.TrackNodes[junctionIndex];
             if (tn.TrJunctionNode == null || tn.TrPins[0].Link == vectorIndex)
                 return;
+            //Console.WriteLine("alignsw {0} {1} {2} {3}", junctionIndex, vectorIndex, tn.TrJunctionNode.SelectedRoute, tn.TrPins[1].Link);
             tn.TrJunctionNode.SelectedRoute = tn.TrPins[1].Link == vectorIndex ? 0 : 1;
+            //Console.WriteLine("alignsw {0} {1} {2} {3}", junctionIndex, vectorIndex, tn.TrJunctionNode.SelectedRoute, tn.TrPins[2].Link);
             return;
         }
 
@@ -390,7 +394,7 @@ namespace ORTS
             for (int j = 0; j < TDB.TrackDB.TrackNodes.Count(); j++)
             {
                 TrackNode tn = TDB.TrackDB.TrackNodes[j];
-                if (tn != null && tn.TrEndNode != null && tn.UiD.WorldTileX == location.TileX && tn.UiD.WorldTileZ == location.TileZ)
+                if (tn != null && tn.TrEndNode && tn.UiD.WorldTileX == location.TileX && tn.UiD.WorldTileZ == location.TileZ)
                 {
                     float dx = tn.UiD.X - location.Location.X;
                     dx += (tn.UiD.TileX - location.TileX) * 2048;

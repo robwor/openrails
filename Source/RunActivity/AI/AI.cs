@@ -21,7 +21,7 @@ namespace ORTS
     public class AI
     {
         Heap<AITrain> StartQueue = new Heap<AITrain>();
-        public Simulator Simulator;
+        public readonly Simulator Simulator;
         public List<AITrain> AITrains = new List<AITrain>();// active AI trains
         public Dictionary<int, AITrain> AITrainDictionary = new Dictionary<int, AITrain>();
         bool FirstUpdate = true; // flag for special processing if first call to Update
@@ -53,6 +53,7 @@ namespace ORTS
         // restore game state
         public AI(Simulator simulator, BinaryReader inf)
         {
+            Debug.Assert(simulator.Trains != null, "Cannot restore AI without Simulator.Trains.");
             Simulator = simulator;
             FirstUpdate = false;
             foreach (Train train in Simulator.Trains)
@@ -81,7 +82,7 @@ namespace ORTS
             for (int i = 0; i < n; i++)
             {
                 double time = inf.ReadDouble();
-                AITrain train = new AITrain(inf);
+                AITrain train = new AITrain(Simulator, inf);
                 StartQueue.Add(time, train);
                 AITrainDictionary.Add(train.UiD, train);
                 train.AI = this;
@@ -170,7 +171,7 @@ namespace ORTS
             string pathFileName = Simulator.RoutePath + @"\PATHS\" + srvFile.PathID + ".PAT";
 
             PATFile patFile = new PATFile(pathFileName);
-            AITrain train = new AITrain(sd.UiD, this, new AIPath(patFile, Simulator.TDB, Simulator.TSectionDat, pathFileName), sd.Time);
+            AITrain train = new AITrain(Simulator, sd.UiD, this, new AIPath(patFile, Simulator.TDB, Simulator.TSectionDat, pathFileName), sd.Time);
 
             if (conFile.Train.TrainCfg.MaxVelocity.A > 0 && srvFile.Efficiency > 0)
                 train.MaxSpeedMpS = conFile.Train.TrainCfg.MaxVelocity.A * srvFile.Efficiency;
@@ -189,7 +190,7 @@ namespace ORTS
             if (sd.Time < Simulator.ClockTime)
             {
                 float dtS = (float)(Simulator.ClockTime - sd.Time);
-                if (train.RearTDBTraveller.Move(dtS * train.MaxSpeedMpS) > 0.01 || train.RearTDBTraveller.TN.TrEndNode != null)
+                if (train.RearTDBTraveller.Move(dtS * train.MaxSpeedMpS) > 0.01 || train.RearTDBTraveller.TN.TrEndNode)
                     return null;
                 //Console.WriteLine("initial move {0} {1}", dtS * train.MaxSpeedMpS, train.MaxSpeedMpS);
                 AIPathNode node = train.Path.FirstNode;
@@ -211,7 +212,7 @@ namespace ORTS
 
                 try
                 {
-                    TrainCar car = RollingStock.Load(wagonFilePath, previousCar);
+                    TrainCar car = RollingStock.Load(Simulator, wagonFilePath, previousCar);
                     car.Flipped = wagon.Flip;
                     train.Cars.Add(car);
                     car.Train = train;
@@ -220,7 +221,7 @@ namespace ORTS
                 }
                 catch (Exception error)
                 {
-					Trace.WriteLine(wagonFilePath);
+					Trace.TraceInformation(wagonFilePath);
 					Trace.WriteLine(error);
                 }
 
@@ -229,11 +230,12 @@ namespace ORTS
             train.CalculatePositionOfCars(0);
             for (int i = 0; i < train.Cars.Count; i++)
                 train.Cars[i].WorldPosition.XNAMatrix.M42 -= 1000;
-            if (train.FrontTDBTraveller.TN.TrEndNode != null)
+            if (train.FrontTDBTraveller.TN.TrEndNode)
                 return null;
 
             train.AITrainDirectionForward = true;
             train.BrakeLine3PressurePSI = 0;
+            train.InitializeSignals();
 
             //AITrains.Add(train);
             Simulator.Trains.Add(train);

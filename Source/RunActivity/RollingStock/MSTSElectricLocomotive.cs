@@ -38,23 +38,22 @@ namespace ORTS
     {
         public bool Pan = false;     // false = down;
 
-        public MSTSElectricLocomotive(string wagFile, TrainCar previousCar)
-            : base(wagFile, previousCar)
+		public MSTSElectricLocomotive(Simulator simulator, string wagFile, TrainCar previousCar)
+			: base(simulator, wagFile, previousCar)
         {
         }
 
         /// <summary>
         /// Parse the wag file parameters required for the simulator and viewer classes
         /// </summary>
-        public override void Parse(string lowercasetoken, STFReader f)
+        public override void Parse(string lowercasetoken, STFReader stf)
         {
             switch (lowercasetoken)
             {
                 // for example
-                //case "engine(sound": CabSoundFileName = f.ReadStringBlock(); break;
-                //case "engine(cabview": CVFFileName = f.ReadStringBlock(); break;
-                case "engine(enginecontrollers(throttle": ThrottleController = new MSTSNotchController(f); break;
-                default: base.Parse(lowercasetoken, f); break;
+                //case "engine(sound": CabSoundFileName = stf.ReadStringBlock(); break;
+                //case "engine(cabview": CVFFileName = stf.ReadStringBlock(); break;
+                default: base.Parse(lowercasetoken, stf); break;
             }
         }
 
@@ -130,6 +129,40 @@ namespace ORTS
             base.SignalEvent(eventID);
         }
 
+        public override float GetDataOf(CabViewControl cvc)
+        {
+            float data;
+
+            switch (cvc.ControlType)
+            {
+                case CABViewControlTypes.LINE_VOLTAGE:
+                    {
+                        if (Pan)
+                        {
+                            data = (float)Program.Simulator.TRK.Tr_RouteFile.MaxLineVoltage;
+                            if (cvc.Units == CABViewControlUnits.KILOVOLTS)
+                                data /= 1000;
+                        }
+                        else
+                            data = 0;
+                        break;
+                    }
+                case CABViewControlTypes.PANTOGRAPH:
+                case CABViewControlTypes.PANTO_DISPLAY:
+                    {
+                        data = Pan ? 1 : 0;
+                        break;
+                    }
+                default:
+                    {
+                        data = base.GetDataOf(cvc);
+                        break;
+                    }
+            }
+
+            return data;
+        }
+
     } // class ElectricLocomotive
 
     ///////////////////////////////////////////////////
@@ -156,7 +189,7 @@ namespace ORTS
             // Find the animated parts
             if (TrainCarShape.SharedShape.Animations != null) // skip if the file doesn't contain proper animations
             {
-                for (int iMatrix = 0; iMatrix < TrainCarShape.SharedShape.MatrixNames.Length; ++iMatrix)
+                for (int iMatrix = 0; iMatrix < TrainCarShape.SharedShape.MatrixNames.Count; ++iMatrix)
                 {
                     string matrixName = TrainCarShape.SharedShape.MatrixNames[iMatrix].ToUpper();
                     switch (matrixName)
@@ -198,7 +231,7 @@ namespace ORTS
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
             // Pantograph
-            if (UserInput.IsPressed(Keys.P) && !UserInput.IsShiftDown())
+            if (UserInput.IsPressed(UserCommands.ControlPantograph))
                 ElectricLocomotive.Train.SignalEvent(ElectricLocomotive.Pan ? EventID.PantographDown : EventID.PantographUp);
 
             base.HandleUserInput( elapsedTime);

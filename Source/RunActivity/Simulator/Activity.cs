@@ -53,7 +53,7 @@ namespace ORTS
     public class Activity
     {
         public DateTime StartTime;
-        List<ActivityTask> Tasks = new List<ActivityTask>();
+        public List<ActivityTask> Tasks = new List<ActivityTask>();
         public ActivityTask Current = null;
         double prevTrainSpeed = -1;
 
@@ -88,7 +88,7 @@ namespace ORTS
                             Tasks.Add(new ActivityTaskPassengerStopAt(task,
                                 sd.Player_Traffic_Definition.ArrivalTime[i],
                                 sd.Player_Traffic_Definition.DepartTime[i],
-                                Platform, Program.Simulator.TDB.TrackDB.TrItemTable[Platform.Flags2] as PlatformItem));
+                                Platform, Program.Simulator.TDB.TrackDB.TrItemTable[Platform.LinkedPlatformItemId] as PlatformItem));
                             task = Tasks[i];
                         }
                     }

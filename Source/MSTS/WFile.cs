@@ -11,8 +11,9 @@
 
 using System;
 using System.Collections;
-using System.IO;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using MSTSMath;
 
 
@@ -30,9 +31,9 @@ namespace MSTS
             TileX = int.Parse(filename.Substring(p + 8, 7));
             TileZ = int.Parse(filename.Substring(p + 15, 7));
 
-            using (SBR f = SBR.Open(filename))
+            using (SBR sbr = SBR.Open(filename))
             {
-                using (SBR block = f.ReadSubBlock())
+                using (SBR block = sbr.ReadSubBlock())
                 {
                     Tr_Worldfile = new Tr_Worldfile( block );
                 }
@@ -58,33 +59,43 @@ namespace MSTS
             {
                 using (SBR subBlock = block.ReadSubBlock())
                 {
-                    switch (subBlock.ID)
+
+                    try
                     {
-                        case TokenID.CollideObject:
-                        case TokenID.Static: Add(new StaticObj(subBlock, currentWatermark)); break;
-                        case TokenID.TrackObj: Add(new TrackObj(subBlock, currentWatermark)); break;
-                        case TokenID.CarSpawner: subBlock.Skip(); break; // TODO
-                        case TokenID.Siding: subBlock.Skip(); break; // TODO
-                        case TokenID.Forest: // Unicode
-                            Add(new ForestObj(subBlock, currentWatermark)); 
-                            break;
-                        case (TokenID)308: // Binary
-                            Add(new ForestObj(subBlock, currentWatermark));
-                            break;
-                        case TokenID.LevelCr: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                        case TokenID.Dyntrack: // Unicode
-                            Add(new DyntrackObj(subBlock, currentWatermark, true));
-                            break;
-                        case (TokenID)306: // Binary
-                            Add(new DyntrackObj(subBlock, currentWatermark, false));
-                            break;
-                        case TokenID.Transfer: subBlock.Skip(); break; // TODO
-                        case TokenID.Gantry: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                        case TokenID.Pickup: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                        case TokenID.Signal: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                        case TokenID.Speedpost: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                        case TokenID.Tr_Watermark: currentWatermark = subBlock.ReadInt(); break;
-                        default: subBlock.Skip(); break;
+                        switch (subBlock.ID)
+                        {
+                            case TokenID.CollideObject:
+                            case TokenID.Static: Add(new StaticObj(subBlock, currentWatermark)); break;
+                            case TokenID.TrackObj: Add(new TrackObj(subBlock, currentWatermark)); break;
+							case (TokenID)357: Add(new CarSpawnerObj(subBlock, currentWatermark)); //car spawner
+								break; //car spawner. The tokenid number is wrong
+                            case TokenID.Siding: subBlock.Skip(); break; // TODO
+                            case TokenID.Forest: // Unicode
+                                Add(new ForestObj(subBlock, currentWatermark));
+                                break;
+							case TokenID.LevelCr: 
+								Add(new LevelCrossingObj(subBlock, currentWatermark)); 
+								break; // Crossing
+                            case TokenID.Dyntrack: // Unicode
+                                Add(new DyntrackObj(subBlock, currentWatermark, true));
+                                break;
+                            case (TokenID)306: // Binary
+                                Add(new DyntrackObj(subBlock, currentWatermark, false));
+                                break;
+                            case TokenID.Transfer: subBlock.Skip(); break; // TODO
+                            case TokenID.Gantry: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
+                            case TokenID.Pickup: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
+                            case TokenID.Signal:
+                                Add(new SignalObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.Speedpost: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
+                            case TokenID.Tr_Watermark: currentWatermark = subBlock.ReadInt(); break;
+                            default: subBlock.Skip(); break;
+                        }
+                    }
+                    catch (System.Exception error)
+                    {
+                        Trace.TraceWarning(error.Message);
                     }
                 }
             }
@@ -335,6 +346,10 @@ namespace MSTS
                     }
                 }
             }
+            if (TreeTexture == null)
+            {
+                throw new System.Exception( block.ErrorMessage("Missing texture filename in forest region. UID=" + UID.ToString() ));
+            }
         }
 
         public class ScaleRange
@@ -383,7 +398,211 @@ namespace MSTS
         }//TreeSize
     }//ForestObj
 
-    // These relate to the general properties settable for scenery objects in RE
+	public class SignalObj : WorldObject
+	{
+		public readonly SignalUnits SignalUnits;
+
+		public SignalObj(SBR block, int detailLevel)
+        {
+			StaticDetailLevel = detailLevel;
+
+			while (!block.EndOfBlock())
+			{
+				using (SBR subBlock = block.ReadSubBlock())
+				{
+					switch (subBlock.ID)
+					{
+						case TokenID.UiD: UID = subBlock.ReadUInt(); break;
+						case TokenID.FileName: FileName = subBlock.ReadString(); break;
+						case TokenID.Position: Position = new STFPositionItem(subBlock); break;
+						case TokenID.QDirection: QDirection = new STFQDirectionItem(subBlock); break;
+						case TokenID.Matrix3x3: Matrix3x3 = new Matrix3x3(subBlock); break;
+						case TokenID.VDbId: VDbId = subBlock.ReadUInt(); break;
+						case TokenID.StaticFlags: StaticFlags = subBlock.ReadFlags(); break;
+						case TokenID.SignalUnits: SignalUnits = new SignalUnits(subBlock); break;
+						default: subBlock.Skip(); break;
+					}
+				}
+			}
+		}
+	}
+
+	//level crossing data
+	public class LevelCrossingObj : WorldObject
+	{
+		public LevelCrParameters levelCrParameters;
+		public LevelCrData levelCrData;
+		public LevelCrTiming levelCrTiming;
+		public List<TrItemId> trItemIDList;
+		int crashProbability;
+		public int movingDirection;
+		public bool inrange = false;
+		public float animSpeed = 0.005f; //compute the speed based on LevelCrTiming
+		public float warningTime;
+		public bool visible = true;
+		public LevelCrossingObj(SBR block, int detailLevel)
+		{
+
+			StaticDetailLevel = detailLevel;
+			trItemIDList = new List<TrItemId>();
+			movingDirection = 0; //up by default;
+
+			while (!block.EndOfBlock())
+			{
+				using (SBR subBlock = block.ReadSubBlock())
+				{
+					switch (subBlock.ID)
+					{
+						case TokenID.UiD: UID = subBlock.ReadUInt(); break;
+						case TokenID.LevelCrParameters: levelCrParameters = new LevelCrParameters(subBlock);
+							warningTime = levelCrParameters.crParameter1;
+							break;
+						case TokenID.CrashProbability: crashProbability = subBlock.ReadInt(); break;
+						case TokenID.LevelCrData: levelCrData = new LevelCrData(subBlock);
+							if (levelCrData.crData1 != 0) visible = false;
+							break;
+						case TokenID.LevelCrTiming: levelCrTiming = new LevelCrTiming(subBlock);
+							animSpeed = 1.0f / (800.0f * levelCrTiming.animTiming);//hard code to make 4 seconds move realistic in 40 frame/second
+							break;
+						case TokenID.TrItemId: trItemIDList.Add(new TrItemId(subBlock)); break;
+						case TokenID.FileName: FileName = subBlock.ReadString(); break;
+						case TokenID.Position: Position = new STFPositionItem(subBlock); break;
+						case TokenID.QDirection: QDirection = new STFQDirectionItem(subBlock); break;
+						case TokenID.VDbId: VDbId = subBlock.ReadUInt(); break;
+						default: subBlock.Skip(); break;
+					}
+				}
+			}
+		}
+
+		public int getTrItemID(int current, int db)
+		{
+			int i = 0;
+			foreach (TrItemId tID in trItemIDList)
+			{
+				if (tID.db == db)
+				{
+					if (current == i) return tID.dbID;
+					i++;
+				}
+			}
+			return -1;
+		}
+		public class LevelCrParameters
+		{
+			public float crParameter1, crParameter2; // not known the exact name yet
+
+			public LevelCrParameters(SBR block)
+			{
+				block.VerifyID(TokenID.LevelCrParameters);
+				crParameter1 = block.ReadFloat();
+				crParameter2 = block.ReadFloat();
+				block.VerifyEndOfBlock();
+
+			}
+
+		}
+
+		public class LevelCrData
+		{
+			public int crData1, crData2; //not known the exact name yet
+			public LevelCrData(SBR block)
+			{
+				block.VerifyID(TokenID.LevelCrData);
+				crData1 = block.ReadInt(); // 00000001, should be taken care later, 
+				crData2 = block.ReadInt();
+				block.VerifyEndOfBlock();
+			}
+		}
+
+		public class LevelCrTiming
+		{
+			public float initialTiming, seriousTiming, animTiming;
+			public LevelCrTiming(SBR block)
+			{
+				block.VerifyID(TokenID.LevelCrTiming);
+				initialTiming = block.ReadFloat();
+				seriousTiming = block.ReadFloat();
+				animTiming = block.ReadFloat();
+				block.VerifyEndOfBlock();
+			}
+		}
+
+		public class TrItemId
+		{
+			public int db, dbID;
+			public TrItemId(SBR block)
+			{
+				block.VerifyID(TokenID.TrItemId);
+				db = block.ReadInt();
+				dbID = block.ReadInt();
+				block.VerifyEndOfBlock();
+			}
+		}
+	}
+
+	//Car Spawner data
+	public class CarSpawnerObj : WorldObject
+	{
+		public List<TrItemId> trItemIDList;
+		public float CarFrequency;
+		public float CarAvSpeed;
+		public CarSpawnerObj(SBR block, int detailLevel)
+		{
+			CarFrequency = 5.0f;
+			CarAvSpeed = 20.0f;
+			StaticDetailLevel = detailLevel;
+
+			trItemIDList = new List<TrItemId>();
+
+			while (!block.EndOfBlock())
+			{
+				using (SBR subBlock = block.ReadSubBlock())
+				{
+					switch (subBlock.ID)
+					{
+						case TokenID.UiD: UID = subBlock.ReadUInt(); break;
+						case TokenID.CarFrequency: CarFrequency = subBlock.ReadFloat(); break;
+						case TokenID.CarAvSpeed: CarAvSpeed = subBlock.ReadFloat(); break;
+						case TokenID.TrItemId: trItemIDList.Add(new TrItemId(subBlock)); break;
+						case TokenID.StaticFlags: StaticFlags = subBlock.ReadFlags(); break;
+						case TokenID.Position: Position = new STFPositionItem(subBlock); break;
+						case TokenID.QDirection: QDirection = new STFQDirectionItem(subBlock); break;
+						case TokenID.VDbId: VDbId = subBlock.ReadUInt(); break;
+						default: subBlock.Skip(); break;
+					}
+				}
+			}
+		}
+
+		public int getTrItemID(int current)
+		{
+			int i = 0;
+			foreach (TrItemId tID in trItemIDList)
+			{
+				if (tID.db == 1)
+				{
+					if (current == i) return tID.dbID;
+					i++;
+				}
+			}
+			return -1;
+		}
+
+		public class TrItemId
+		{
+			public int db, dbID;
+			public TrItemId(SBR block)
+			{
+				block.VerifyID(TokenID.TrItemId);
+				db = block.ReadInt();
+				dbID = block.ReadInt();
+				block.VerifyEndOfBlock();
+			}
+		}
+	}
+	
+	// These relate to the general properties settable for scenery objects in RE
     public enum StaticFlag
     {
         RoundShadow = 0x00002000,
@@ -787,4 +1006,44 @@ namespace MSTS
 		}
 	}
 
+	public class SignalUnits
+	{
+		public readonly SignalUnit[] Units;
+
+		public SignalUnits(SBR block)
+		{
+			var units = new List<SignalUnit>();
+			block.VerifyID(TokenID.SignalUnits);
+			var count = block.ReadUInt();
+			for (var i = 0; i < count; i++)
+			{
+				using (SBR subBlock = block.ReadSubBlock())
+				{
+					units.Add(new SignalUnit(subBlock));
+				}
+			}
+			block.VerifyEndOfBlock();
+			Units = units.ToArray();
+		}
+	}
+
+	public class SignalUnit
+	{
+		public readonly int SubObj;
+		public readonly uint TrItem;
+
+		public SignalUnit(SBR block)
+		{
+			block.VerifyID(TokenID.SignalUnit);
+			SubObj = block.ReadInt();
+			using (SBR subBlock = block.ReadSubBlock())
+			{
+				subBlock.VerifyID(TokenID.TrItemId);
+				subBlock.ReadUInt(); // Unk?
+				TrItem = subBlock.ReadUInt();
+				subBlock.VerifyEndOfBlock();
+			}
+			block.VerifyEndOfBlock();
+		}
+	}
 }

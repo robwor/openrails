@@ -30,10 +30,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MSTS;
+using System.Xml;
+using Microsoft.Xna.Framework.Content;
 
 
 
@@ -80,7 +83,7 @@ namespace ORTS
         public float BrakePipeTimeFactorS = .003f;
         public float BrakeServiceTimeFactorS = 1.009f;
         public float BrakeEmergencyTimeFactorS = .1f;
-        public float BrakePipeChargingRatePSIpS = Program.BrakePipeChargingRatePSIpS;
+        public float BrakePipeChargingRatePSIpS;
         public Interpolator2D TractiveForceCurves = null;
         public Interpolator2D DynamicBrakeForceCurves = null;
         public float DynamicBrakeSpeed1 = 3;
@@ -91,8 +94,14 @@ namespace ORTS
         public bool DynamicBrakeAutoBailOff = false;
         public float MaxContinuousForceN;
         public float ContinuousForceTimeFactor = 1800;
+        public float NumWheels = 4;
+        public bool AntiSlip = false;
+        public string EngineOperatingProcedures;
+
+        public Dictionary<string, List<ParticleEmitterData>> EffectData = new Dictionary<string,List<ParticleEmitterData>>();
 
         public CVFFile CVFFile = null;
+        public ExtendedCVF ExCVF = null;
 
         public MSTSNotchController  ThrottleController;
         public MSTSBrakeController  TrainBrakeController;
@@ -100,9 +109,10 @@ namespace ORTS
         public AirSinglePipe.ValveState EngineBrakeState = AirSinglePipe.ValveState.Lap;
         public MSTSNotchController  DynamicBrakeController;
 
-        public MSTSLocomotive(string wagPath, TrainCar previousCar)
-            : base(wagPath, previousCar)
+        public MSTSLocomotive(Simulator simulator, string wagPath, TrainCar previousCar)
+            : base(simulator, wagPath, previousCar)
         {
+			BrakePipeChargingRatePSIpS = simulator.Settings.BrakePipeChargingRate;
             //Console.WriteLine("loco {0} {1} {2}", MaxPowerW, MaxForceN, MaxSpeedMpS);
         }
 
@@ -112,8 +122,8 @@ namespace ORTS
         /// </summary>
         public override void InitializeFromWagFile(string wagFilePath)
         {
-            TrainBrakeController = new MSTSBrakeController();
-            EngineBrakeController = new MSTSBrakeController();
+            TrainBrakeController = new MSTSBrakeController(Simulator);
+            EngineBrakeController = new MSTSBrakeController(Simulator);
             DynamicBrakeController = new MSTSNotchController();
             base.InitializeFromWagFile(wagFilePath);
 
@@ -143,11 +153,39 @@ namespace ORTS
                     viewPoint.RotationLimit = new Vector3( 0,0,0 );  // cab views have a fixed head position
                     FrontCabViewpoints.Add(viewPoint);
                 }
+
+                string ExtendedCVF = CVFFilePath.Substring(0, CVFFilePath.LastIndexOf('.')) + ".xml";
+                ExCVF = null;
+
+                // Commented out until the IntermediateSerializer is changed to XmlReader
+                // By GeorgeS
+                /*
+                if (File.Exists(ExtendedCVF))
+                {
+                    try
+                    {
+                        using (XmlReader rd = XmlReader.Create(new FileStream(ExtendedCVF, FileMode.Open)))
+                        {
+                            ExCVF = IntermediateSerializer.Deserialize<ExtendedCVF>(rd, null);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.TraceError(string.Format("Error reading Extended CAB View file {0}", ExtendedCVF));
+                        Trace.WriteLine(ex);
+                    }
+                }
+                */
+
+                if (ExCVF == null && !(this is MSTSSteamLocomotive))
+                {
+                    ExCVF = new ExtendedCVF();
+                }
             }
 
             IsDriveable = true;
             if (!TrainBrakeController.IsValid())
-                TrainBrakeController = new MSTSBrakeController(); //create a blank one
+                TrainBrakeController = new MSTSBrakeController(Simulator); //create a blank one
             if (!EngineBrakeController.IsValid())
                 EngineBrakeController = null;
             if (!DynamicBrakeController.IsValid())
@@ -168,48 +206,69 @@ namespace ORTS
             }
         }
 
+        protected void ParseEffects(string lowercasetoken, STFReader stf)
+        {
+            stf.MustMatch("(");
+            string s;
+
+            while ((s = stf.ReadItem()) != ")")
+            {
+                ParticleEmitterData data = new ParticleEmitterData(stf);
+                if (!EffectData.ContainsKey(s))
+                {
+                    EffectData.Add(s, new List<ParticleEmitterData>());
+                }
+
+                EffectData[s].Add(data);
+            }
+        }
+
         /// <summary>
         /// Parse the wag file parameters required for the simulator and viewer classes
         /// </summary>
-        public override void Parse(string lowercasetoken, STFReader f)
+        public override void Parse(string lowercasetoken, STFReader stf)
         {
             if (lowercasetoken.StartsWith("engine(trainbrakescontroller"))
-                TrainBrakeController.ParseBrakeValue(lowercasetoken.Substring(28), f);
+                TrainBrakeController.ParseBrakeValue(lowercasetoken.Substring(28), stf);
             if (lowercasetoken.StartsWith("engine(enginebrakescontroller"))
-                EngineBrakeController.ParseBrakeValue(lowercasetoken.Substring(29), f);
+                EngineBrakeController.ParseBrakeValue(lowercasetoken.Substring(29), stf);
             switch (lowercasetoken)
             {
-                case "engine(sound": CabSoundFileName = f.ReadStringBlock(); break;
-                case "engine(cabview": CVFFileName = f.ReadStringBlock(); break;
-                case "engine(maxpower": MaxPowerW = ParseW(f.ReadStringBlock(),f); break;
-                case "engine(maxforce": MaxForceN = ParseN(f.ReadStringBlock(),f); break;
-                case "engine(maxcontinuousforce": MaxContinuousForceN = ParseN(f.ReadStringBlock(), f); break;
-                case "engine(maxvelocity": MaxSpeedMpS = ParseMpS(f.ReadStringBlock(),f); break;
-                case "engine(enginecontrollers(throttle": ThrottleController = new MSTSNotchController(f); break;
-                case "engine(enginecontrollers(regulator": ThrottleController = new MSTSNotchController(f); break;
-                case "engine(enginecontrollers(brake_train": TrainBrakeController.Parse(f); break;
-                case "engine(enginecontrollers(brake_engine": EngineBrakeController.Parse(f); break;
-                case "engine(enginecontrollers(brake_dynamic": DynamicBrakeController.Parse(f); break;
-                case "engine(airbrakesmainresvolume": MainResVolumeFT3 = f.ReadFloatBlock(); break;
-                case "engine(airbrakesmainmaxairpressure": MainResPressurePSI = MaxMainResPressurePSI = f.ReadFloatBlock(); break;
-                case "engine(airbrakescompressorrestartpressure": CompressorRestartPressurePSI = f.ReadFloatBlock(); break;
-                case "engine(mainreschargingrate": MainResChargingRatePSIpS = f.ReadFloatBlock(); break;
-                case "engine(enginebrakereleaserate": EngineBrakeReleaseRatePSIpS = f.ReadFloatBlock(); break;
-                case "engine(enginebrakeapplicationrate": EngineBrakeApplyRatePSIpS = f.ReadFloatBlock(); break;
-                case "engine(brakepipetimefactor": BrakePipeTimeFactorS = f.ReadFloatBlock(); break;
-                case "engine(brakeservicetimefactor": BrakeServiceTimeFactorS = f.ReadFloatBlock(); break;
-                case "engine(brakeemergencytimefactor": BrakeEmergencyTimeFactorS = f.ReadFloatBlock(); break;
-                case "engine(brakepipechargingrate": BrakePipeChargingRatePSIpS = f.ReadFloatBlock(); break;
-                case "engine(maxtractiveforcecurves": TractiveForceCurves = new Interpolator2D(f); break;
-                case "engine(dynamicbrakeforcecurves": DynamicBrakeForceCurves = new Interpolator2D(f); break;
-                case "engine(dynamicbrakesminusablespeed": DynamicBrakeSpeed1 = f.ReadFloatBlock(); break;
-                case "engine(dynamicbrakesfadingspeed": DynamicBrakeSpeed2 = f.ReadFloatBlock(); break;
-                case "engine(dynamicbrakesmaximumeffectivespeed": DynamicBrakeSpeed3 = f.ReadFloatBlock(); break;
-                case "engine(dynamicbrakesmaximumspeedforfadeout": DynamicBrakeSpeed4 = f.ReadFloatBlock(); break;
-                case "engine(dynamicbrakesmaximumforce": MaxDynamicBrakeForceN = f.ReadFloatBlock(); break;
-                case "engine(dynamicbrakeshasautobailoff": DynamicBrakeAutoBailOff = f.ReadBoolBlock(); break;
-                case "engine(continuousforcetimefactor": ContinuousForceTimeFactor = f.ReadFloatBlock(); break;
-                default: base.Parse(lowercasetoken, f); break;
+                case "engine(sound": CabSoundFileName = stf.ReadStringBlock(null); break;
+                case "engine(cabview": CVFFileName = stf.ReadStringBlock(null); break;
+                case "engine(maxpower": MaxPowerW = stf.ReadFloatBlock(STFReader.UNITS.Power, null); break;
+                case "engine(maxforce": MaxForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "engine(maxcontinuousforce": MaxContinuousForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "engine(maxvelocity": MaxSpeedMpS = stf.ReadFloatBlock(STFReader.UNITS.Speed, null); break;
+                case "engine(enginecontrollers(throttle": ThrottleController = new MSTSNotchController(stf); break;
+                case "engine(enginecontrollers(regulator": ThrottleController = new MSTSNotchController(stf); break;
+                case "engine(enginecontrollers(brake_train": TrainBrakeController.Parse(stf); break;
+                case "engine(enginecontrollers(brake_engine": EngineBrakeController.Parse(stf); break;
+                case "engine(enginecontrollers(brake_dynamic": DynamicBrakeController.Parse(stf); break;
+                case "engine(airbrakesmainresvolume": MainResVolumeFT3 = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(airbrakesmainmaxairpressure": MainResPressurePSI = MaxMainResPressurePSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(airbrakescompressorrestartpressure": CompressorRestartPressurePSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(mainreschargingrate": MainResChargingRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(enginebrakereleaserate": EngineBrakeReleaseRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(enginebrakeapplicationrate": EngineBrakeApplyRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(brakepipetimefactor": BrakePipeTimeFactorS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(brakeservicetimefactor": BrakeServiceTimeFactorS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(brakeemergencytimefactor": BrakeEmergencyTimeFactorS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(brakepipechargingrate": BrakePipeChargingRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(maxtractiveforcecurves": TractiveForceCurves = new Interpolator2D(stf); break;
+                case "engine(dynamicbrakeforcecurves": DynamicBrakeForceCurves = new Interpolator2D(stf); break;
+                case "engine(dynamicbrakesminusablespeed": DynamicBrakeSpeed1 = stf.ReadFloatBlock(STFReader.UNITS.Speed, null); break;
+                case "engine(dynamicbrakesfadingspeed": DynamicBrakeSpeed2 = stf.ReadFloatBlock(STFReader.UNITS.Speed, null); break;
+                case "engine(dynamicbrakesmaximumeffectivespeed": DynamicBrakeSpeed3 = stf.ReadFloatBlock(STFReader.UNITS.Speed, null); break;
+                case "engine(dynamicbrakesmaximumspeedforfadeout": DynamicBrakeSpeed4 = stf.ReadFloatBlock(STFReader.UNITS.Speed, null); break;
+                case "engine(dynamicbrakesmaximumforce": MaxDynamicBrakeForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "engine(dynamicbrakeshasautobailoff": DynamicBrakeAutoBailOff = stf.ReadBoolBlock(true); break;
+                case "engine(continuousforcetimefactor": ContinuousForceTimeFactor = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "engine(numwheels": NumWheels = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "engine(antislip": AntiSlip = stf.ReadBoolBlock(false); break;
+                case "engine(engineoperatingprocedures": EngineOperatingProcedures = stf.ReadStringBlock(""); break;
+                case "engine(headout": HeadOutViewpoints.Add(new ViewPoint() { Location = stf.ReadVector3Block(STFReader.UNITS.None, Vector3.Zero) }); break;
+                default: base.Parse(lowercasetoken, stf); break;
             }
         }
 
@@ -232,6 +291,9 @@ namespace ORTS
             ContinuousForceTimeFactor = locoCopy.ContinuousForceTimeFactor;
             DynamicBrakeForceCurves = locoCopy.DynamicBrakeForceCurves;
             DynamicBrakeAutoBailOff = locoCopy.DynamicBrakeAutoBailOff;
+            NumWheels = locoCopy.NumWheels;
+            AntiSlip = locoCopy.AntiSlip;
+            EffectData = locoCopy.EffectData;
 
             IsDriveable = copy.IsDriveable;
             //ThrottleController = MSTSEngineController.Copy(locoCopy.ThrottleController);
@@ -275,10 +337,10 @@ namespace ORTS
             MainResPressurePSI = inf.ReadSingle();
             CompressorOn = inf.ReadBoolean();
             AverageForceN = inf.ReadSingle();
-            ThrottleController = (MSTSNotchController)ControllerFactory.Restore(inf);
-            TrainBrakeController = (MSTSBrakeController)ControllerFactory.Restore(inf);
-            EngineBrakeController = (MSTSBrakeController)ControllerFactory.Restore(inf);
-            DynamicBrakeController = (MSTSNotchController)ControllerFactory.Restore(inf);
+            ThrottleController = (MSTSNotchController)ControllerFactory.Restore(Simulator, inf);
+            TrainBrakeController = (MSTSBrakeController)ControllerFactory.Restore(Simulator, inf);
+            EngineBrakeController = (MSTSBrakeController)ControllerFactory.Restore(Simulator, inf);
+            DynamicBrakeController = (MSTSNotchController)ControllerFactory.Restore(Simulator, inf);
             base.Restore(inf);
         }
 
@@ -344,11 +406,14 @@ namespace ORTS
                     MotiveForceN = 0;
             }
 
-            MotiveForceN *= 1 - (MaxForceN - MaxContinuousForceN) / (MaxForceN * MaxContinuousForceN) * AverageForceN;
-            float w = (ContinuousForceTimeFactor - elapsedClockSeconds) / ContinuousForceTimeFactor;
-            if (w < 0)
-                w = 0;
-            AverageForceN = w * AverageForceN + (1 - w) * MotiveForceN;
+            if (MaxForceN > 0 && MaxContinuousForceN > 0)
+            {
+                MotiveForceN *= 1 - (MaxForceN - MaxContinuousForceN) / (MaxForceN * MaxContinuousForceN) * AverageForceN;
+                float w = (ContinuousForceTimeFactor - elapsedClockSeconds) / ContinuousForceTimeFactor;
+                if (w < 0)
+                    w = 0;
+                AverageForceN = w * AverageForceN + (1 - w) * MotiveForceN;
+            }
             MotiveForceN *= (Direction == Direction.Forward ? 1 : -1);
 
             // Variable1 is wheel rotation in m/sec for steam locomotives
@@ -361,6 +426,7 @@ namespace ORTS
                 if (f > 0)
                     MotiveForceN -= (SpeedMpS > 0 ? 1 : -1) * f;
             }
+            LimitMotiveForce();
 
             if (MainResPressurePSI < CompressorRestartPressurePSI && !CompressorOn)
                 SignalEvent(EventID.CompressorOn);
@@ -370,6 +436,63 @@ namespace ORTS
                 MainResPressurePSI += elapsedClockSeconds * MainResChargingRatePSIpS;
 
             base.Update(elapsedClockSeconds);
+        }
+
+        /// <summary>
+        /// Adjusts the MotiveForce to account for adhesion limits
+        /// The basic force limits are calculated the same way MSTS calculates them, but
+        /// the weather handleing is different
+        /// </summary>
+        public void LimitMotiveForce()
+        {
+            if (NumWheels <= 0)
+                return;
+
+            //float max0 = MassKG * 9.8f * Adhesion3 / NumWheels;   //Not used
+            
+            //Curtius-Kniffler computation
+            float currentSpeedMpS = Math.Abs(SpeedMpS);
+            float uMax = (7.5f / (currentSpeedMpS * 3.6f + 44.0f) + 0.161f); // Curtius - Kniffler equation
+            float adhesionUtil = 0.95f;   //Adhesion utilization
+            
+            float max0 = MassKG * 9.81f * adhesionUtil * uMax;  //Ahesion limit in [N]
+            if (Program.Simulator.Weather == WeatherType.Rain || Program.Simulator.Weather == WeatherType.Snow)
+            {
+                if (Train.SlipperySpotDistanceM < 0)
+                {
+                    Train.SlipperySpotLengthM = 10 + 40 * (float)Program.Random.NextDouble();
+                    Train.SlipperySpotDistanceM = Train.SlipperySpotLengthM + 2000 * (float) Program.Random.NextDouble();
+                }
+                if (Train.SlipperySpotDistanceM < Train.SlipperySpotLengthM)
+                    max0 *= .8f;
+                if (Program.Simulator.Weather == WeatherType.Rain)
+                    max0 *= .8f;
+                else
+                    max0 *= .7f;
+            }
+            //float max1 = (Sander ? .95f : Adhesion2) * max0;  //Not used this way
+            float max1 = (Sander ? 1.5f : 1.0f) * max0; //Increase adhesion when sander is on
+            WheelSlip = false;
+            if (MotiveForceN > max1)
+            {
+                WheelSlip = true;
+                if (AntiSlip)
+                    MotiveForceN = max1;
+                else
+                    MotiveForceN = Adhesion1 * max0;        //Lowers the adhesion limit to 20% of its full
+            }
+            else if (MotiveForceN < -max1)
+            {
+                WheelSlip = true;
+                if (AntiSlip)
+                    MotiveForceN = -max1;
+                else
+                    MotiveForceN = -Adhesion1 * max0;       //Lowers the adhesion limit to 20% of its full
+            }
+        }
+        public override bool GetSanderOn()
+        {
+            return Sander;
         }
 
         public void SetDirection( Direction direction )
@@ -441,6 +564,11 @@ namespace ORTS
             ThrottleController.StopDecrease();
         }
 
+        public void SetThrottlePercent(float percent)
+        {
+            ThrottlePercent = ThrottleController.SetRDPercent(percent);
+        }
+
         public void StartTrainBrakeIncrease()
         {
             TrainBrakeController.StartIncrease();
@@ -465,10 +593,17 @@ namespace ORTS
         public void StopTrainBrakeDecrease()
         {
             TrainBrakeController.StopDecrease();
-        }        
+        }
+
+        public void SetTrainBrakePercent(float percent)
+        {
+            TrainBrakeController.SetRDPercent(percent);
+        }
 
         public void SetEmergency()
-        {           
+        {
+            if (TrainBrakeController.GetIsEmergency())
+                return;
             TrainBrakeController.SetEmergency();
             SignalEvent(EventID.TrainBrakeEmergency);
         }
@@ -476,15 +611,16 @@ namespace ORTS
         {            
             string s = TrainBrakeController.GetStatus();
             if (BrakeSystem.GetType() == typeof(AirSinglePipe))
-                s += string.Format(" EQ {0:F0} ", Train.BrakeLine1PressurePSI);
+                s += string.Format(" EQ {0:F0} PSI", Train.BrakeLine1PressurePSI);
             else
-                s += string.Format(" {0:F0} ", Train.BrakeLine1PressurePSI);
-            s += BrakeSystem.GetStatus(1);
+                s += string.Format(" BP {0:F0} PSI", Train.BrakeLine1PressurePSI);
+            s += " (cars: " + BrakeSystem.GetStatus(1);
             TrainCar lastCar = Train.Cars[Train.Cars.Count - 1];
             if (lastCar == this)
                 lastCar = Train.Cars[0];
             if (lastCar != this)
-                s = s + " " + lastCar.BrakeSystem.GetStatus(0);
+                s += " to " + lastCar.BrakeSystem.GetStatus(0);
+			s += ")";
             return s;
         }
 
@@ -519,6 +655,13 @@ namespace ORTS
 
             EngineBrakeController.StopDecrease();
         }
+
+        public void SetEngineBrakePercent(float percent)
+        {
+            if (EngineBrakeController == null)
+                return;
+            EngineBrakeController.SetRDPercent(percent);
+        }
   
         public override string GetEngineBrakeStatus()
         {
@@ -527,9 +670,9 @@ namespace ORTS
             return string.Format("{0}{1}", EngineBrakeController.GetStatus(), BailOff ? " BailOff" : "");
         }
 
-        public void ToggleBailOff()
+        public void SetBailOff(bool bailOff)
         {
-            BailOff = !BailOff;
+            BailOff = bailOff;
         }
 
         private bool CanUseDynamicBrake()
@@ -581,6 +724,15 @@ namespace ORTS
             DynamicBrakeController.StopDecrease();
         }
 
+        public void SetDynamicBrakePercent(float percent)
+        {
+            if (!CanUseDynamicBrake())
+                return;
+            DynamicBrakePercent = DynamicBrakeController.SetRDPercent(percent);
+            if (percent < 0)
+                DynamicBrakePercent = percent;
+        }
+
         public override string GetDynamicBrakeStatus()
         {
             if (DynamicBrakeController == null || DynamicBrakePercent < 0)
@@ -610,13 +762,249 @@ namespace ORTS
                 if (eventID == EventID.HeadlightOn) {  Headlight = 2; break; }
                 if (eventID == EventID.CompressorOn) { CompressorOn = true; break; }
                 if (eventID == EventID.CompressorOff) { CompressorOn = false; break; }
-                if (eventID == EventID.LightSwitchToggle) { CabLightOn = !CabLightOn; break; }
+                if (eventID == EventID.LightSwitchToggle) { break; }
             } while (false);
 
             base.SignalEvent(eventID );
         }
 
+        /// <summary>
+        /// Gets the Locomotive data needed by the Cav View Control
+        /// Check here for Signal display
+        /// </summary>
+        /// <param name="cvc">The Cab View Control</param>
+        /// <returns>The data converted to the requested unit</returns>
+        public virtual float GetDataOf(CabViewControl cvc)
+        {
+            float data;
+            switch (cvc.ControlType)
+            {
+                case CABViewControlTypes.SPEEDOMETER:
+                    {
+                        data = SpeedMpS;
+                        if (cvc.Units == CABViewControlUnits.KM_PER_HOUR)
+                            data *= 3.6f;
+                        else
+                            data *= 2.2369f;
+
+                        break;
+                    }
+                case CABViewControlTypes.AMMETER:
+                case CABViewControlTypes.LOAD_METER:
+                    {
+                        data = this.MotiveForceN / MaxForceN * (float)cvc.MaxValue;
+                        break;
+                    }
+                case CABViewControlTypes.MAIN_RES:
+                    {
+                        data = this.MainResPressurePSI;
+                        if (cvc.Units == CABViewControlUnits.BAR)
+                            data *= 68.948e-3f;
+                        else if (cvc.Units == CABViewControlUnits.KILOPASCALS)
+                            data *= 6.89476f;
+                        else if (cvc.Units == CABViewControlUnits.KGS_PER_SQUARE_CM)
+                            data *= 70.307e-3f;
+                        break;
+                    }
+                case CABViewControlTypes.BRAKE_PIPE:
+                case CABViewControlTypes.EQ_RES:
+                    {
+                        data = this.BrakeSystem.BrakeLine1PressurePSI;
+                        if (cvc.Units == CABViewControlUnits.BAR)
+                            data *= 68.948e-3f;
+                        else if (cvc.Units == CABViewControlUnits.KILOPASCALS)
+                            data *= 6.89476f;
+                        else if (cvc.Units == CABViewControlUnits.KGS_PER_SQUARE_CM)
+                            data *= 70.307e-3f;
+                        break;
+                    }
+                case CABViewControlTypes.BRAKE_CYL:
+                    {
+                        AirSinglePipe asp = BrakeSystem as AirSinglePipe;
+                        if (asp != null)
+                        {
+                            data = asp.CylPSIPressure;
+                            if (cvc.Units == CABViewControlUnits.BAR)
+                                data *= 68.948e-3f;
+                            else if (cvc.Units == CABViewControlUnits.KILOPASCALS)
+                                data *= 6.89476f;
+                            else if (cvc.Units == CABViewControlUnits.KGS_PER_SQUARE_CM)
+                                data *= 70.307e-3f;
+                        }
+                        else
+                        {
+                            data = 0;
+                        }
+                        break;
+                    }
+                case CABViewControlTypes.THROTTLE:
+                case CABViewControlTypes.THROTTLE_DISPLAY:
+                    //case CABViewControlTypes.CPH_DISPLAY:
+                    {
+                        data = ThrottlePercent / 100f;
+                        break;
+                    }
+                case CABViewControlTypes.ENGINE_BRAKE:
+                    {
+                        data = EngineBrakeController.CurrentValue;
+                        break;
+                    }
+                case CABViewControlTypes.TRAIN_BRAKE:
+                    {
+                        data = TrainBrakeController.CurrentValue;
+                        break;
+                    }
+                case CABViewControlTypes.DYNAMIC_BRAKE:
+                case CABViewControlTypes.DYNAMIC_BRAKE_DISPLAY:
+                    {
+                        data = DynamicBrakePercent;
+                        break;
+                    }
+                case CABViewControlTypes.WIPERS:
+                    {
+                        data = Wiper ? 1 : 0;
+                        break;
+                    }
+                case CABViewControlTypes.HORN:
+                    {
+                        data = Horn ? 1 : 0;
+                        break;
+                    }
+                case CABViewControlTypes.BELL:
+                    {
+                        data = Bell ? 1 : 0;
+                        break;
+                    }
+                case CABViewControlTypes.SANDERS:
+                    {
+                        data = Sander ? 1 : 0;
+                        break;
+                    }
+                case CABViewControlTypes.FRONT_HLIGHT:
+                    {
+                        data = Headlight;
+                        break;
+                    }
+                case CABViewControlTypes.DIRECTION:
+                case CABViewControlTypes.DIRECTION_DISPLAY:
+                    {
+                        if (Direction == Direction.Forward)
+                            data = 2;
+                        else if (Direction == Direction.Reverse)
+                            data = 0;
+                        else
+                            data = 1;
+                        break;
+                    }
+                case CABViewControlTypes.ASPECT_DISPLAY:
+                    {
+                        switch (Train.CABAspect)
+                        {
+                            case SignalHead.SIGASP.STOP:
+                                {
+                                    data = 0;
+                                    break;
+                                }
+                            case SignalHead.SIGASP.STOP_AND_PROCEED:
+                                {
+                                    data = 1;
+                                    break;
+                                }
+                            case SignalHead.SIGASP.RESTRICTING:
+                                {
+                                    data = 2;
+                                    break;
+                                }
+                            case SignalHead.SIGASP.APPROACH_1:
+                                {
+                                    data = 3;
+                                    break;
+                                }
+                            case SignalHead.SIGASP.APPROACH_2:
+                                {
+                                    data = 4;
+                                    break;
+                                }
+                            case SignalHead.SIGASP.APPROACH_3:
+                            case SignalHead.SIGASP.APPROACH_4:
+                                {
+                                    data = 5;
+                                    break;
+                                }
+                            case SignalHead.SIGASP.CLEAR_1:
+                            case SignalHead.SIGASP.CLEAR_2:
+                            case SignalHead.SIGASP.CLEAR_3:
+                            case SignalHead.SIGASP.CLEAR_4:
+                                {
+                                    data = 6;
+                                    break;
+                                }
+                            default:
+                                {
+                                    data = 7;
+                                    break;
+                                }
+                        }
+                        break;
+                    }
+                default:
+                    {
+                        data = 0;
+                        break;
+                    }
+            }
+            return data;
+        }
+
     } // LocomotiveSimulator
+
+    /// <summary>
+    /// Extended CVF data, currently used for CAB light
+    /// By GeorgeS
+    /// </summary>
+    public class ExtendedCVF
+    {
+        /// <summary>
+        /// Represents a Light in the CAB.
+        /// </summary>
+        public class Light
+        {
+            /// <summary>
+            /// X,Y : Position of the light, Z : Radius, W : Aspect ratio X:Y
+            /// </summary>
+            public Vector4 Position = new Vector4(0);
+            public Color Color = Color.Black;
+
+            /// <summary>
+            /// Translate to current screen resolution
+            /// </summary>
+            /// <param name="displaySize">Current screen resolution</param>
+            /// <returns>Translated vectors</returns>
+            public Vector4 TranslatedPosition(Point displaySize)
+            {
+                return new Vector4(Position.X / 640 * displaySize.X, 
+                    Position.Y / 480 * displaySize.Y, 
+                    Position.Z / 640 * displaySize.X,
+                    Position.W);
+            }
+
+            /// <summary>
+            /// Used by the shader
+            /// </summary>
+            public Vector3 TranslatedColor
+            {
+                get
+                {
+                    return new Vector3((float)Color.R / 255, (float)Color.G / 255, (float)Color.B / 255);
+                }
+            }
+        }
+
+        [ContentSerializer(Optional = true)]
+        public Light Light1 = new Light() { Color = new Color(0xFF, 0xD8, 0xB2, 0xFF), Position = new Vector4(320, 360, 155, 2) };
+        [ContentSerializer(Optional = true)]
+        public Light Light2 = new Light();
+    }
 
     ///////////////////////////////////////////////////
     ///   3D VIEW
@@ -629,6 +1017,7 @@ namespace ORTS
     {
         MSTSLocomotive Locomotive;
 
+        protected Dictionary<string, List<ParticleEmitterDrawer>> ParticleDrawers = new Dictionary<string, List<ParticleEmitterDrawer>>();
         List<int> WiperPartIndexes = new List<int>();
 
         float WiperAnimationKey = 0;
@@ -642,13 +1031,23 @@ namespace ORTS
         {
             Locomotive = car;
 
+            foreach (KeyValuePair<string, List<ParticleEmitterData>> pair in Locomotive.EffectData)
+            {
+                ParticleDrawers.Add(pair.Key, new List<ParticleEmitterDrawer>());
+
+                foreach (ParticleEmitterData data in pair.Value)
+                {
+                    ParticleDrawers[pair.Key].Add(new ParticleEmitterDrawer(viewer, data));
+                }                
+            }
+
             if (car.CVFFile != null && car.CVFFile.TwoDViews.Count > 0)
                 _CabRenderer = new CabRenderer(viewer, Locomotive);
 
             // Find the animated parts
             if (TrainCarShape.SharedShape.Animations != null)
             {
-                for (int iMatrix = 0; iMatrix < TrainCarShape.SharedShape.MatrixNames.Length; ++iMatrix)
+				for (int iMatrix = 0; iMatrix < TrainCarShape.SharedShape.MatrixNames.Count; ++iMatrix)
                 {
                     string matrixName = TrainCarShape.SharedShape.MatrixNames[iMatrix].ToUpper();
                     switch (matrixName)
@@ -681,43 +1080,45 @@ namespace ORTS
         /// </summary>
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
-            if (UserInput.IsPressed(Keys.W)) Locomotive.SetDirection(Direction.Forward);
-            if (UserInput.IsPressed(Keys.S)) Locomotive.SetDirection(Direction.Reverse);
-    
-            if (UserInput.IsPressed(Keys.D)) Locomotive.StartThrottleIncrease();
-            if (UserInput.IsReleased(Keys.D)) Locomotive.StopThrottleIncrease();
-            if (UserInput.IsPressed(Keys.A)) Locomotive.StartThrottleDecrease();
-            if (UserInput.IsReleased(Keys.A)) Locomotive.StopThrottleDecrease();
+            if (UserInput.IsPressed(UserCommands.ControlForwards)) Locomotive.SetDirection(Direction.Forward);
+			if (UserInput.IsPressed(UserCommands.ControlBackwards)) Locomotive.SetDirection(Direction.Reverse);
 
-            if (UserInput.IsPressed(Keys.OemQuotes) && !UserInput.IsShiftDown()) Locomotive.StartTrainBrakeIncrease();
-            if (UserInput.IsReleased(Keys.OemQuotes) && !UserInput.IsShiftDown()) Locomotive.StopTrainBrakeIncrease();
-            if (UserInput.IsPressed(Keys.OemSemicolon) && !UserInput.IsShiftDown()) Locomotive.StartTrainBrakeDecrease();
-            if (UserInput.IsReleased(Keys.OemSemicolon) && !UserInput.IsShiftDown()) Locomotive.StopTrainBrakeDecrease();
+			if (UserInput.IsPressed(UserCommands.ControlThrottleIncrease)) Locomotive.StartThrottleIncrease();
+			if (UserInput.IsReleased(UserCommands.ControlThrottleIncrease)) Locomotive.StopThrottleIncrease();
+			if (UserInput.IsPressed(UserCommands.ControlThrottleDecrease)) Locomotive.StartThrottleDecrease();
+			if (UserInput.IsReleased(UserCommands.ControlThrottleDecrease)) Locomotive.StopThrottleDecrease();
 
-            if (UserInput.IsPressed(Keys.OemCloseBrackets) && !UserInput.IsShiftDown()) Locomotive.StartEngineBrakeIncrease();
-            if (UserInput.IsReleased(Keys.OemCloseBrackets) && !UserInput.IsShiftDown()) Locomotive.StopEngineBrakeIncrease();
-            if (UserInput.IsPressed(Keys.OemOpenBrackets) && !UserInput.IsShiftDown()) Locomotive.StartEngineBrakeDecrease();
-            if (UserInput.IsReleased(Keys.OemOpenBrackets) && !UserInput.IsShiftDown()) Locomotive.StopEngineBrakeDecrease();
+			if (UserInput.IsPressed(UserCommands.ControlTrainBrakeIncrease)) Locomotive.StartTrainBrakeIncrease();
+			if (UserInput.IsReleased(UserCommands.ControlTrainBrakeIncrease)) Locomotive.StopTrainBrakeIncrease();
+			if (UserInput.IsPressed(UserCommands.ControlTrainBrakeDecrease)) Locomotive.StartTrainBrakeDecrease();
+			if (UserInput.IsReleased(UserCommands.ControlTrainBrakeDecrease)) Locomotive.StopTrainBrakeDecrease();
 
-            if (UserInput.IsPressed(Keys.OemComma) && !UserInput.IsShiftDown()) Locomotive.StartDynamicBrakeIncrease();
-            if (UserInput.IsReleased(Keys.OemComma) && !UserInput.IsShiftDown()) Locomotive.StopDynamicBrakeIncrease();
-            if (UserInput.IsPressed(Keys.OemPeriod) && !UserInput.IsShiftDown()) Locomotive.StartDynamicBrakeDecrease();
-            if (UserInput.IsReleased(Keys.OemPeriod) && !UserInput.IsShiftDown()) Locomotive.StopDynamicBrakeDecrease();            
+			if (UserInput.IsPressed(UserCommands.ControlEngineBrakeIncrease)) Locomotive.StartEngineBrakeIncrease();
+			if (UserInput.IsReleased(UserCommands.ControlEngineBrakeIncrease)) Locomotive.StopEngineBrakeIncrease();
+			if (UserInput.IsPressed(UserCommands.ControlEngineBrakeDecrease)) Locomotive.StartEngineBrakeDecrease();
+			if (UserInput.IsReleased(UserCommands.ControlEngineBrakeDecrease)) Locomotive.StopEngineBrakeDecrease();
 
-            if (UserInput.IsPressed(Keys.OemQuestion) && !UserInput.IsShiftDown()) Locomotive.ToggleBailOff();            
-            if (UserInput.IsPressed(Keys.OemQuestion) && UserInput.IsShiftDown()) Locomotive.Train.InitializeBrakes();
-            if (UserInput.IsPressed(Keys.OemSemicolon) && UserInput.IsShiftDown()) Locomotive.Train.SetHandbrakePercent(0);
-            if (UserInput.IsPressed(Keys.OemQuotes) && UserInput.IsShiftDown()) Locomotive.Train.SetHandbrakePercent(100);
-            if (UserInput.IsPressed(Keys.OemOpenBrackets) && UserInput.IsShiftDown()) Locomotive.Train.SetRetainers(false);
-            if (UserInput.IsPressed(Keys.OemCloseBrackets) && UserInput.IsShiftDown()) Locomotive.Train.SetRetainers(true);
-            if (UserInput.IsPressed(Keys.OemPipe) && !UserInput.IsShiftDown()) Locomotive.Train.ConnectBrakeHoses();
-            if (UserInput.IsPressed(Keys.OemPipe) && UserInput.IsShiftDown()) Locomotive.Train.DisconnectBrakes();
-            if (UserInput.IsPressed(Keys.Back)) Locomotive.SetEmergency();
-            if (UserInput.IsPressed(Keys.X)) Locomotive.Train.SignalEvent(Locomotive.Sander ? EventID.SanderOff : EventID.SanderOn); 
-            if (UserInput.IsPressed(Keys.V)) Locomotive.SignalEvent(Locomotive.Wiper ? EventID.WiperOff : EventID.WiperOn);
-            if (UserInput.IsKeyDown(Keys.Space) != Locomotive.Horn) Locomotive.SignalEvent(Locomotive.Horn ? EventID.HornOff : EventID.HornOn);
-            if (UserInput.IsPressed(Keys.B) != Locomotive.Bell) Locomotive.SignalEvent(Locomotive.Bell ? EventID.BellOff : EventID.BellOn);
-            if (UserInput.IsPressed(Keys.H) && UserInput.IsShiftDown())
+			if (UserInput.IsPressed(UserCommands.ControlDynamicBrakeIncrease)) Locomotive.StartDynamicBrakeIncrease();
+			if (UserInput.IsReleased(UserCommands.ControlDynamicBrakeIncrease)) Locomotive.StopDynamicBrakeIncrease();
+			if (UserInput.IsPressed(UserCommands.ControlDynamicBrakeDecrease)) Locomotive.StartDynamicBrakeDecrease();
+			if (UserInput.IsReleased(UserCommands.ControlDynamicBrakeDecrease)) Locomotive.StopDynamicBrakeDecrease();
+
+			Locomotive.SetBailOff(UserInput.IsDown(UserCommands.ControlBailOff));
+			if (UserInput.IsPressed(UserCommands.ControlInitializeBrakes)) Locomotive.Train.InitializeBrakes();
+			if (UserInput.IsPressed(UserCommands.ControlHandbrakeNone)) Locomotive.Train.SetHandbrakePercent(0);
+			if (UserInput.IsPressed(UserCommands.ControlHandbrakeFull)) Locomotive.Train.SetHandbrakePercent(100);
+			if (UserInput.IsPressed(UserCommands.ControlRetainersOff)) Locomotive.Train.SetRetainers(false);
+			if (UserInput.IsPressed(UserCommands.ControlRetainersOn)) Locomotive.Train.SetRetainers(true);
+			if (UserInput.IsPressed(UserCommands.ControlBrakeHoseConnect)) Locomotive.Train.ConnectBrakeHoses();
+			if (UserInput.IsPressed(UserCommands.ControlBrakeHoseDisconnect)) Locomotive.Train.DisconnectBrakes();
+			if (UserInput.IsPressed(UserCommands.ControlEmergency)) Locomotive.SetEmergency();
+			if (UserInput.IsPressed(UserCommands.ControlSander)) Locomotive.Train.SignalEvent(Locomotive.Sander ? EventID.SanderOff : EventID.SanderOn);
+			if (UserInput.IsPressed(UserCommands.ControlWiper)) Locomotive.SignalEvent(Locomotive.Wiper ? EventID.WiperOff : EventID.WiperOn);
+			if (UserInput.IsPressed(UserCommands.ControlHorn)) Locomotive.SignalEvent(EventID.HornOn);
+			if (UserInput.IsReleased(UserCommands.ControlHorn)) Locomotive.SignalEvent(EventID.HornOff);
+			if (UserInput.IsPressed(UserCommands.ControlBell)) Locomotive.SignalEvent(EventID.BellOn);
+			if (UserInput.IsReleased(UserCommands.ControlBell)) Locomotive.SignalEvent(EventID.BellOff);
+			if (UserInput.IsPressed(UserCommands.ControlHeadlightDecrease))
             {
                 switch ((Locomotive.Headlight))
                 {
@@ -728,7 +1129,7 @@ namespace ORTS
                 if (EventID.IsMSTSBin)
                     Locomotive.SignalEvent(EventID.LightSwitchToggle);
             }
-            else if (UserInput.IsPressed(Keys.H))
+			else if (UserInput.IsPressed(UserCommands.ControlHeadlightIncrease))
             {
                 switch ((Locomotive.Headlight))
                 {
@@ -739,15 +1140,44 @@ namespace ORTS
                 if (EventID.IsMSTSBin)
                     Locomotive.SignalEvent(EventID.LightSwitchToggle);
             }
-            if (UserInput.IsPressed(Keys.Tab) && !UserInput.IsCtrlKeyDown())
+			if (UserInput.IsPressed(UserCommands.ControlDispatcherExtend))
                 Program.Simulator.AI.Dispatcher.ExtendPlayerAuthorization();
-            if (UserInput.IsPressed(Keys.Tab) && UserInput.IsCtrlKeyDown())
+			if (UserInput.IsPressed(UserCommands.ControlDispatcherRelease))
                 Program.Simulator.AI.Dispatcher.ReleasePlayerAuthorization();
 
             // By GeorgeS
-            if (UserInput.IsPressed(Keys.L)) Locomotive.SignalEvent(EventID.LightSwitchToggle);
-            if (UserInput.IsPressed(Keys.D1) && UserInput.IsShiftDown()) Locomotive.ShowCab = !Locomotive.ShowCab;
-            base.HandleUserInput( elapsedTime );
+            if (UserInput.IsPressed(UserCommands.ControlLight)) { Locomotive.CabLightOn = !Locomotive.CabLightOn; Locomotive.SignalEvent(EventID.LightSwitchToggle); }
+            if (UserInput.IsPressed(UserCommands.CameraToggleShowCab)) Locomotive.ShowCab = !Locomotive.ShowCab;
+
+            if (UserInput.RDState != null)
+            {
+                if (UserInput.RDState.BailOff)
+                    Locomotive.SetBailOff(true);
+                if (UserInput.RDState.Changed)
+                {
+                    Locomotive.SetThrottlePercent(UserInput.RDState.ThrottlePercent);
+                    Locomotive.SetTrainBrakePercent(UserInput.RDState.TrainBrakePercent);
+                    Locomotive.SetEngineBrakePercent(UserInput.RDState.EngineBrakePercent);
+                    Locomotive.SetDynamicBrakePercent(UserInput.RDState.DynamicBrakePercent);
+                    if (UserInput.RDState.DirectionPercent > 50)
+                        Locomotive.SetDirection(Direction.Forward);
+                    else if (UserInput.RDState.DirectionPercent < -50)
+                        Locomotive.SetDirection(Direction.Reverse);
+                    if (UserInput.RDState.Emergency)
+                        Locomotive.SetEmergency();
+                    if (UserInput.RDState.Wipers == 1 && Locomotive.Wiper)
+                        Locomotive.SignalEvent(EventID.WiperOff);
+                    if (UserInput.RDState.Wipers != 1 && !Locomotive.Wiper)
+                        Locomotive.SignalEvent(EventID.WiperOn);
+                    // changing Headlight more than one step at a time doesn't work for some reason
+                    if (Locomotive.Headlight < UserInput.RDState.Lights - 1)
+                        Locomotive.Headlight++;
+                    if (Locomotive.Headlight > UserInput.RDState.Lights - 1)
+                        Locomotive.Headlight--;
+                }
+            }
+
+			base.HandleUserInput(elapsedTime);
         }
 
         /// <summary>
@@ -757,6 +1187,16 @@ namespace ORTS
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
             float elapsedClockSeconds = elapsedTime.ClockSeconds;
+
+            foreach (List<ParticleEmitterDrawer> drawers in ParticleDrawers.Values)
+            {
+                foreach (ParticleEmitterDrawer drawer in drawers)
+                {
+                    drawer.WorldPosition = Locomotive.WorldPosition;
+                    drawer.PrepareFrame(frame, elapsedTime);
+                }
+            }
+
             // Wiper animation
             if (WiperPartIndexes.Count > 0)  // skip this if there are no wipers
             {
@@ -803,57 +1243,403 @@ namespace ORTS
 
     } // Class LocomotiveViewer
 
-
     // By GeorgeS
+    /// <summary>
+    /// Manages all CAB View textures - light conditions and texture parts
+    /// </summary>
+    public static class CABTextureManager
+    {
+        private static Dictionary<string, Texture2D> DayTextures = new Dictionary<string, Texture2D>();
+        private static Dictionary<string, Texture2D> NightTextures = new Dictionary<string, Texture2D>();
+        private static Dictionary<string, Texture2D> LightTextures = new Dictionary<string, Texture2D>();
+        private static Dictionary<string, Texture2D[]> PDayTextures = new Dictionary<string, Texture2D[]>();
+        private static Dictionary<string, Texture2D[]> PNightTextures = new Dictionary<string, Texture2D[]>();
+        private static Dictionary<string, Texture2D[]> PLightTextures = new Dictionary<string, Texture2D[]>();
+
+        /// <summary>
+        /// Loads a texture, day night and cablight
+        /// </summary>
+        /// <param name="viewer">Viver3D</param>
+        /// <param name="FileName">Name of the Texture</param>
+        public static void LoadTextures(Viewer3D viewer, string FileName)
+        {
+            if (string.IsNullOrEmpty(FileName))
+                return;
+
+            if (DayTextures.Keys.Contains(FileName))
+                return;
+
+            Texture2D tex;
+
+            if (File.Exists(FileName))
+            {
+                tex = SharedTextureManager.Get(viewer.GraphicsDevice, FileName);
+                DayTextures.Add(FileName, tex);
+            }
+            else
+                DayTextures.Add(FileName, Materials.MissingTexture);
+
+            string nightpath = FileName.Substring(0, FileName.LastIndexOf('\\')) + "\\night" + FileName.Substring(FileName.LastIndexOf('\\'));
+            if (File.Exists(nightpath))
+            {
+                tex = SharedTextureManager.Get(viewer.GraphicsDevice, nightpath);
+                NightTextures.Add(FileName, tex);
+            }
+            else
+                NightTextures.Add(FileName, Materials.MissingTexture);
+
+            string lightpath = FileName.Substring(0, FileName.LastIndexOf('\\')) + "\\cablight" + FileName.Substring(FileName.LastIndexOf('\\'));
+            if (File.Exists(lightpath))
+            {
+                tex = SharedTextureManager.Get(viewer.GraphicsDevice, lightpath);
+                LightTextures.Add(FileName, tex);
+            }
+            else
+                LightTextures.Add(FileName, Materials.MissingTexture);
+        }
+
+        /// <summary>
+        /// Disassembles a compund Texture into parts
+        /// </summary>
+        /// <param name="graphicsDevice">The GraphicsDevice</param>
+        /// <param name="tex">Texture to be disassembled</param>
+        /// <param name="width">Width of the Cab View Control</param>
+        /// <param name="height">Height of the Cab View Control</param>
+        /// <param name="FramesCount">Number of frames read from CVF</param>
+        /// <param name="FileName">Name of the control ACE file</param>
+        /// <returns>Array with Textures disassembled</returns>
+        private static Texture2D[] Disassemble(GraphicsDevice graphicsDevice, Texture2D tex, int width, int height, int FramesCount, string FileName)
+        {
+            Texture2D dtex;
+            Color[] arr = new Color[width * height];
+            Texture2D[] dest;
+
+            // Problem with texture sizes, could not disassemble
+            if (width == 0 || height == 0 || tex.Width / width == 0 || tex.Height / height == 0)
+            {
+                Trace.TraceWarning(string.Format("Could not disassemble texture {0}. Texture width is {1}, height is {2}; Control width is {3}, height is {4}",
+                    FileName, tex.Width, tex.Height, width, height));
+
+                dest = new Texture2D[FramesCount];
+                for (int i = 0; i < FramesCount; i++)
+                    dest[i] = Materials.MissingTexture;
+            }
+            else
+            {
+                int wcou = tex.Width / width;
+                int hcou = tex.Height / height;
+                int texcou = FramesCount;
+
+                // Problem with texture size, disassemble and later fill with missing the rest
+                if (hcou * wcou != FramesCount)
+                {
+                    if (hcou * wcou > FramesCount)
+                        texcou = hcou * wcou;
+
+                    Trace.TraceWarning(string.Format("Frames count mismatch in {0}. Specified frames: {1}, texture frames: {2}. Using frames number {3}.",
+                        FileName, FramesCount, hcou * wcou, texcou));
+                }
+
+                dest = new Texture2D[texcou];
+                int indx = 0;
+
+                for (int j = 0; j < hcou; j++)
+                {
+                    for (int i = 0; i < wcou; i++)
+                    {
+                        tex.GetData<Color>(0, new Rectangle(i * width, j * height, width, height),
+                            arr, 0, width * height);
+
+                        dtex = new Texture2D(graphicsDevice, width, height);
+                        dtex.SetData<Color>(arr);
+                        dest[indx] = dtex;
+                        indx++;
+                    }
+                }
+
+                // Fill missing the rest if has any
+                while (indx < FramesCount)
+                {
+                    dest[indx] = Materials.MissingTexture;
+                    indx++;
+                }
+            }
+            return dest;
+        }
+        
+        /// <summary>
+        /// Disassembles all compund textures into parts
+        /// </summary>
+        /// <param name="graphicsDevice">The GraphicsDevice</param>
+        /// <param name="FileName">Name of the Texture to be disassembled</param>
+        /// <param name="width">Width of the Cab View Control</param>
+        /// <param name="height">Height of the Cab View Control</param>
+        /// <param name="FramesCount">Number of frames, read from CVF</param>
+        public static void DisassembleTexture(GraphicsDevice graphicsDevice, string FileName, int width, int height, int FramesCount)
+        {
+            PDayTextures[FileName] = null;
+            if (DayTextures.ContainsKey(FileName))
+            {
+                var tex = DayTextures[FileName];
+                if (tex != Materials.MissingTexture)
+                {
+                    PDayTextures[FileName] = Disassemble(graphicsDevice, tex, width, height, FramesCount, FileName + ":day");
+                }
+            }
+
+            PNightTextures[FileName] = null;
+            if (NightTextures.ContainsKey(FileName))
+            {
+                var tex = NightTextures[FileName];
+                if (tex != Materials.MissingTexture)
+                {
+                    PNightTextures[FileName] = Disassemble(graphicsDevice, tex, width, height, FramesCount, FileName + ":night");
+                }
+            }
+
+            PLightTextures[FileName] = null;
+            if (LightTextures.ContainsKey(FileName))
+            {
+                var tex = LightTextures[FileName];
+                if (tex != Materials.MissingTexture)
+                {
+                    PLightTextures[FileName] = Disassemble(graphicsDevice, tex, width, height, FramesCount, FileName + ":light");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets a Texture from the given array
+        /// </summary>
+        /// <param name="arr">Texture array</param>
+        /// <param name="indx">Index</param>
+        /// <param name="FileName">Name of the file to report</param>
+        /// <returns>The given Texture</returns>
+        private static Texture2D SafeGetAt(Texture2D[] arr, int indx, string FileName)
+        {
+            if (arr == null)
+            {
+                Trace.TraceWarning(string.Format("Passed null Texture[] for accessing: {0}", FileName));
+                return Materials.MissingTexture;
+            }
+            
+            if (arr.Length < 1)
+            {
+                Trace.TraceWarning(string.Format("Disassembled texture invalid for: {0}", FileName));
+                return Materials.MissingTexture;
+            }
+            
+            indx = (int)MathHelper.Clamp(indx, 0, arr.Length - 1);
+
+            try
+            {
+                return arr[indx];
+            }
+            catch
+            {
+                Trace.TraceError(string.Format("Error accessing texture for: {0}", FileName));
+                Trace.TraceWarning(string.Format("The array length is {0}, while the index is {1}.", arr.Length, indx));
+                return Materials.MissingTexture;
+            }
+        }
+
+        /// <summary>
+        /// Returns the compound part of a Texture previously disassembled
+        /// </summary>
+        /// <param name="FileName">Name of the disassembled Texture</param>
+        /// <param name="indx">Index of the part</param>
+        /// <param name="isDark">Is dark out there?</param>
+        /// <param name="isLight">Is Cab Light on?</param>
+        /// <param name="isNightTexture"></param>
+        /// <returns>The Texture represented by its index</returns>
+        public static Texture2D GetTextureByIndexes(string FileName, int indx, bool isDark, bool isLight, out bool isNightTexture)
+        {
+            Texture2D retval = Materials.MissingTexture;
+            Texture2D[] tmp = null;
+
+            isNightTexture = false;
+
+            if (string.IsNullOrEmpty(FileName) || !PDayTextures.Keys.Contains(FileName))
+                return Materials.MissingTexture;
+
+            if (isDark)
+            {
+                if (isLight)
+                {
+                    //tmp = PLightTextures[FileName];
+                    tmp = PDayTextures[FileName];
+                    if (tmp != null)
+                    {
+                        retval = SafeGetAt(tmp, indx, FileName);
+                        isNightTexture = false;
+                    }
+                }
+
+                if (retval == Materials.MissingTexture)
+                {
+                    tmp = PNightTextures[FileName];
+                    if (tmp != null)
+                    {
+                        retval = SafeGetAt(tmp, indx, FileName);
+                        isNightTexture = true;
+                    }
+                }
+            }
+
+            if (retval == Materials.MissingTexture)
+            {
+                tmp = PDayTextures[FileName];
+                if (tmp != null)
+                {
+                    retval = SafeGetAt(tmp, indx, FileName);
+                    isNightTexture = false;
+                }
+            }
+            return retval;
+        }
+
+        /// <summary>
+        /// Returns a Texture by its name
+        /// </summary>
+        /// <param name="FileName">Name of the Texture</param>
+        /// <param name="isDark">Is dark out there?</param>
+        /// <param name="isLight">Is Cab Light on?</param>
+        /// <param name="isNightTexture"></param>
+        /// <returns>The Texture</returns>
+        public static Texture2D GetTexture(string FileName, bool isDark, bool isLight, out bool isNightTexture)
+        {
+            Texture2D retval = Materials.MissingTexture;
+            isNightTexture = false;
+
+            if (string.IsNullOrEmpty(FileName) || !DayTextures.Keys.Contains(FileName))
+                return retval;
+
+            if (isDark)
+            {
+                if (isLight)
+                {
+                    //retval = LightTextures[FileName];
+                    retval = DayTextures[FileName];
+                    isNightTexture = false;
+                }
+
+                if (retval == Materials.MissingTexture)
+                {
+                    retval = NightTextures[FileName];
+                    isNightTexture = true;
+                }
+            }
+
+            if (retval == Materials.MissingTexture)
+            {
+                retval = DayTextures[FileName];
+                isNightTexture = false;
+            }
+
+            return retval;
+        }
+    }
+
     public class CabRenderer : RenderPrimitive
     {
         private SpriteBatchMaterial _Sprite2DCabView;
-        private List<Texture2D> _CabViews = new List<Texture2D>();
-        private List<Texture2D> _NightViews = new List<Texture2D>();
-        private List<Texture2D> _LightViews = new List<Texture2D>();
-        private Rectangle _CabRect;
+        private Rectangle _CabRect = new Rectangle();
         private Matrix _Scale = Matrix.Identity;
+        private Texture2D _CabTexture;
+        private CabShader _Shader;
+
+        private Point _PrevScreenSize;
+
+        private CabViewControls CabViewControls;
+        private List<CabViewControlRenderer> CabViewControlRenderers = new List<CabViewControlRenderer>();
 
         private Viewer3D _Viewer;
         private MSTSLocomotive _Locomotive;
         private int _Location;
-        private bool _Dark = false;
-        private bool _CabLight = false;
+        private bool _isNightTexture;
 
         public CabRenderer(Viewer3D viewer, MSTSLocomotive car)
         {
 			//Sequence = RenderPrimitiveSequence.CabView;
             _Sprite2DCabView = new SpriteBatchMaterial(viewer.RenderProcess);
+            _Viewer = viewer;
+            _Locomotive = car;
+
+            if (_Locomotive.ExCVF != null)
+            {
+                _Shader = new CabShader(viewer.GraphicsDevice, viewer.RenderProcess.Content,
+                    _Locomotive.ExCVF.Light1.TranslatedPosition(_Viewer.DisplaySize),
+                    _Locomotive.ExCVF.Light2.TranslatedPosition(_Viewer.DisplaySize),
+                    _Locomotive.ExCVF.Light1.TranslatedColor, _Locomotive.ExCVF.Light2.TranslatedColor);
+            }
+            _PrevScreenSize = _Viewer.DisplaySize;
 
             // Loading ACE files, skip displaying ERROR messages
             foreach (string cabfile in car.CVFFile.TwoDViews)
             {
-                if (File.Exists(cabfile))
-                    _CabViews.Add(SharedTextureManager.Get(viewer.GraphicsDevice, cabfile));
-                else
-                    _CabViews.Add(Materials.MissingTexture);
+                CABTextureManager.LoadTextures(viewer, cabfile);
             }
 
-            foreach (string cabfile in car.CVFFile.NightViews)
-                if (File.Exists(cabfile))
-                    _NightViews.Add(SharedTextureManager.Get(viewer.GraphicsDevice, cabfile));
-                else
-                    _NightViews.Add(Materials.MissingTexture);
-
-            foreach (string cabfile in car.CVFFile.LightViews)
-                if (File.Exists(cabfile))
-                    _LightViews.Add(SharedTextureManager.Get(viewer.GraphicsDevice, cabfile));
-                else
-                    _LightViews.Add(Materials.MissingTexture);
-
-            _Viewer = viewer;
-            _Locomotive = car;
+            #region Create Control renderers
+            CabViewControls = car.CVFFile.CabViewControls;
+            if (CabViewControls != null)
+            {
+                foreach (CabViewControl cvc in CabViewControls)
+                {
+                    CVCDial dial = cvc as CVCDial;
+                    if (dial != null)
+                    {
+                        CabViewDialRenderer cvcr = new CabViewDialRenderer(dial, viewer, car, _Shader);
+                        CabViewControlRenderers.Add(cvcr);
+                        continue;
+                    }
+                    CVCGauge gauge = cvc as CVCGauge;
+                    if (gauge != null)
+                    {
+                        CabViewGaugeRenderer cvgr = new CabViewGaugeRenderer(gauge, viewer, car, _Shader);
+                        CabViewControlRenderers.Add(cvgr);
+                        continue;
+                    }
+                    CVCSignal asp = cvc as CVCSignal;
+                    if (asp != null)
+                    {
+                        CabViewDiscreteRenderer aspr = new CabViewDiscreteRenderer(asp, viewer, car, _Shader);
+                        CabViewControlRenderers.Add(aspr);
+                        continue;
+                    }
+                    CVCMultiStateDisplay multi = cvc as CVCMultiStateDisplay;
+                    if (multi != null)
+                    {
+                        CabViewDiscreteRenderer mspr = new CabViewDiscreteRenderer(multi, viewer, car, _Shader);
+                        CabViewControlRenderers.Add(mspr);
+                        continue;
+                    }
+                    CVCDiscrete disc = cvc as CVCDiscrete;
+                    if (disc != null)
+                    {
+                        CabViewDiscreteRenderer cvdr = new CabViewDiscreteRenderer(disc, viewer, car, _Shader);
+                        CabViewControlRenderers.Add(cvdr);
+                        continue;
+                    }
+                    CVCDigital digital = cvc as CVCDigital;
+                    if (digital != null)
+                    {
+                        CabViewDigitalRenderer cvdr = new CabViewDigitalRenderer(digital, viewer, car, _Shader);
+                        CabViewControlRenderers.Add(cvdr);
+                        continue;
+                    }
+                }
+            }
+            #endregion
         }
 
         public void PrepareFrame(RenderFrame frame)
         {
             if (!_Locomotive.ShowCab)
                 return;
+
+            bool Dark = Materials.sunDirection.Y <= 0f || _Viewer.Camera.IsUnderground;
+            bool CabLight = _Locomotive.CabLightOn;
 
             CabCamera cbc = _Viewer.Camera as CabCamera;
             if (cbc != null)
@@ -865,40 +1651,454 @@ namespace ORTS
                 _Location = 0;
             }
 
-            // Night
-            // TODO set tunnels
-            _Dark = Materials.sunDirection.Y <= 0f;
-            _CabLight = _Locomotive.CabLightOn;
+            _CabTexture = CABTextureManager.GetTexture(_Locomotive.CVFFile.TwoDViews[_Location], Dark, CabLight, out _isNightTexture);
 
-            _CabRect = new Rectangle(0, 0, (int)_Viewer.DisplaySize.X, (int)_Viewer.DisplaySize.Y);
+            if (_CabTexture == Materials.MissingTexture)
+                return;
+
+            _CabRect.Width = _Viewer.DisplaySize.X;
+            _CabRect.Height = _Viewer.DisplaySize.Y;
+
+            if (_PrevScreenSize != _Viewer.DisplaySize && _Shader != null)
+            {
+                _PrevScreenSize = _Viewer.DisplaySize;
+                _Shader.SetLightPositions(
+                    _Locomotive.ExCVF.Light1.TranslatedPosition(_Viewer.DisplaySize),
+                    _Locomotive.ExCVF.Light2.TranslatedPosition(_Viewer.DisplaySize));
+            }
+
             frame.AddPrimitive(_Sprite2DCabView, this, RenderPrimitiveGroup.Cab, ref _Scale);
+
+            if (_Location == 0)
+            {
+                foreach (CabViewControlRenderer cvcr in CabViewControlRenderers)
+                {
+                    cvcr.PrepareFrame(frame);
+                }
+            }
         }
         
         public override void Draw(GraphicsDevice graphicsDevice)
         {
-            Texture2D cabv = Materials.MissingTexture;
+            if (_Location == 0 && _Shader != null)
+            {
+                _Shader.SetData(Materials.sunDirection,
+                    _isNightTexture, _Locomotive.CabLightOn, _Viewer.SkyDrawer.overcast);
 
-            // Try to find the right texture to draw
-            if (_Dark)
-            {
-                if (_CabLight)
-                {
-                    cabv = _LightViews[_Location];
-                }
-                
-                if (cabv == Materials.MissingTexture)
-                {
-                    cabv = _NightViews[_Location];
-                }
-            }
-            
-            if (cabv == Materials.MissingTexture)
-            {
-                cabv = _CabViews[_Location];
+                _Shader.SetTexData(_CabRect.Left, _CabRect.Top, _CabRect.Width, _CabRect.Height);
+                _Shader.Begin();
+                _Shader.CurrentTechnique.Passes[0].Begin();
             }
 
-            _Sprite2DCabView.SpriteBatch.Draw(cabv, _CabRect, Color.White);
+            _Sprite2DCabView.SpriteBatch.Draw(_CabTexture, _CabRect, Color.White);
+
+            if (_Location == 0 && _Shader != null)
+            {
+                _Shader.CurrentTechnique.Passes[0].End();
+                _Shader.End();
+            }
         }
     }
 
+    /// <summary>
+    /// Base class for rendering Cab Controls
+    /// </summary>
+    public class CabViewControlRenderer : RenderPrimitive
+    {
+        protected CabViewControl _CabViewControl;
+        protected SpriteBatchMaterial _Sprite2DCtlView;
+        protected Matrix _Matrix = Matrix.Identity;
+        protected Texture2D _Texture;
+        protected Viewer3D _Viewer;
+        protected MSTSLocomotive _Locomotive;
+
+        protected Vector2 _Position = new Vector2();
+        
+        protected bool _isNightTexture;
+        protected CabShader _Shader;
+
+        public CabViewControlRenderer(CabViewControl cvc, Viewer3D viewer, MSTSLocomotive car, CabShader shader)
+        {
+            _CabViewControl = cvc;
+            _Sprite2DCtlView = new SpriteBatchMaterial(viewer.RenderProcess);
+            _Shader = shader;
+
+            CABTextureManager.LoadTextures(viewer, _CabViewControl.ACEFile);
+
+            _Viewer = viewer;
+            _Locomotive = car;
+        }
+
+        /// <summary>
+        /// Gets the requested Locomotive data and translates it into percents by Min and Max values
+        /// </summary>
+        /// <returns>Percent of real data by Min and Max values</returns>
+        public float TranslateToPercent()
+        {
+            float data = _Locomotive.GetDataOf(_CabViewControl);
+            if (data < _CabViewControl.MinValue)
+                return 0;
+            if (data > _CabViewControl.MaxValue)
+                return 1;
+
+            if (_CabViewControl.MaxValue == _CabViewControl.MinValue)
+                return 0;
+
+            return (float)((data - _CabViewControl.MinValue) / (_CabViewControl.MaxValue - _CabViewControl.MinValue));
+        }
+
+        public virtual void PrepareFrame(RenderFrame frame)
+        {
+            frame.AddPrimitive(_Sprite2DCtlView, this, RenderPrimitiveGroup.Cab, ref _Matrix);
+        }
+
+        public override void Draw(GraphicsDevice graphicsDevice)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Dial Cab Control Renderer
+    /// Problems with aspect ratio
+    /// </summary>
+    public class CabViewDialRenderer : CabViewControlRenderer
+    {
+        private float _Rotation = 0f;
+        private float _ScaleToScreen = 1f;
+        private Vector2 _Origin;
+        private CVCDial _Dial;
+        protected float _Scale = 1f;
+
+        public CabViewDialRenderer(CVCDial dial, Viewer3D viewer, MSTSLocomotive car, CabShader shader)
+            : base (dial, viewer, car, shader)
+        {
+            _Dial = dial;
+            _Origin = new Vector2((float)(_Dial.Width / 2), _Dial.Center);
+
+            _Texture = CABTextureManager.GetTexture(_CabViewControl.ACEFile, false, false, out _isNightTexture);
+            _Scale = (float)(_Dial.Height / _Texture.Height);
+        }
+
+        public override void PrepareFrame(RenderFrame frame)
+        {
+            bool Dark = Materials.sunDirection.Y <= 0f || _Viewer.Camera.IsUnderground;
+            bool CabLight = _Locomotive.CabLightOn;
+
+            _Texture = CABTextureManager.GetTexture(_CabViewControl.ACEFile, Dark, CabLight, out _isNightTexture);
+
+            if (_Texture == Materials.MissingTexture)
+                return;
+
+            base.PrepareFrame(frame);
+
+			_Position.X = (float)_Viewer.DisplaySize.X / 640 * ((float)_CabViewControl.PositionX + _Origin.X);
+			_Position.Y = (float)_Viewer.DisplaySize.Y / 480 * ((float)_CabViewControl.PositionY + _Origin.Y);
+
+			_ScaleToScreen = (float)_Viewer.DisplaySize.Y / 480 * _Scale;
+
+            float percent = TranslateToPercent();
+            float range;
+
+            if ((_Dial.FromDegree > _Dial.ToDegree && _Dial.Direction == 0) ||
+                (_Dial.ToDegree > _Dial.FromDegree && _Dial.Direction != 0))
+            {
+                range = 360 - _Dial.FromDegree + _Dial.ToDegree;
+            }
+            else
+            {
+                range = _Dial.ToDegree - _Dial.FromDegree;
+            }
+
+            float degree = range * percent;
+
+            if (_Dial.Direction == 0)
+                degree = _Dial.FromDegree + degree;
+            else
+                degree = _Dial.ToDegree - degree;
+
+            _Rotation = MathHelper.ToRadians(degree);
+        }
+
+        public override void Draw(GraphicsDevice graphicsDevice)
+        {
+            if (_Shader != null)
+            {
+                _Shader.SetTexData(_Position.X, _Position.Y, _Texture.Width * _ScaleToScreen, _Texture.Height * _ScaleToScreen);
+                _Shader.Begin();
+                _Shader.CurrentTechnique.Passes[0].Begin();
+            }
+            _Sprite2DCtlView.SpriteBatch.Draw(_Texture, _Position, null, Color.White, _Rotation, _Origin, _ScaleToScreen, SpriteEffects.None, 0);
+            if (_Shader != null)
+            {
+                _Shader.CurrentTechnique.Passes[0].End();
+                _Shader.End();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gauge type renderer
+    /// Supports pointer, liquid, solid
+    /// Supports Orientation and Direction
+    /// </summary>
+    public class CabViewGaugeRenderer : CabViewControlRenderer
+    {
+        private CVCGauge _Gauge;
+        protected Rectangle _SourceRectangle = new Rectangle();
+        protected Rectangle _DestRectangle = new Rectangle();
+
+        public CabViewGaugeRenderer(CVCGauge gauge, Viewer3D viewer, MSTSLocomotive car, CabShader shader)
+            : base(gauge, viewer, car, shader)
+        {
+            _Gauge = gauge;
+            _SourceRectangle = _Gauge.Area;
+        }
+
+        public override void PrepareFrame(RenderFrame frame)
+        {
+            bool Dark = Materials.sunDirection.Y <= 0f || _Viewer.Camera.IsUnderground;
+            bool CabLight = _Locomotive.CabLightOn;
+
+            _Texture = CABTextureManager.GetTexture(_CabViewControl.ACEFile, Dark, CabLight, out _isNightTexture);
+
+            if (_Texture == Materials.MissingTexture)
+                return;
+
+            base.PrepareFrame(frame);
+
+            float xratio = (float)_Viewer.DisplaySize.X / 640;
+            float yratio = (float)_Viewer.DisplaySize.Y / 480;
+
+            float percent = TranslateToPercent();
+
+            float xpos;
+            float ypos;
+
+            if (_Gauge.Orientation == 0)
+            {
+                ypos = (int)_Gauge.Height;
+                if (_Gauge.Direction == 0)
+                {
+                    xpos = ((float)_Gauge.Width * percent);
+                }
+                else
+                {
+                    xpos = ((float)_Gauge.Width - (float)_Gauge.Width * percent);
+                }
+            }
+            else
+            {
+                xpos = (int)_Gauge.Width;
+                if (_Gauge.Direction == 0)
+                {
+                    ypos = ((float)_Gauge.Height * percent);
+                }
+                else
+                {
+                    ypos = ((float)_Gauge.Height - (float)_Gauge.Height * percent);
+                }
+            }
+
+            if (_Gauge.ControlStyle == CABViewControlStyles.SOLID || _Gauge.ControlStyle == CABViewControlStyles.LIQUID)
+            {
+                _DestRectangle.X = (int)(xratio * _CabViewControl.PositionX);
+                _DestRectangle.Y = (int)(yratio * _CabViewControl.PositionY);
+                _DestRectangle.Width = (int)(xratio * xpos);
+                _DestRectangle.Height = (int)(yratio * ypos);
+            }
+            else
+            {
+                _DestRectangle.X = (int)(xratio * (_CabViewControl.PositionX + xpos));
+                _DestRectangle.Y = (int)(yratio * (_CabViewControl.PositionY + ypos));
+                _DestRectangle.Width = (int)(xratio * _Gauge.Area.Width);
+                _DestRectangle.Height = (int)(yratio * _Gauge.Area.Height);
+            }
+        }
+
+        public override void Draw(GraphicsDevice graphicsDevice)
+        {
+            if (_Shader != null)
+            {
+                _Shader.SetTexData(_DestRectangle.Left, _DestRectangle.Top, _DestRectangle.Width, _DestRectangle.Height);
+                _Shader.Begin();
+                _Shader.CurrentTechnique.Passes[0].Begin();
+            }
+            _Sprite2DCtlView.SpriteBatch.Draw(_Texture, _DestRectangle, _SourceRectangle, Color.White);
+            if (_Shader != null)
+            {
+                _Shader.CurrentTechnique.Passes[0].End();
+                _Shader.End();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Discrete renderer for Lever, Twostate, Tristate, Multistate, Signal
+    /// </summary>
+    public class CabViewDiscreteRenderer : CabViewControlRenderer
+    {
+        protected CVCWithFrames _CVCWithFrames;
+        protected Rectangle _SourceRectangle;
+        protected Rectangle _DestRectangle = new Rectangle();
+        
+        public CabViewDiscreteRenderer(CVCWithFrames cvc, Viewer3D viewer, MSTSLocomotive car, CabShader shader)
+            : base(cvc, viewer, car, shader)
+        {
+            _CVCWithFrames = cvc;
+            CABTextureManager.DisassembleTexture(viewer.GraphicsDevice, _CabViewControl.ACEFile,
+                (int)_CabViewControl.Width, (int)_CabViewControl.Height, _CVCWithFrames.FramesCount);
+
+            _SourceRectangle = new Rectangle(0, 0, (int)_CVCWithFrames.Width, (int)_CVCWithFrames.Height);
+        }
+
+        public override void PrepareFrame(RenderFrame frame)
+        {
+            bool Dark = Materials.sunDirection.Y <= 0f || _Viewer.Camera.IsUnderground;
+            bool CabLight = _Locomotive.CabLightOn;
+
+            int indx = GetDrawIndex();
+
+            indx = (int)MathHelper.Clamp(indx, 0, _CVCWithFrames.FramesCount - 1);
+
+            _Texture = CABTextureManager.GetTextureByIndexes(_CabViewControl.ACEFile, indx, Dark, CabLight, out _isNightTexture);
+
+            if (_Texture == Materials.MissingTexture)
+                return;
+
+            base.PrepareFrame(frame);
+
+            float xratio = (float)_Viewer.DisplaySize.X / 640;
+            float yratio = (float)_Viewer.DisplaySize.Y / 480;
+
+            _DestRectangle.X = (int)(xratio * _CabViewControl.PositionX * 1.0001);
+            _DestRectangle.Y = (int)(yratio * _CabViewControl.PositionY * 1.0001);
+            _DestRectangle.Width = (int)(xratio * _CabViewControl.Width);
+            _DestRectangle.Height = (int)(yratio * _CabViewControl.Height);
+        }
+
+        public override void Draw(GraphicsDevice graphicsDevice)
+        {
+            //graphicsDevice.SamplerStates[0].MagFilter = TextureFilter.Linear;
+            if (_Shader != null)
+            {
+                _Shader.SetTexData(_DestRectangle.Left, _DestRectangle.Top, _DestRectangle.Width, _DestRectangle.Height);
+                _Shader.Begin();
+                _Shader.CurrentTechnique.Passes[0].Begin();
+            }
+            _Sprite2DCtlView.SpriteBatch.Draw(_Texture, _DestRectangle, _SourceRectangle, Color.White);
+            if (_Shader != null)
+            {
+                _Shader.CurrentTechnique.Passes[0].End();
+                _Shader.End();
+            }
+        }
+
+        /// <summary>
+        /// Determines the index of the Texture to be drawn
+        /// </summary>
+        /// <returns>index of the Texture</returns>
+        public int GetDrawIndex()
+        {
+            float data = _Locomotive.GetDataOf(_CabViewControl);
+            int indx = 0;
+            switch (_CVCWithFrames.ControlType)
+            {
+                case CABViewControlTypes.THROTTLE:
+                case CABViewControlTypes.THROTTLE_DISPLAY:
+                //case CABViewControlTypes.CPH_DISPLAY:
+                case CABViewControlTypes.ENGINE_BRAKE:
+                case CABViewControlTypes.TRAIN_BRAKE:
+                case CABViewControlTypes.DYNAMIC_BRAKE:
+                case CABViewControlTypes.DYNAMIC_BRAKE_DISPLAY:
+                    {
+                        indx = FromPercent(data);
+                        break;
+                    }
+                case CABViewControlTypes.WIPERS:
+                case CABViewControlTypes.HORN:
+                case CABViewControlTypes.BELL:
+                case CABViewControlTypes.SANDERS:
+                case CABViewControlTypes.FRONT_HLIGHT:
+                case CABViewControlTypes.PANTOGRAPH:
+                case CABViewControlTypes.PANTO_DISPLAY:
+                case CABViewControlTypes.DIRECTION:
+                case CABViewControlTypes.DIRECTION_DISPLAY:
+                case CABViewControlTypes.ASPECT_DISPLAY:
+                    {
+                        indx = (int)data;
+                        break;
+                    }
+            }
+
+            return indx;
+        }
+
+        /// <summary>
+        /// Translates a percent value to a display index
+        /// </summary>
+        /// <param name="percent">Percent to be translated</param>
+        /// <returns>The calculated display index by the Control's Values</returns>
+        public int FromPercent(float percent)
+        {
+            int indx = 0;
+
+            if (percent > 1) percent /= 100f;
+            percent = MathHelper.Clamp(percent, (float)_CVCWithFrames.MinValue, (float)_CVCWithFrames.MaxValue);
+            if (_CVCWithFrames.Values.Count > 1)
+            {
+                double val = _CVCWithFrames.Values.Where(v => v <= percent).Last();
+                indx = _CVCWithFrames.Values.IndexOf(val);
+            }
+            else
+            {
+                if (_CVCWithFrames.MaxValue != _CVCWithFrames.MinValue)
+                {
+                    indx = (int)(percent / (_CVCWithFrames.MaxValue - _CVCWithFrames.MinValue) * _CVCWithFrames.FramesCount);
+                }
+            }
+
+            return indx;
+        }
+    }
+
+    /// <summary>
+    /// Digital Cab Control renderer
+    /// Uses fonts instead of graphic
+    /// Do not supports Justification
+    /// </summary>
+    public class CabViewDigitalRenderer : CabViewControlRenderer
+    {
+        private string _Text;
+        SpriteFont _Font;
+        private float _ScaleToScreen = 1f;
+        private int _Digits = 1;
+
+        public CabViewDigitalRenderer (CVCDigital digital, Viewer3D viewer, MSTSLocomotive car, CabShader shader)
+            : base (digital, viewer, car, shader)
+        {
+            _Font = _Viewer.RenderProcess.Content.Load<SpriteFont>("Arial");
+            _Digits = (int)Math.Log10(_CabViewControl.MaxValue) + 1;
+        }
+
+        public override void PrepareFrame(RenderFrame frame)
+        {
+            float fontratio = (float)_CabViewControl.Height / 16;
+            float fpos = ((float)_CabViewControl.Width) - 6 * _Digits * fontratio;
+
+            _Position.X = (float)_Viewer.DisplaySize.X / 640 * ((float)_CabViewControl.PositionX + fpos);
+            _Position.Y = (float)_Viewer.DisplaySize.Y / 480 * (float)_CabViewControl.PositionY;
+
+            base.PrepareFrame(frame);
+
+			_ScaleToScreen = (float)_Viewer.DisplaySize.Y / 480 * (fontratio);
+
+            float num = _Locomotive.GetDataOf(_CabViewControl);
+            _Text = num.ToString("00");
+        }
+
+        public override void Draw(GraphicsDevice graphicsDevice)
+        {
+            _Sprite2DCtlView.SpriteBatch.DrawString(_Font, _Text, _Position, Color.White, 0f, new Vector2(), _ScaleToScreen, SpriteEffects.None, 0);
+        }
+    }
 }

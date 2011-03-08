@@ -18,7 +18,8 @@ namespace ORTS
 
     public class TrainCar
     {
-        public string WagFilePath;
+		public readonly Simulator Simulator;
+		public readonly string WagFilePath;
 
         // some properties of this car
         public float Length = 40;       // derived classes must overwrite these defaults
@@ -29,7 +30,7 @@ namespace ORTS
         // This is here so the viewer can see and exploit the car before this one for articulation.
         public readonly TrainCar PreviousCar;
 
-        public Lights Lights = null;
+        public LightCollection Lights = null;
         public int Headlight = 0;
 
         // instance variables set by train train physics when it creates the traincar
@@ -43,6 +44,7 @@ namespace ORTS
         public float SpeedMpS = 0.0f; // meters pers second; updated by train physics, relative to direction of car  50mph = 22MpS
         public float CouplerSlackM = 0f;// extra distance between cars (calculated based on relative speeds)
         public float CouplerSlack2M = 0f;// slack calculated using draft gear force
+        public bool WheelSlip = false;// true if locomotive wheels slipping
 
         // represents the MU line travelling through the train.  Uncontrolled locos respond to these commands.
         public float ThrottlePercent { get { return Train.MUThrottlePercent; } set { Train.MUThrottlePercent = value; } }
@@ -77,6 +79,7 @@ namespace ORTS
         public List<ViewPoint> FrontCabViewpoints = new List<ViewPoint>();
         public List<ViewPoint> RearCabViewpoints = new List<ViewPoint>();
         public List<ViewPoint> PassengerViewpoints = new List<ViewPoint>();
+        public List<ViewPoint> HeadOutViewpoints = new List<ViewPoint>();
 
         // Load 3D geometry into this 3D viewer and return it as a TrainCarViewer
         public virtual TrainCarViewer GetViewer(Viewer3D viewer) { return null; }
@@ -96,9 +99,11 @@ namespace ORTS
         public virtual string GetTrainBrakeStatus() { return null; }
         public virtual string GetEngineBrakeStatus() { return null; }
         public virtual string GetDynamicBrakeStatus() { return null; }
+        public virtual bool GetSanderOn() { return false; }
 
-        public TrainCar(string wagFile, TrainCar previousCar)
+		public TrainCar(Simulator simulator, string wagFile, TrainCar previousCar)
         {
+			Simulator = simulator;
             WagFilePath = wagFile;
             PreviousCar = previousCar;
         }
@@ -152,11 +157,11 @@ namespace ORTS
             return 1e10f;
         }
 
-        public void AddWheelSet(float offset, int bogie)
+        public void AddWheelSet(float offset, int bogie, int parentMatrix)
         {
             if (WheelAxlesLoaded)
                 return;
-            WheelAxles.Add(new WheelAxle(offset, bogie));
+            WheelAxles.Add(new WheelAxle(offset, bogie, parentMatrix));
         }
 
         public void AddBogie(float offset, int matrix, int id)
@@ -182,6 +187,15 @@ namespace ORTS
             {
                 if (w.BogieIndex >= Parts.Count)
                     w.BogieIndex = 0;
+                if (w.BogieMatrix > 0)
+                {
+                    for (int i = 0; i < Parts.Count; i++)
+                        if (Parts[i].iMatrix == w.BogieMatrix)
+                        {
+                            w.BogieIndex = i;
+                            break;
+                        }
+                }
                 w.Part = Parts[w.BogieIndex];
                 w.Part.SumWgt++;
             }
@@ -203,7 +217,7 @@ namespace ORTS
                 var part = new TrainCarPart(prevPart.OffsetM - offset, 0) { SumWgt = prevPart.SumWgt };
                 Parts.Add(part);
                 var partIndex = Parts.IndexOf(part);
-                WheelAxles.AddRange(prevAxles.Select(a => new WheelAxle(a.OffsetM - offset, partIndex) { Part = part }));
+                WheelAxles.AddRange(prevAxles.Select(a => new WheelAxle(a.OffsetM - offset, partIndex, 0) { Part = part }));
             }
             else if (!Articulated && (Parts[0].SumWgt < 1.5))
             {
@@ -280,9 +294,13 @@ namespace ORTS
             }
             p0.FindCenterLine();
             Vector3 fwd = new Vector3(p0.B[0], p0.B[1], -p0.B[2]);
-            fwd.Normalize();
+            // Check if null vector - The Length() is fine also, but may be more time consuming - By GeorgeS
+            if (fwd.X != 0 && fwd.Y != 0 && fwd.Z != 0)
+                fwd.Normalize();
             Vector3 side = Vector3.Cross(Vector3.Up, fwd);
-            side.Normalize();
+            // Check if null vector - The Length() is fine also, but may be more time consuming - By GeorgeS
+            if (side.X != 0 && side.Y != 0 && side.Z != 0)
+                side.Normalize();
             Vector3 up = Vector3.Cross(fwd, side);
             //Console.WriteLine("fwd {0}", fwd);
             //Console.WriteLine("side {0}", side);
@@ -338,11 +356,13 @@ namespace ORTS
     {
         public float OffsetM;   // distance from center of model, positive forward
         public int BogieIndex;
+        public int BogieMatrix;
         public TrainCarPart Part;
-        public WheelAxle(float offset, int bogie)
+        public WheelAxle(float offset, int bogie, int parentMatrix)
         {
             OffsetM = offset;
             BogieIndex = bogie;
+            BogieMatrix = parentMatrix;
         }
         int IComparer<WheelAxle>.Compare(WheelAxle a, WheelAxle b)
         {
@@ -434,7 +454,7 @@ namespace ORTS
     {
          // TODO add view location and limits
         public TrainCar Car;
-        public LightGlowDrawer lightGlowDrawer = null;
+        public LightDrawer lightDrawer = null;
 
         protected Viewer3D Viewer;
 

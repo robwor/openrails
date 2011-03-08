@@ -9,7 +9,7 @@ namespace ORTS
 {
     public static class RollingStock
     {
-        public static TrainCar Load(string wagFilePath, TrainCar previousCar)
+        public static TrainCar Load(Simulator simulator, string wagFilePath, TrainCar previousCar)
         {
             GenericWAGFile wagFile = SharedGenericWAGFileManager.Get(wagFilePath);  
             TrainCar car;
@@ -35,7 +35,7 @@ namespace ORTS
             if (!wagFile.IsEngine)
             {   
                 // its an ordinary MSTS wagon
-                car = new MSTSWagon(wagFilePath, previousCar);
+                car = new MSTSWagon(simulator, wagFilePath, previousCar);
             }
             else
             {   
@@ -46,9 +46,9 @@ namespace ORTS
                 switch (wagFile.Engine.Type.ToLower())
                 {
                         // TODO complete parsing of proper car types
-                    case "electric": car = new MSTSElectricLocomotive(wagFilePath, previousCar); break;
-                    case "steam": car = new MSTSSteamLocomotive(wagFilePath, previousCar); break;
-                    case "diesel": car = new MSTSDieselLocomotive(wagFilePath, previousCar); break;
+                    case "electric": car = new MSTSElectricLocomotive(simulator, wagFilePath, previousCar); break;
+                    case "steam": car = new MSTSSteamLocomotive(simulator, wagFilePath, previousCar); break;
+                    case "diesel": car = new MSTSDieselLocomotive(simulator, wagFilePath, previousCar); break;
 					default: throw new InvalidDataException(wagFilePath + "\r\n\r\nUnknown engine type: " + wagFile.Engine.Type);
                 }
             }
@@ -62,9 +62,9 @@ namespace ORTS
             wagon.Save(outf);
         }
 
-        public static TrainCar Restore(BinaryReader inf, Train train, TrainCar previousCar)
+		public static TrainCar Restore(Simulator simulator, BinaryReader inf, Train train, TrainCar previousCar)
         {
-            TrainCar car = Load(inf.ReadString(), previousCar);
+            TrainCar car = Load(simulator, inf.ReadString(), previousCar);
             car.Train = train;
             car.Restore(inf);
             return car;
@@ -109,37 +109,24 @@ namespace ORTS
 
             public void WagFile(string filenamewithpath)
             {
-                STFReader f = new STFReader(filenamewithpath);
-                while (!f.EndOfBlock())
-                {
-                    string token = f.ReadToken();
-                    switch (token.ToLower())
-                    {
-                        case "engine": Engine = new EngineClass(f); break;
-                        case "_openrails": OpenRails = new OpenRailsData(f); break;
-                        default: f.SkipBlock(); break;
-                    }
-                }
-                f.Close();
+                using (STFReader stf = new STFReader(filenamewithpath, false))
+                    stf.ParseBlock(new STFReader.TokenProcessor[] {
+                        new STFReader.TokenProcessor("engine", ()=>{ Engine = new EngineClass(stf); }),
+                        new STFReader.TokenProcessor("_openrails", ()=>{ OpenRails = new OpenRailsData(stf); }),
+                    });
             }
 
             public class EngineClass
             {
                 public string Type = null;
 
-                public EngineClass(STFReader f)
+                public EngineClass(STFReader stf)
                 {
-                    f.VerifyStartOfBlock();
-                    f.ReadToken();
-                    while (!f.EndOfBlock())
-                    {
-                        string token = f.ReadToken();
-                        switch (token.ToLower())
-                        {
-                            case "type": Type = f.ReadStringBlock(); break;
-                            default: f.SkipBlock(); break; // TODO complete parse and replace with f.SkipUnknownBlock ...
-                        }
-                    }
+                    stf.MustMatch("(");
+                    stf.ReadString();
+                    stf.ParseBlock(new STFReader.TokenProcessor[] {
+                        new STFReader.TokenProcessor("type", ()=>{ Type = stf.ReadStringBlock(null); }),
+                    });
                 }
             } // class WAGFile.Engine
 
@@ -147,18 +134,12 @@ namespace ORTS
             {
                 public string DLL = null;
 
-                public OpenRailsData(STFReader f)
+                public OpenRailsData(STFReader stf)
                 {
-                    f.VerifyStartOfBlock();
-                    while (!f.EndOfBlock())
-                    {
-                        string token = f.ReadToken();
-                        switch (token.ToLower())
-                        {
-                            case "dll": DLL = f.ReadStringBlock(); break;
-                            default: f.SkipBlock(); break; // TODO complete parse and replace with f.SkipUnknownBlock ...
-                        }
-                    }
+                    stf.MustMatch("(");
+                    stf.ParseBlock(new STFReader.TokenProcessor[] {
+                        new STFReader.TokenProcessor("dll", ()=>{ DLL = stf.ReadStringBlock(null); }),
+                    });
                 }
             } // class WAGFile.Engine
 

@@ -14,29 +14,26 @@ namespace MSTS
     {
         public TRKFile(string filename)
         {
-            STFReader f = new STFReader(filename);
             try
             {
-                string token = f.ReadToken();
-                while (token != "") // EOF
+                using (STFReader stf = new STFReader(filename, false))
                 {
-                    if (token == "(") f.SkipBlock();
-                    else if (0 == String.Compare(token, "Tr_RouteFile", true)) Tr_RouteFile = new Tr_RouteFile(f);
-                    else if (0 == String.Compare(token, "_OpenRails", true)) ORTRKData = new ORTRKData(f);
-                    else f.SkipBlock();
-                    token = f.ReadToken();
+                    stf.ParseFile(new STFReader.TokenProcessor[] {
+                        new STFReader.TokenProcessor("tr_routefile", ()=>{ Tr_RouteFile = new Tr_RouteFile(stf); }),
+                        new STFReader.TokenProcessor("_OpenRails", ()=>{ ORTRKData = new ORTRKData(stf); }),
+                    });
+                    //TODO This should be changed to STFException.TraceError() with defaults values created
+                    if (Tr_RouteFile == null) throw new STFException(stf, "Missing Tr_RouteFile");
                 }
-                if (Tr_RouteFile == null) throw (new STFException(f, "Missing Tr_RouteFile"));
             }
             finally
             {
-                f.Close();
                 if (ORTRKData == null)
                     ORTRKData = new ORTRKData();
             }
         }
         public Tr_RouteFile Tr_RouteFile;
-        public ORTRKData ORTRKData = null;
+        public ORTRKData ORTRKData;
     }
 
     public class ORTRKData
@@ -47,65 +44,58 @@ namespace MSTS
         {
         }
 
-        public ORTRKData(STFReader f)
+        public ORTRKData(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            while (!f.EndOfBlock())
-            {
-                string token = f.ReadToken();
-                switch (token.ToLower())
-                {
-                    case "maxviewingdistance": MaxViewingDistance = f.ReadFloatBlock(); break;
-                    default: f.SkipUnknownBlock(token); break;
-                }
-            }
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("maxviewingdistance", ()=>{ MaxViewingDistance = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+            });
         }
     }
 
     public class Tr_RouteFile
     {
-        public Tr_RouteFile(STFReader f)
+        public Tr_RouteFile(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            string token = f.ReadToken();
-            while (token != ")")
-            {
-				if (token == "") throw (new STFException(f, "Missing )"));
-				else if (0 == String.Compare(token, "RouteID", true)) RouteID = f.ReadStringBlock();
-				else if (0 == String.Compare(token, "Name", true)) Name = f.ReadStringBlock();
-				else if (0 == String.Compare(token, "FileName", true)) FileName = f.ReadStringBlock();
-				else if (0 == String.Compare(token, "Description", true)) Description = f.ReadStringBlock();
-				else if (0 == String.Compare(token, "RouteStart", true) && RouteStart == null) RouteStart = new RouteStart(f); // take only the first - ignore any others
-				else if (0 == String.Compare(token, "Environment", true)) Environment = new TRKEnvironment(f);
-				else if (0 == String.Compare(token, "MilepostUnitsKilometers", true)) MilepostUnitsMetric = true;
-				else f.SkipBlock();
-                token = f.ReadToken();
-            }
-            if (RouteID == null) throw (new STFException(f, "Missing RouteID"));
-            if (Name == null) throw (new STFException(f, "Missing Name"));
-            if (Description == null) throw (new STFException(f, "Missing Description"));
-            if (RouteStart == null) throw (new STFException(f, "Missing RouteStart"));
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("routeid", ()=>{ RouteID = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("name", ()=>{ Name = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("filename", ()=>{ FileName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("description", ()=>{ Description = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("maxlinevoltage", ()=>{ MaxLineVoltage = stf.ReadDoubleBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("routestart", ()=>{ if (RouteStart == null) RouteStart = new RouteStart(stf); }),
+                new STFReader.TokenProcessor("environment", ()=>{ Environment = new TRKEnvironment(stf); }),
+                new STFReader.TokenProcessor("milepostunitskilometers", ()=>{ MilepostUnitsMetric = true; }),
+            });
+            //TODO This should be changed to STFException.TraceError() with defaults values created
+            if (RouteID == null) throw new STFException(stf, "Missing RouteID");
+            if (Name == null) throw new STFException(stf, "Missing Name");
+            if (Description == null) throw new STFException(stf, "Missing Description");
+            if (RouteStart == null) throw new STFException(stf, "Missing RouteStart");
         }
+
         public string RouteID;  // ie JAPAN1  - used for TRK file and route folder name
         public string FileName; // ie OdakyuSE - used for MKR,RDB,REF,RIT,TDB,TIT
         public string Name;
         public string Description;
         public RouteStart RouteStart;
         public TRKEnvironment Environment;
-		public bool MilepostUnitsMetric = false;
+		  public bool MilepostUnitsMetric = false;
+        public double MaxLineVoltage = 0;
     }
 
 
     public class RouteStart
     {
-        public RouteStart(STFReader f)
+        public RouteStart(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            WX = f.ReadDouble();   // tilex
-            WZ = f.ReadDouble();   // tilez
-            X = f.ReadDouble();
-            Z = f.ReadDouble();
-            while (f.ReadToken() != ")") ; // discard extra parameters - users frequently describe location here
+            stf.MustMatch("(");
+            WX = stf.ReadDouble(STFReader.UNITS.None, null);   // tilex
+            WZ = stf.ReadDouble(STFReader.UNITS.None, null);   // tilez
+            X = stf.ReadDouble(STFReader.UNITS.None, null);
+            Z = stf.ReadDouble(STFReader.UNITS.None, null);
+            stf.SkipRestOfBlock();
         }
         public double WX, WZ, X, Z;
     }
@@ -114,17 +104,15 @@ namespace MSTS
     {
         string[] ENVFileNames = new string[12];
 
-        public TRKEnvironment(STFReader f)
+        public TRKEnvironment(STFReader stf)
         {
-            f.VerifyStartOfBlock();
+            stf.MustMatch("(");
             for( int i = 0; i < 12; ++i )
             {
-                f.ReadToken();
-                f.VerifyStartOfBlock();
-                ENVFileNames[i] = f.ReadToken();
-                f.MustMatch(")");
+                string s = stf.ReadString();
+                ENVFileNames[i] = stf.ReadStringBlock(null);
             }
-            f.MustMatch(")");
+            stf.SkipRestOfBlock();
         }
 
         public string ENVFileName( SeasonType seasonType, WeatherType weatherType )

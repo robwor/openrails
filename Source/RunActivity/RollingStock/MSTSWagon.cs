@@ -53,11 +53,14 @@ namespace ORTS
         public float DavisBNSpM = 0;    // davis equation constant for speed
         public float DavisCNSSpMM = 0;  // davis equation constant for speed squared
         public List<MSTSCoupling> Couplers = new List<MSTSCoupling>();
+        public float Adhesion1 = .27f;   // 1st MSTS adheasion value
+        public float Adhesion2 = .49f;   // 2nd MSTS adheasion value
+        public float Adhesion3 = 2;   // 3rd MSTS adheasion value
 
         public MSTSBrakeSystem MSTSBrakeSystem { get { return (MSTSBrakeSystem)base.BrakeSystem; } }
 
-        public MSTSWagon(string wagFilePath, TrainCar previousCar)
-            : base(wagFilePath, previousCar)
+        public MSTSWagon(Simulator simulator, string wagFilePath, TrainCar previousCar)
+            : base(simulator, wagFilePath, previousCar)
         {
             if (CarManager.LoadedCars.ContainsKey(wagFilePath))
             {
@@ -81,71 +84,85 @@ namespace ORTS
             string orFile = dir + @"\openrails\" + file;
             if (File.Exists(orFile))
                 wagFilePath = orFile;
-            STFReader f = new STFReader(wagFilePath);
-            while (!f.EOF())
-            {
-                string token = f.ReadToken();
-                if (token == ")")
-                    Parse(f.Tree.ToLower() + ")", f);  // ie  wagon(inside) at end of block
-                else
-                    Parse(f.Tree.ToLower(), f);  // otherwise wagon(inside
-            }
-            f.Close();
+            using (STFReader stf = new STFReader(wagFilePath, true))
+                while (!stf.EOF)
+                {
+                    string token = stf.ReadItem();
+                    Parse(stf.Tree.ToLower(), stf);
+                }
             if (BrakeSystem == null)
                     BrakeSystem = new AirSinglePipe(this);
         }
 
-        ViewPoint passengerViewPoint = new ViewPoint();
         string brakeSystemType = null;
 
         /// <summary>
         /// Parse the wag file parameters required for the simulator and viewer classes
         /// </summary>
-        public virtual void Parse(string lowercasetoken, STFReader f)
+        public virtual void Parse(string lowercasetoken, STFReader stf)
         {
-
             switch (lowercasetoken)
             {
-                case "wagon(wagonshape": MainShapeFileName = f.ReadStringBlock(); break;
-                case "wagon(freightanim": ParseFreightAnim(f); break;
-                case "wagon(size": f.VerifyStartOfBlock(); f.ReadFloat(); f.ReadFloat(); Length = f.ReadFloat(); f.VerifyEndOfBlock(); break;
-                case "wagon(mass": MassKG = f.ReadFloatBlock(); break;
-                case "wagon(inside(sound": InteriorSoundFileName = f.ReadStringBlock(); break;
-                case "wagon(inside(passengercabinfile": InteriorShapeFileName = f.ReadStringBlock(); break;
-                case "wagon(inside(passengercabinheadpos": passengerViewPoint.Location = f.ReadVector3Block(); break;
-                case "wagon(inside(rotationlimit": passengerViewPoint.RotationLimit = f.ReadVector3Block(); break;
-                case "wagon(inside(startdirection": passengerViewPoint.StartDirection = f.ReadVector3Block(); break;
-                case "wagon(inside)": PassengerViewpoints.Add(passengerViewPoint); break;
-                case "wagon(wheelradius": WheelRadiusM = f.ReadFloatBlock(); break;
-                case "engine(wheelradius": DriverWheelRadiusM = f.ReadFloatBlock(); break;
-                case "wagon(sound": MainSoundFileName = f.ReadStringBlock(); break;
-                case "wagon(friction": ParseFriction(f); break;
+                case "wagon(wagonshape": MainShapeFileName = stf.ReadStringBlock(null); break;
+                case "wagon(freightanim":
+                    stf.MustMatch("(");
+                    FreightShapeFileName = stf.ReadString();
+                    FreightAnimHeight = stf.ReadFloat(STFReader.UNITS.Distance, null) - stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(size":
+                    stf.MustMatch("(");
+                    stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    Length = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(mass": MassKG = stf.ReadFloatBlock(STFReader.UNITS.Mass, null); break;
+                case "wagon(wheelradius": WheelRadiusM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
+                case "engine(wheelradius": DriverWheelRadiusM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
+                case "wagon(sound": MainSoundFileName = stf.ReadStringBlock(null); break;
+                case "wagon(friction": ParseFriction(stf); break;
                 case "wagon(brakesystemtype":
-                    brakeSystemType = f.ReadStringBlock().ToLower();
+                    brakeSystemType = stf.ReadStringBlock(null).ToLower();
                     BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
                     break;
-                case "wagon(coupling": Couplers.Add(new MSTSCoupling()); break;
-                case "wagon(coupling(couplinghasrigidconnection": Couplers[Couplers.Count - 1].Rigid = f.ReadBoolBlock(); break;
+                case "wagon(coupling":
+                    Couplers.Add(new MSTSCoupling());
+                    break;
+                case "wagon(coupling(couplinghasrigidconnection":
+                    Couplers[Couplers.Count - 1].Rigid = stf.ReadBoolBlock(true);
+                    break;
                 case "wagon(coupling(spring(stiffness":
-                    f.VerifyStartOfBlock();
-                    Couplers[Couplers.Count - 1].SetStiffness(f.ReadFloat(), f.ReadFloat());
-                    f.VerifyEndOfBlock();
+                    stf.MustMatch("(");
+                    Couplers[Couplers.Count - 1].SetStiffness(stf.ReadFloat(STFReader.UNITS.Stiffness, null), stf.ReadFloat(STFReader.UNITS.Stiffness, null));
+                    stf.SkipRestOfBlock();
                     break;
                 case "wagon(coupling(spring(r0":
-                    f.VerifyStartOfBlock();
-                    Couplers[Couplers.Count - 1].SetR0(f.ReadFloat(), f.ReadFloat());
-                    f.VerifyEndOfBlock();
+                    stf.MustMatch("(");
+                    Couplers[Couplers.Count - 1].SetR0(stf.ReadFloat(STFReader.UNITS.Distance, null), stf.ReadFloat(STFReader.UNITS.Distance, null));
+                    stf.SkipRestOfBlock();
                     break;
+                case "wagon(adheasion":
+                    stf.MustMatch("(");
+                    Adhesion1 = stf.ReadFloat(STFReader.UNITS.Any, null);
+                    Adhesion2 = stf.ReadFloat(STFReader.UNITS.Any, null);
+                    Adhesion3 = stf.ReadFloat(STFReader.UNITS.Any, null);
+                    stf.ReadFloat(STFReader.UNITS.Any, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(lights":
+                    if (Simulator.Settings.TrainLights)
+                    {
+                        try { Lights = new LightCollection(stf); }
+                        catch { Lights = null; }
+                    }
+                    else
+                        stf.SkipBlock();
+                    break;
+                case "wagon(inside": ParseWagonInside(stf); break;
                 default:
                     if (MSTSBrakeSystem != null)
-                        MSTSBrakeSystem.Parse(lowercasetoken, f);
-                    break;
-                case "wagon(lights": 
-                    if (Program.TrainLightsEnabled) 
-                    { 
-                        try { Lights = new Lights(f, this); } 
-                        catch { Lights = null; } 
-                    } 
+                        MSTSBrakeSystem.Parse(lowercasetoken, stf);
                     break;
             }
         }
@@ -173,6 +190,9 @@ namespace ORTS
             DavisCNSSpMM = copy.DavisCNSSpMM;
             Length = copy.Length;
             MassKG = copy.MassKG;
+            Adhesion1 = copy.Adhesion1;
+            Adhesion2 = copy.Adhesion2;
+            Adhesion3 = copy.Adhesion3;
             Lights = copy.Lights;
             foreach (ViewPoint passengerViewPoint in copy.PassengerViewpoints)
                 PassengerViewpoints.Add(passengerViewPoint);
@@ -180,6 +200,8 @@ namespace ORTS
                 FrontCabViewpoints.Add(frontCabViewPoint);
             foreach (ViewPoint rearCabViewPoint in copy.RearCabViewpoints)
                 RearCabViewpoints.Add(rearCabViewPoint);
+            foreach (ViewPoint headOutViewPoint in copy.HeadOutViewpoints)
+                HeadOutViewpoints.Add(headOutViewPoint);
             foreach (MSTSCoupling coupler in copy.Couplers)
                 Couplers.Add(coupler);
 
@@ -187,23 +209,28 @@ namespace ORTS
             BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
             MSTSBrakeSystem.InitializeFromCopy(copy.BrakeSystem);
         }
-        public void ParseFreightAnim(STFReader f)
+        private void ParseWagonInside(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            FreightShapeFileName = f.ReadToken();
-            FreightAnimHeight = f.ReadFloat() - f.ReadFloat();
-            f.VerifyEndOfBlock();
+            ViewPoint passengerViewPoint = new ViewPoint();
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("sound", ()=>{ InteriorSoundFileName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("passengercabinfile", ()=>{ InteriorShapeFileName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("passengercabinheadpos", ()=>{ passengerViewPoint.Location = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
+                new STFReader.TokenProcessor("rotationlimit", ()=>{ passengerViewPoint.RotationLimit = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
+                new STFReader.TokenProcessor("startdirection", ()=>{ passengerViewPoint.StartDirection = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
+            });
+            PassengerViewpoints.Add(passengerViewPoint);
         }
-        public void ParseFriction(STFReader f)
+        public void ParseFriction(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            float c1 = ParseNpMpS(f.ReadString(),f);
-            float e1 = f.ReadFloat();
-            float v2 = ParseMpS(f.ReadString(),f);
-            float c2 = ParseNpMpS(f.ReadString(),f);
-            float e2 = f.ReadFloat();
-            f.ReadString(); f.ReadString(); f.ReadString(); f.ReadString(); f.ReadString();
-            f.VerifyEndOfBlock();
+            stf.MustMatch("(");
+            float c1 = stf.ReadFloat(STFReader.UNITS.Resistance, null);
+            float e1 = stf.ReadFloat(STFReader.UNITS.None, null);
+            float v2 = stf.ReadFloat(STFReader.UNITS.Speed,null);
+            float c2 = stf.ReadFloat(STFReader.UNITS.Resistance, null);
+            float e2 = stf.ReadFloat(STFReader.UNITS.None, null);
+            stf.SkipRestOfBlock();
             if (v2 < 0 || v2 > 4.4407f)
             {   // not fcalc ignore friction and use default davis equation
                 // Starting Friction 
@@ -260,186 +287,6 @@ namespace ORTS
             }
             //Console.WriteLine("friction {0} {1} {2} {3} {4}", c1, e1, v2, c2, e2);
             //Console.WriteLine("davis {0} {1} {2} {3}", Friction0N, DavisAN, DavisBNSpM, DavisCNSSpMM);
-        }
-        public float ParseN(string token, STFReader f)
-        {
-            token = token.ToLower();
-            float scale = 1;
-            int i = token.IndexOf("kn");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-                scale = 1e3f;
-            }
-            i = token.IndexOf("n");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            i = token.IndexOf("lbf");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-                scale = 4.44822f;
-            }
-            try
-            {
-                return scale * float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg = String.Format("invalid force value or units {0}, newtons expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
-        }
-        public float ParseW(string token, STFReader f)
-        {
-            token = token.ToLower();
-            float scale = 1;
-            int i = token.IndexOf("kw");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-                scale = 1e3f;
-            }
-            i = token.IndexOf("w");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            i = token.IndexOf("hp");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-                scale = 745.7f;
-            }
-            try
-            {
-                return scale * float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg = String.Format("invalid power value or units {0}, watts expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
-        }
-        public float ParseMpS(string token, STFReader f)
-        {
-            token = token.ToLower();
-            float scale = 1;
-            int i = token.IndexOf("mph");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-                scale = .44704f;
-            }
-            else
-            {
-                i = token.IndexOf("kph");
-                if (i == -1) i = token.IndexOf("kmh");
-                if (i == -1) i = token.IndexOf("km/h");
-                if (i != -1)
-                {
-                    token = token.Substring(0, i);
-                    scale = .27778f;
-                }
-            }
-            try
-            {
-                return scale * float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg = String.Format("invalid speed value or units {0}, meters per second expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
-        }
-        public float ParseFT3(string token, STFReader f)
-        {
-            token = token.ToLower();
-            if (token[0] == '"')
-                token = token.Substring(1);
-            int i = token.IndexOf("*(ft^3)");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            try
-            {
-                return float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg = String.Format("invalid volume value or units {0}, cubic feet expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
-        }
-        public float ParsePSI(string token, STFReader f)
-        {
-            token = token.ToLower();
-            int i = token.IndexOf("psi");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            try
-            {
-                return float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg = String.Format("invalid pressure value or units {0}, pounds per square inch expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
-        }
-        public float ParseLBpH(string token, STFReader f)
-        {
-            token = token.ToLower();
-            int i = token.IndexOf("lb/h");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            try
-            {
-                return float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg = String.Format("invalid steaming rate value or units {0}, pounds per hour expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
-        }
-        public float ParseNpMpS(string token, STFReader f)
-        {
-            token = token.ToLower();
-            float scale = 1;
-            int i = token.IndexOf("n/m/s");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            i = token.IndexOf("/m/s");
-            if (i != -1)
-            {
-                token = token.Substring(0, i);
-            }
-            try
-            {
-                return scale * float.Parse(token, new System.Globalization.CultureInfo("en-US"));
-            }
-            catch (System.Exception)
-            {
-                string msg= String.Format("invalid friction value or units {0}, Newtons per meters per second expected", token);
-                STFException.ReportError(f, msg);
-                return ParseFloat(token);
-            }
         }
         public float ParseFloat(string token)
         {   // is there a better way to ignore any suffix?
@@ -654,8 +501,11 @@ namespace ORTS
 
         protected MSTSWagon MSTSWagon { get { return (MSTSWagon) Car; } }
 
+        Viewer3D _Viewer3D;
+
         public MSTSWagonViewer(Viewer3D viewer, MSTSWagon car): base( viewer, car )
         {
+            _Viewer3D = viewer;
             string wagonFolderSlash = Path.GetDirectoryName(car.WagFilePath) + @"\";
             string shapePath = wagonFolderSlash + car.MainShapeFileName;
 
@@ -673,8 +523,11 @@ namespace ORTS
             LoadCarSounds(wagonFolderSlash);
             LoadTrackSounds();
 
+            // Adding all loaded SoundSource to the main sound update thread
+            _Viewer3D.SoundProcess.AddSoundSource(this, SoundSources);
+
             // Get indexes of all the animated parts
-            for (int iMatrix = 0; iMatrix < TrainCarShape.SharedShape.MatrixNames.Length; ++iMatrix)
+			for (int iMatrix = 0; iMatrix < TrainCarShape.SharedShape.MatrixNames.Count; ++iMatrix)
             {
                 string matrixName = TrainCarShape.SharedShape.MatrixNames[iMatrix].ToUpper();
                 if (matrixName.StartsWith("WHEELS"))
@@ -686,7 +539,8 @@ namespace ORTS
                                    && TrainCarShape.SharedShape.Animations[0].anim_nodes[iMatrix].controllers.Count > 0)  // ensure shape file is setup properly
                             RunningGearPartIndexes.Add(iMatrix);
                         Matrix m = TrainCarShape.SharedShape.GetMatrixProduct(iMatrix);
-                        car.AddWheelSet(m.M43, 0);
+                        int pmatrix = TrainCarShape.SharedShape.GetParentMatrix(iMatrix);
+                        car.AddWheelSet(m.M43, 0, pmatrix);
                     }
                     else if (matrixName.Length == 8)
                     {
@@ -695,7 +549,8 @@ namespace ORTS
                         {
                             int id = Int32.Parse(matrixName.Substring(6, 1));
                             Matrix m = TrainCarShape.SharedShape.GetMatrixProduct(iMatrix);
-                            car.AddWheelSet(m.M43, id);
+                            int pmatrix = TrainCarShape.SharedShape.GetParentMatrix(iMatrix);
+                            car.AddWheelSet(m.M43, id, pmatrix);
                         }
                         catch
                         {
@@ -741,8 +596,9 @@ namespace ORTS
         /// </summary>
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-			if (Viewer.SettingsInt[(int)IntSettings.SoundDetailLevel] > 0)
-				UpdateSound(elapsedTime);
+			// Commented out - sound update on a different thread
+            //if (Viewer.SettingsInt[(int)IntSettings.SoundDetailLevel] > 0)
+			//	UpdateSound(elapsedTime);
             UpdateAnimation(frame, elapsedTime);
         }
 
@@ -752,7 +608,7 @@ namespace ORTS
 			try
 			{
 				foreach (SoundSource soundSource in SoundSources)
-					soundSource.Update(elapsedTime);
+					soundSource.Update();
 			}
 			catch (Exception error)
 			{
@@ -764,6 +620,8 @@ namespace ORTS
         private void UpdateAnimation( RenderFrame frame, ElapsedTime elapsedTime )
         {
             float distanceTravelledM = MSTSWagon.SpeedMpS * elapsedTime.ClockSeconds ;
+            if (MSTSWagon.WheelSlip)
+                distanceTravelledM *= 4;
 
             // Running gear animation
             if (RunningGearPartIndexes.Count > 0 && MSTSWagon.DriverWheelRadiusM > 0.001 )  // skip this if there is no running gear and only engines can have running gear
@@ -808,7 +666,7 @@ namespace ORTS
             if (FreightShape != null)
             {
                 FreightShape.XNAMatrices[0].M42 = MSTSWagon.FreightAnimHeight;
-                FreightShape.PrepareFrame(frame, elapsedTime.ClockSeconds);
+                FreightShape.PrepareFrame(frame, elapsedTime);
             }
 
             // Control visibility of passenger cabin when inside it
@@ -818,9 +676,9 @@ namespace ORTS
             {
                 // We are in the passenger cabin
                 if (InteriorShape != null)
-                    InteriorShape.PrepareFrame(frame, elapsedTime.ClockSeconds);
+                    InteriorShape.PrepareFrame(frame, elapsedTime);
                 else
-                    TrainCarShape.PrepareFrame(frame, elapsedTime.ClockSeconds);
+                    TrainCarShape.PrepareFrame(frame, elapsedTime);
             }
             else
             {
@@ -830,7 +688,7 @@ namespace ORTS
                     return;
                 
                 // We are outside the passenger cabin
-                TrainCarShape.PrepareFrame(frame, elapsedTime.ClockSeconds);
+                TrainCarShape.PrepareFrame(frame, elapsedTime);
             }
 
         }
@@ -842,6 +700,8 @@ namespace ORTS
         /// </summary>
         public virtual void Unload()
         {
+            // Removing sound sources from sound update thread
+            _Viewer3D.SoundProcess.RemoveSoundSource(this);
             SoundSources.Clear();
         }
 

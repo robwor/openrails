@@ -34,7 +34,9 @@ namespace ORTS.Popups
 		Label POIDistance;
 
 		float LastSpeedMpS;
+		SmoothedData AccelerationMpSpS = new SmoothedData();
 
+        static Texture2D SignalAspects;
 		static readonly Dictionary<TrackMonitorSignalAspect, Rectangle> SignalAspectSources = InitSignalAspectSources();
 		static Dictionary<TrackMonitorSignalAspect, Rectangle> InitSignalAspectSources()
 		{
@@ -60,12 +62,17 @@ namespace ORTS.Popups
 		}
 
 		public TrackMonitorWindow(WindowManager owner)
-			: base(owner, 150, 300, "Track Monitor")
+			: base(owner, 150, 98, "Track Monitor")
 		{
-			AlignTop();
-			AlignRight();
-			SignalAspect.Texture = owner.Viewer.RenderProcess.Content.Load<Texture2D>("SignalAspects");
-		}
+            Align(AlignAt.End, AlignAt.Start);
+        }
+
+        protected internal override void Initialize()
+        {
+            base.Initialize();
+            if (SignalAspects == null)
+                SignalAspects = Owner.Viewer.RenderProcess.Content.Load<Texture2D>("SignalAspects");
+        }
 
 		protected override ControlLayout Layout(ControlLayout layout)
 		{
@@ -87,7 +94,8 @@ namespace ORTS.Popups
 				hbox.Add(SignalDistance = new Label(hbox.RemainingWidth - 18, hbox.RemainingHeight, "0m", LabelAlignment.Right));
 				hbox.AddSpace(2, 0);
 				hbox.Add(SignalAspect = new Image(hbox.RemainingWidth, hbox.RemainingHeight));
-			}
+                SignalAspect.Texture = SignalAspects;
+            }
 			{
 				var hbox = vbox.AddLayoutHorizontal(16);
 				hbox.Add(POILabel = new Label(hbox.RemainingWidth / 2, hbox.RemainingHeight, "POI:"));
@@ -96,12 +104,12 @@ namespace ORTS.Popups
 			return vbox;
 		}
 
-		string FormatSpeed(float speed, bool metric)
+		public static string FormatSpeed(float speed, bool metric)
 		{
 			return String.Format(metric ? "{0:F1}kph" : "{0:F1}mph", MpS.FromMpS(speed, metric));
 		}
 
-		string FormatDistance(float distance, bool metric)
+		public static string FormatDistance(float distance, bool metric)
 		{
 			if (metric)
 			{
@@ -118,8 +126,11 @@ namespace ORTS.Popups
 
 		public void UpdateText(ElapsedTime elapsedTime, bool milepostUnitsMetric, float speedMpS, float signalDistance, TrackMonitorSignalAspect signalAspect, DispatcherPOIType poiType, float poiDistance)
 		{
-			var speedProjectedMpS = speedMpS + 60 * (speedMpS - LastSpeedMpS) / elapsedTime.ClockSeconds;
-			speedProjectedMpS = speedMpS > 0 ? Math.Max(0, speedProjectedMpS) : Math.Min(0, speedProjectedMpS);
+			AccelerationMpSpS.Update(elapsedTime.ClockSeconds, 60 * (speedMpS - LastSpeedMpS) / elapsedTime.ClockSeconds);
+			LastSpeedMpS = speedMpS;
+			//var speedProjectedMpS = speedMpS + 60 * (speedMpS - LastSpeedMpS) / elapsedTime.ClockSeconds;
+			var speedProjectedMpS = speedMpS + AccelerationMpSpS.SmoothedValue;
+			speedProjectedMpS = speedMpS > float.Epsilon ? Math.Max(0, speedProjectedMpS) : speedMpS < -float.Epsilon ? Math.Min(0, speedProjectedMpS) : 0;
 			SpeedCurrent.Text = FormatSpeed(speedMpS, milepostUnitsMetric);
 			SpeedProjected.Text = FormatSpeed(speedProjectedMpS, milepostUnitsMetric);
 			LastSpeedMpS = speedMpS;
@@ -129,6 +140,12 @@ namespace ORTS.Popups
 
 			POILabel.Text = DispatcherPOILabels[poiType];
 			POIDistance.Text = poiType == DispatcherPOIType.Unknown || poiType == DispatcherPOIType.OffPath ? "" : FormatDistance(poiDistance, milepostUnitsMetric);
+		}
+
+		// added method to update the last speed, by JTang
+		public void UpdateSpeed(float speedMpS)
+		{
+			LastSpeedMpS = speedMpS;
 		}
 	}
 }

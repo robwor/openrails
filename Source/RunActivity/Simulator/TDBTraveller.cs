@@ -98,18 +98,7 @@ namespace ORTS
         {
             return String.Format("TN={0} TS={1}", iTrackNode, iTrVectorSection);
         }
-/*
-        public string TNToString() //WHN: for debug
-        {
-            if (TN.TrVectorNode != null) 
-                return (Direction == 0) ? "TrVectorNode(0)" : "TrVectorNode(1)";
-            if (TN.TrEndNode != null) 
-                return (Direction == 0) ? "TrEndNode(0)" : "TrEndNode(1)";
-            if (TN.TrJunctionNode != null)
-                return "TrJunctionNode";
-            return "OTHER";
-        }
-*/
+
         public TDBTraveller(TDBTraveller copy)
         {
             TDB = copy.TDB;
@@ -319,7 +308,7 @@ namespace ORTS
                     traveller.NextSection();  // we are at a junction - move past it
                 }
 
-                if (traveller.TN.TrEndNode != null)
+                if (traveller.TN.TrEndNode)
                     return -1;   // we are at the end and didn't find the waypoint
 
 
@@ -403,6 +392,35 @@ namespace ORTS
             throw new InvalidDataException("The car is on a track section that could not be found in the TDB file.");
         }
 
+
+       /// <summary>
+       /// Creates a forward-travelling TDBTraveller.
+       /// </summary>
+       /// <param name="trackNode">The TrackNode from which to create the TDBTraveller.</param>
+        /// <param name="trackSection">The TrackSection from which to create the TDBTraveller.</param>
+       /// <param name="tdb"></param>
+       /// <param name="tsectiondat"></param>
+        public TDBTraveller(TrackNode trackNode, TrVectorSection vectorSection, TDBFile tdb, TSectionDatFile tsectiondat)
+        {
+           TDB = tdb;
+           TSectionDat = tsectiondat;
+
+           Direction = 1; // forward
+
+           TN = trackNode;
+           TVS = vectorSection;
+           TS = TSectionDat.TrackSections.Get(TVS.SectionIndex);
+
+           if (TS.SectionCurve != null)
+           {
+              CurvedSectionInit(TVS.TileX, TVS.TileZ, TVS.X, TVS.Z);
+           }
+           else
+           {
+              StraightSectionInit(TVS.TileX, TVS.TileZ, TVS.X, TVS.Z);
+           }
+
+        }
 
         public float Move(float distanceToGo)
         // moves the traveller along the track traversing the track database
@@ -510,9 +528,6 @@ namespace ORTS
         /// If wx,wz is in this straight section, init the traveller to this location
         /// otherwise return false
         /// </summary>
-        /// <param name="wx"></param>
-        /// <param name="wz"></param>
-        /// <returns></returns>
         bool StraightSectionInit(int tileX, int tileZ, float wx, float wz)
         {
             // get wx and wz relative to the tile that the section starts on
@@ -749,7 +764,7 @@ namespace ORTS
         /// <returns></returns>
         public bool NextSection()
         {
-            if (TN.TrEndNode != null)
+            if (TN.TrEndNode)
             {
             }
             if (TN.TrVectorNode != null)  // we were in a track node that contains multiple sections
@@ -859,7 +874,7 @@ namespace ORTS
                 TN = TDB.TrackDB.TrackNodes[iTrackNode];  // we are at the new node
                 pDirection = TrPin.Direction;
             }
-            else if (TN.TrEndNode != null) // are we coming from an end node
+            else if (TN.TrEndNode) // are we coming from an end node
             {
                 // if we are moving forward then there is no place to go
                 if (pDirection == 1) return false;
@@ -881,7 +896,7 @@ namespace ORTS
             }
 
             // figure out which PIN we entered on
-            for (iEntryPIN = 0; iEntryPIN < 5; ++iEntryPIN)
+            for (iEntryPIN = 0; iEntryPIN < 5 && iEntryPIN < TN.TrPins.Length ; ++iEntryPIN)
                 if (TN.TrPins[iEntryPIN].Link == iPreviousTrackNode)
                     break;
 

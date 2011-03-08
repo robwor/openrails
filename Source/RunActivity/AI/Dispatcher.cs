@@ -61,7 +61,7 @@ namespace ORTS
             string patFilename = AI.Simulator.RoutePath + @"\PATHS\" + srvFile.PathID + ".PAT";
             PATFile patFile = new PATFile(patFilename);
             AIPath playerPath = new AIPath(patFile, AI.Simulator.TDB, AI.Simulator.TSectionDat,patFilename);
-            AITrain playerTrain = new AITrain(0, AI, playerPath, (int)AI.Simulator.ClockTime);
+            AITrain playerTrain = new AITrain(ai.Simulator, 0, AI, playerPath, (int)AI.Simulator.ClockTime);
             if (conFile.Train.TrainCfg.MaxVelocity.A > 0 && srvFile.Efficiency > 0)
                 playerTrain.MaxSpeedMpS = conFile.Train.TrainCfg.MaxVelocity.A * srvFile.Efficiency;
             AI.AITrainDictionary.Add(0, playerTrain);
@@ -450,6 +450,9 @@ namespace ORTS
                 if (Reservations[j] == auth.TrainID)
                     n++;
             //Console.WriteLine("setauth {0} {1} {2} {3}", auth.TrainID, result, n, nRev);
+            //for (int j = 0; j < Reservations.Length; j++)
+            //    if (Reservations[j] == auth.TrainID)
+            //        Console.WriteLine(" res {0}", j);
             return result;
         }
 

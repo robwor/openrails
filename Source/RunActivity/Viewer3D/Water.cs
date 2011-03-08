@@ -37,7 +37,7 @@ namespace ORTS
 			if (viewer.Tiles.GetTile(tileX, tileZ) == null)
 				return;
 
-			if (WaterLayers == null)
+            if (WaterLayers == null && Viewer.ENVFile.WaterLayers != null)
 				LoadWaterMaterial();
 
 			if (PatchVertexDeclaration == null)
@@ -48,11 +48,7 @@ namespace ORTS
 
 		private void LoadWaterMaterial()
 		{
-			// TODO, for now, top layer only
-			WaterLayers = Viewer.ENVFile.WaterLayers.Select(layer =>
-			{
-				return new KeyValuePair<float, Material>(layer.Height, Materials.Load(Viewer.RenderProcess, "WaterMaterial", Viewer.Simulator.RoutePath + @"\envfiles\textures\" + layer.TextureName));
-			});
+            WaterLayers = Viewer.ENVFile.WaterLayers.Select(layer => new KeyValuePair<float, Material>(layer.Height, Materials.Load(Viewer.RenderProcess, "WaterMaterial", Viewer.Simulator.RoutePath + @"\envfiles\textures\" + layer.TextureName)));
 		}
 
         private Matrix xnaMatrix = Matrix.Identity;
@@ -60,20 +56,23 @@ namespace ORTS
         /// <summary>
         /// This is called when the game should draw itself.
         /// </summary>
-        /// <param name="gameTime">Provides a snapshot of timing values.</param>
         public void PrepareFrame(RenderFrame frame)
         {
             if (WaterLayers == null)  // if there was a problem loading the water texture
                 return;
 
-            Vector3 xnaTileLocation = Viewer.Camera.XNALocation(TileWorldLocation);
+			int dTileX = TileX - Viewer.Camera.TileX;
+			int dTileZ = TileZ - Viewer.Camera.TileZ;
+			Vector3 mstsLocation = new Vector3(1024 + dTileX * 2048, 0, 1024 + dTileZ * 2048);
 
             // Distance cull
-            if (Viewer.Camera.CanSee(xnaTileLocation, 3500f, 2000f))
+			if (Viewer.Camera.CanSee(mstsLocation, 1448f, 2000f))
             {
-				foreach (var waterLayer in WaterLayers)
+                xnaMatrix.M41 = mstsLocation.X - 1024;
+                xnaMatrix.M43 = 1024 - mstsLocation.Z;
+                foreach (var waterLayer in WaterLayers)
 				{
-					xnaMatrix.Translation = new Vector3(xnaTileLocation.X, xnaTileLocation.Y + waterLayer.Key, xnaTileLocation.Z);
+					xnaMatrix.M42 = mstsLocation.Y + waterLayer.Key;
 					frame.AddPrimitive(waterLayer.Value, this, RenderPrimitiveGroup.World, ref xnaMatrix);
 				}
             }

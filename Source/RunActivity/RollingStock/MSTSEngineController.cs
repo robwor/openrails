@@ -10,6 +10,8 @@ namespace ORTS
 {
     public class MSTSEngineController
     {
+		protected readonly Simulator Simulator;
+
         public float CurrentValue = 0;
         public float MinimumValue = 0;
         public float MaximumValue = 1;
@@ -25,54 +27,51 @@ namespace ORTS
         public float FullServReductionPSI = 26;
         public float MinReductionPSI = 6;
 
-        public MSTSEngineController()
+		public MSTSEngineController(Simulator simulator)
         {
+			Simulator = simulator;
         }
 
-        public MSTSEngineController(STFReader f)
+        public MSTSEngineController(Simulator simulator, STFReader stf)
         {
-            Parse(f);
+			Simulator = simulator;
+            Parse(stf);
         }
         
-        public void Parse(STFReader f)
+        public void Parse(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            MinimumValue = f.ReadFloat();
-            MaximumValue = f.ReadFloat();
-            StepSize = f.ReadFloat();
-            CurrentValue = f.ReadFloat();
+            stf.MustMatch("(");
+            MinimumValue = stf.ReadFloat(STFReader.UNITS.Any, null);
+            MaximumValue = stf.ReadFloat(STFReader.UNITS.Any, null);
+            StepSize = stf.ReadFloat(STFReader.UNITS.Any, null);
+            CurrentValue = stf.ReadFloat(STFReader.UNITS.Any, null);
             //Console.WriteLine("controller {0} {1} {2} {3}", MinimumValue, MaximumValue, StepSize, CurrentValue);
-            f.ReadTokenNoComment(); // numnotches
-            f.VerifyStartOfBlock();
-            int n = f.ReadInt();
-            for (; ; )
-            {
-                string token = f.ReadTokenNoComment().ToLower();
-                if (token == ")") break;
-                if (token == "notch")
-                {
-                    f.VerifyStartOfBlock();
-                    float value = f.ReadFloat();
-                    int smooth = f.ReadInt();
-                    string type = f.ReadString();
+            stf.ReadItem(); // numnotches
+            stf.MustMatch("(");
+            int n = stf.ReadInt(STFReader.UNITS.None, null);
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("notch", ()=>{
+                    stf.MustMatch("(");
+                    float value = stf.ReadFloat(STFReader.UNITS.Any, null);
+                    int smooth = stf.ReadInt(STFReader.UNITS.Any, null);
+                    string type = stf.ReadString();
                     //Console.WriteLine("Notch {0} {1} {2}", value, smooth, type);
-                    Notches.Add(new MSTSNotch(value,smooth,type,f));
-                    if (type != ")")
-                        f.VerifyEndOfBlock();
-                }
-            }
+                    Notches.Add(new MSTSNotch(value, smooth, type, stf));
+                    if (type != ")") stf.SkipRestOfBlock();
+                }),
+            });
             SetValue(CurrentValue);
         }
-        public void ParseBrakeValue(string lowercasetoken, STFReader f)
+        public void ParseBrakeValue(string lowercasetoken, STFReader stf)
         {
             switch (lowercasetoken)
             {
-                case "maxsystempressure": MaxPressurePSI = f.ReadFloatBlock(); break;
-                case "maxreleaserate": ReleaseRatePSIpS = f.ReadFloatBlock(); break;
-                case "maxapplicationrate": ApplyRatePSIpS = f.ReadFloatBlock(); break;
-                case "emergencyapplicationrate": EmergencyRatePSIpS = f.ReadFloatBlock(); break;
-                case "fullservicepressuredrop": FullServReductionPSI = f.ReadFloatBlock(); break;
-                case "minpressurereduction": MinReductionPSI = f.ReadFloatBlock(); break;
+                case "maxsystempressure": MaxPressurePSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "maxreleaserate": ReleaseRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "maxapplicationrate": ApplyRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "emergencyapplicationrate": EmergencyRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "fullservicepressuredrop": FullServReductionPSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "minpressurereduction": MinReductionPSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
                 //default: Console.WriteLine("{0}", lowercasetoken); break;
             }
         }
@@ -81,7 +80,7 @@ namespace ORTS
         {
             if (copy == null)
                 return null;
-            MSTSEngineController controller = new MSTSEngineController();
+            MSTSEngineController controller = new MSTSEngineController(copy.Simulator);
             controller.CurrentValue = copy.CurrentValue;
             controller.MinimumValue = copy.MinimumValue;
             controller.MaximumValue = copy.MaximumValue;
@@ -123,12 +122,12 @@ namespace ORTS
             }
         }
 
-        public static MSTSEngineController Restore(BinaryReader inf)
+		public static MSTSEngineController Restore(Simulator simulator, BinaryReader inf)
         {
             bool create = inf.ReadBoolean();
             if (!create)
                 return null;
-            MSTSEngineController controller = new MSTSEngineController();
+            MSTSEngineController controller = new MSTSEngineController(simulator);
             controller.CurrentValue = inf.ReadSingle();
             controller.MinimumValue = inf.ReadSingle();
             controller.MaximumValue = inf.ReadSingle();
@@ -296,7 +295,7 @@ namespace ORTS
                     case MSTSNotchType.GSelfLap:
                         x = MaxPressurePSI - MinReductionPSI * (1 - x) - FullServReductionPSI * x;
                         DecreasePressure(ref pressurePSI, x, ApplyRatePSIpS, elapsedClockSeconds);
-                        if (Program.GraduatedRelease)
+                        if (Simulator.Settings.GraduatedRelease)
                             IncreasePressure(ref pressurePSI, x, ReleaseRatePSIpS, elapsedClockSeconds);
                         break;
                     case MSTSNotchType.Emergency:
@@ -370,7 +369,7 @@ namespace ORTS
         public float Value;
         public bool Smooth;
         public MSTSNotchType Type;
-        public MSTSNotch(float v, int s, string type, STFReader f)
+        public MSTSNotch(float v, int s, string type, STFReader stf)
         {
             Value= v;
             Smooth= s==0 ? false : true;
@@ -401,7 +400,7 @@ namespace ORTS
                 case "epholdstart": Type = MSTSNotchType.Lap; break;
                 case "minimalreductionstart": Type = MSTSNotchType.Lap; break;
                 default:
-                    STFException.ReportError(f, "Unknown notch type: " + type);
+                    STFException.TraceError(stf, "Unknown notch type: " + type);
                     break;
             }
         }

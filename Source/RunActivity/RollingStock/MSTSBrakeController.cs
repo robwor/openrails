@@ -13,6 +13,8 @@ namespace ORTS
      */ 
     public class MSTSBrakeController: MSTSNotchController, IBrakeController
     {
+		protected readonly Simulator Simulator;
+
         // brake controller values
         private float MaxPressurePSI = 90;
         private float ReleaseRatePSIpS = 5;
@@ -21,18 +23,21 @@ namespace ORTS
         private float FullServReductionPSI = 26;
         private float MinReductionPSI = 6;
 
-        public MSTSBrakeController()
+		public MSTSBrakeController(Simulator simulator)
         {
+			Simulator = simulator;
         }
 
-        public MSTSBrakeController(MSTSBrakeController controller):
+		public MSTSBrakeController(MSTSBrakeController controller) :
             base(controller)  
-        {            
+        {
+			Simulator = controller.Simulator;
         }
 
-        public MSTSBrakeController(BinaryReader inf):
+		public MSTSBrakeController(Simulator simulator, BinaryReader inf) :
             base(inf)               
         {
+			Simulator = simulator;
             this.RestoreData(inf);
         }
 
@@ -89,7 +94,7 @@ namespace ORTS
                     case MSTSNotchType.GSelfLap:
                         x = MaxPressurePSI - MinReductionPSI * (1 - x) - FullServReductionPSI * x;
                         DecreasePressure(ref pressurePSI, x, ApplyRatePSIpS, elapsedClockSeconds);
-                        if (Program.GraduatedRelease)
+                        if (Simulator.Settings.GraduatedRelease)
                             IncreasePressure(ref pressurePSI, x, ReleaseRatePSIpS, elapsedClockSeconds);
                         break;
                     case MSTSNotchType.Emergency:
@@ -155,16 +160,16 @@ namespace ORTS
             }
         }      
 
-        public void ParseBrakeValue(string lowercasetoken, STFReader f)
+        public void ParseBrakeValue(string lowercasetoken, STFReader stf)
         {
             switch (lowercasetoken)
             {
-                case "maxsystempressure": MaxPressurePSI = f.ReadFloatBlock(); break;
-                case "maxreleaserate": ReleaseRatePSIpS = f.ReadFloatBlock(); break;
-                case "maxapplicationrate": ApplyRatePSIpS = f.ReadFloatBlock(); break;
-                case "emergencyapplicationrate": EmergencyRatePSIpS = f.ReadFloatBlock(); break;
-                case "fullservicepressuredrop": FullServReductionPSI = f.ReadFloatBlock(); break;
-                case "minpressurereduction": MinReductionPSI = f.ReadFloatBlock(); break;
+                case "maxsystempressure": MaxPressurePSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "maxreleaserate": ReleaseRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "maxapplicationrate": ApplyRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "emergencyapplicationrate": EmergencyRatePSIpS = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "fullservicepressuredrop": FullServReductionPSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "minpressurereduction": MinReductionPSI = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
                 //default: Console.WriteLine("{0}", lowercasetoken); break;
             }
         }

@@ -100,7 +100,8 @@ namespace ORTS
         private MSTS.Deactivation DeactivationConditions;
         public bool IsEnvSound = false;
 
-        private double LastUpdate = 0;
+        private float distanceSquared;
+        private bool wasOutOfDistance = false;
 
         List<SoundStream> SoundStreams = new List<SoundStream>();
 
@@ -117,7 +118,7 @@ namespace ORTS
             while ( iSG < smsFile.Tr_SMS.ScalabiltyGroups.Count)
                 {
             
-                if (smsFile.Tr_SMS.ScalabiltyGroups[iSG].DetailLevel <= Viewer.SettingsInt[(int)IntSettings.SoundDetailLevel])
+                if (smsFile.Tr_SMS.ScalabiltyGroups[iSG].DetailLevel <= Viewer.Settings.SoundDetailLevel)
                 {
                     break;
                 }
@@ -168,13 +169,31 @@ namespace ORTS
             }
         }
 
-        public void Update(ElapsedTime elapsedTime)
+        public void Update()
         {
-            if (Program.RealTime < LastUpdate + .2)
-                return;
 
-            LastUpdate = Program.RealTime;
-            
+            if (Car != null)
+            {
+                WorldLocation = Car.WorldPosition.WorldLocation;
+            }
+
+            if (isOutOfDistance())
+            {
+                
+                if (!wasOutOfDistance)
+                {
+                    wasOutOfDistance = true;
+                    foreach (SoundStream stream in SoundStreams)
+                        stream.Deactivate();
+
+                    Active = false;
+                }
+                return;
+                
+            }
+
+            wasOutOfDistance = false;
+
             if (!Active)
             {
                 if (Activate())
@@ -203,11 +222,6 @@ namespace ORTS
 
                     Active = false;
                 }
-            }
-
-            if (Car != null)
-            {
-                WorldLocation = Car.WorldPosition.WorldLocation;
             }
 
             // Must start and stop by triggers - by GeorgeS
@@ -242,6 +256,19 @@ namespace ORTS
             }
         } // Update
 
+        public bool isOutOfDistance()
+        {
+            if (WorldLocation == null)
+                return false;
+            
+            distanceSquared = WorldLocation.DistanceSquared(WorldLocation, Viewer.Camera.CameraWorldLocation);
+
+            if (IsEnvSound)
+                return false;
+
+            return distanceSquared > 15000;
+        }
+
         /// <summary>
         /// Return true if activation conditions are met,
         /// ie PassengerCam, CabCam, Distance etc
@@ -253,7 +280,7 @@ namespace ORTS
             {
                 if (WorldLocation != null)
                 {
-                    float distanceSquared = WorldLocation.DistanceSquared(WorldLocation, Viewer.Camera.CameraWorldLocation);
+                    //float distanceSquared = WorldLocation.DistanceSquared(WorldLocation, Viewer.Camera.CameraWorldLocation);
                     if (distanceSquared < ActivationConditions.Distance * ActivationConditions.Distance)
                         return true;
                 }
@@ -275,7 +302,7 @@ namespace ORTS
 
             if (WorldLocation != null)
             {
-                float distanceSquared = WorldLocation.DistanceSquared(WorldLocation, Viewer.Camera.CameraWorldLocation);
+                //float distanceSquared = WorldLocation.DistanceSquared(WorldLocation, Viewer.Camera.CameraWorldLocation);
                 if (distanceSquared > DeactivationConditions.Distance * DeactivationConditions.Distance)
                     return true;
             }
@@ -296,7 +323,7 @@ namespace ORTS
 
             Camera.Styles viewpoint = Viewer.Camera.Style;
 
-            if ( (viewpoint == Camera.Styles.Cab) && (Viewer.Camera.AttachedCar != Car) )
+            if (!IsEnvSound && (viewpoint == Camera.Styles.Cab) && (Viewer.Camera.AttachedCar != Car))
             {
                 viewpoint = Camera.Styles.External;
             }
@@ -617,11 +644,11 @@ namespace ORTS
                 {
                     if (_stoppedAt == 0)
                     {
-                        _stoppedAt = Program.RealTime;
+						_stoppedAt = SoundSource.Viewer.RealTime;
                         //_stoppedAt += WAVIrrKlangFileFactory.Weigth(_playingSound.Name) * .025;
 
                     }
-                    else if (_stoppedAt + .8 < Program.RealTime)
+					else if (_stoppedAt + .8 < SoundSource.Viewer.RealTime)
                     {
                         _stoppedAt = 0;
                         Stop();
@@ -722,8 +749,8 @@ namespace ORTS
 
             if (SoundSource.IsEnvSound)
             {
-                ISound.MinDistance = 50;
-                ISound.MaxDistance = 200;
+                ISound.MinDistance = 10;
+                ISound.MaxDistance = float.MaxValue;
             }
 
             _playingSound = iSoundSource;
@@ -805,6 +832,9 @@ namespace ORTS
             if (Enabled && eventID == TriggerID)
             {
                 SoundCommand.Run();
+#if DEBUGSCR
+                Console.WriteLine("({0})DiscreteTrigger: {1}:{2}", _soundStream.Index, (int)eventID, SoundCommand.FileName);
+#endif
                 // Added in order to check the activeness of the SoundSource - by GeorgeS
                 if (!_soundStream.SoundSource.Active)
                 {
@@ -853,6 +883,10 @@ namespace ORTS
                     SoundStream.Volume = volume;
                 }
                 UpdateTriggerDistance();
+#if DEBUGSCR
+                Console.WriteLine("({0})DistanceTravelledTrigger: Current:{1}, Next:{2}", SoundStream.Index, car.DistanceM, triggerDistance);
+#endif
+
             }
             else
             {
@@ -862,7 +896,14 @@ namespace ORTS
 
         private void UpdateTriggerDistance()
         {
-                triggerDistance = car.DistanceM + ( (float)Program.Random.NextDouble() * (SMS.Dist_Max - SMS.Dist_Min) + SMS.Dist_Min );
+            if (SMS.Dist_Max != SMS.Dist_Min)
+            {
+                triggerDistance = car.DistanceM + ((float)Program.Random.NextDouble() * (SMS.Dist_Max - SMS.Dist_Min) + SMS.Dist_Min);
+            }
+            else
+            {
+                triggerDistance = car.DistanceM + ((float)Program.Random.NextDouble() * (SMS.Dist_Min) + SMS.Dist_Min);
+            }
         }
 
     } // class ORTSDistanceTravelledTrigger
@@ -1563,14 +1604,17 @@ namespace ORTS
 
         public void Update(ElapsedTime elapsedTime)
         {
+            return;
+            /*
             lock (Sounds)
             {
                 foreach (List<SoundSource> ls in Sounds.Values)
                 {
-                    foreach (SoundSource ss in ls)
-                        ss.Update(elapsedTime);
+                    //foreach (SoundSource ss in ls)
+                        //ss.Update(elapsedTime);
                 }
             }
+            */
         }
 
         public void AddByTile(int TileX, int TileZ)
@@ -1596,7 +1640,8 @@ namespace ORTS
                                 ls.Add(ss);
                         }
                     }
-                    Sounds.Add(name, ls);
+                    //Sounds.Add(name, ls);
+                    Viewer.SoundProcess.AddSoundSource(name, ls);
                 }
             }
 #endif
@@ -1609,10 +1654,12 @@ namespace ORTS
             {
                 if (Sounds.ContainsKey(name))
                 {
-                    List<SoundSource> ls = Sounds[name];
-                    Sounds.Remove(name);
-                    foreach (SoundSource ss in ls)
-                        ss.Uninitialize();
+                    //List<SoundSource> ls = Sounds[name];
+                    //Sounds.Remove(name);
+                    Viewer.SoundProcess.RemoveSoundSource(name);
+                    //foreach (SoundSource ss in ls)
+                    //    ss.Uninitialize();
+
                 }
             }
         }

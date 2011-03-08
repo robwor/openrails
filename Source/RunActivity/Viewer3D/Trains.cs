@@ -39,9 +39,8 @@ namespace ORTS
             Trace.Write("C");
             TrainCarViewer carViewer = car.GetViewer(Viewer);
             LoadedCars.Add(car, carViewer);
-            // Add the player locomotive's lights here
             if (car.Lights != null)
-                carViewer.lightGlowDrawer = new LightGlowDrawer(Viewer, car, true);
+                carViewer.lightDrawer = new LightDrawer(Viewer, car);
             return carViewer;
         }
 
@@ -61,7 +60,7 @@ namespace ORTS
                 Swap(ref LoadedCars, ref UpdatedLoadedCars);
             }
             // build a list of cars in viewing range for loader to ensure are loaded
-			float removeDistance = Viewer.SettingsInt[(int)IntSettings.ViewingDistance] * 1.5f;  
+			float removeDistance = Viewer.Settings.ViewingDistance * 1.5f;  
             ViewableCars.Clear();
             ViewableCars.Add(Viewer.PlayerLocomotiveViewer.Car);  // lets make sure its included even if its out of viewing range
             foreach (Train train in Viewer.Simulator.Trains)
@@ -90,9 +89,8 @@ namespace ORTS
                     Trace.Write("C");
                     TrainCarViewer carViewer = car.GetViewer(Viewer);
                     UpdatedLoadedCars.Add(car, carViewer);
-                    // Add all the other car lights here
                     if (car.Lights != null)
-                        carViewer.lightGlowDrawer = new LightGlowDrawer(Viewer, car, false);
+                        carViewer.lightDrawer = new LightDrawer(Viewer, car);
                 }
             // next time LoadPrep runs, it will fetch the UpdatedLoadedCars list of viewers.
         }
@@ -110,12 +108,8 @@ namespace ORTS
 				}
 				// Do the lights separately for proper alpha sorting
 				foreach (TrainCarViewer car in LoadedCars.Values)
-				{
-					// At this stage of ORTS development, we will only render LightGlowDrawer objects 
-					// for the player train.
-					if (car.Car.Lights != null && Viewer.PlayerTrain.Cars.Contains(car.Car))
-						car.lightGlowDrawer.PrepareFrame(frame, elapsedTime);
-				}
+                    if (car.lightDrawer != null)
+						car.lightDrawer.PrepareFrame(frame, elapsedTime);
 			}
 			catch (Exception error)  // possible thread safety violation - try again next time
 			{

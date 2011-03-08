@@ -41,23 +41,17 @@ namespace ORTS
             Y2= other.Y2;
             Size = other.Size;
         }
-        public Interpolator(STFReader reader)
+        public Interpolator(STFReader stf)
         {
             List<float> list = new List<float>();
-            reader.VerifyStartOfBlock();
-            for (; ; )
-            {
-                int c = reader.PeekPastWhitespace();
-                if (reader.EOF() || c == ')')
-                    break;
-                list.Add(reader.ReadFloat());
-            }
-            reader.VerifyEndOfBlock();
+            stf.MustMatch("(");
+            while (!stf.EndOfBlock())
+                list.Add(stf.ReadFloat(STFReader.UNITS.Any, null));
             if (list.Count % 2 == 1)
-                STFException.ReportWarning(reader, "Ignoring extra odd value in Interpolator list.");
+                STFException.TraceWarning(stf, "Ignoring extra odd value in Interpolator list.");
             int n = list.Count/2;
             if (n < 2)
-                STFException.ReportError(reader, "Interpolator must have at least two value pairs.");
+                STFException.TraceError(stf, "Interpolator must have at least two value pairs.");
             X = new float[n];
             Y = new float[n];
             Size = n;
@@ -66,7 +60,7 @@ namespace ORTS
                 X[i] = list[2*i];
                 Y[i] = list[2*i+1];
                 if (i > 0 && X[i - 1] >= X[i])
-                    STFException.ReportError(reader, " Interpolator x values must be increasing.");
+                    STFException.TraceWarning(stf, " Interpolator x values must be increasing.");
             }
         }
         public float this[float x]
@@ -248,23 +242,20 @@ namespace ORTS
             for (int i = 0; i < Size; i++)
                 Y[i] = new Interpolator(other.Y[i]);
         }
-        public Interpolator2D(STFReader reader)
+        public Interpolator2D(STFReader stf)
         {
             List<float> xlist = new List<float>();
             List<Interpolator> ilist = new List<Interpolator>();
-            reader.VerifyStartOfBlock();
-            for (; ; )
+            stf.MustMatch("(");
+            while(!stf.EndOfBlock())
             {
-                int c = reader.PeekPastWhitespace();
-                if (reader.EOF() || c == ')')
-                    break;
-                xlist.Add(reader.ReadFloat());
-                ilist.Add(new Interpolator(reader));
+                xlist.Add(stf.ReadFloat(STFReader.UNITS.Any, null));
+                ilist.Add(new Interpolator(stf));
             }
-            reader.VerifyEndOfBlock();
+            stf.SkipRestOfBlock();
             int n = xlist.Count;
             if (n < 2)
-                STFException.ReportError(reader, "Interpolator must have at least two x values.");
+                STFException.TraceError(stf, "Interpolator must have at least two x values.");
             X = new float[n];
             Y = new Interpolator[n];
             Size = n;
@@ -273,7 +264,7 @@ namespace ORTS
                 X[i] = xlist[i];
                 Y[i] = ilist[i];
                 if (i > 0 && X[i - 1] >= X[i])
-                    STFException.ReportError(reader, " Interpolator x values must be increasing.");
+                    STFException.TraceWarning(stf, " Interpolator x values must be increasing.");
             }
         }
         public float Get(float x, float y)

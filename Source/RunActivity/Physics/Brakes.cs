@@ -43,7 +43,7 @@ namespace ORTS
                 return new AirSinglePipe(car);
         }
 
-        public abstract void Parse(string lowercasetoken, STFReader f);
+        public abstract void Parse(string lowercasetoken, STFReader stf);
 
         public abstract void Update(float elapsedClockSeconds);
 
@@ -79,7 +79,7 @@ namespace ORTS
         public enum ValveState { Lap, Apply, Release, Emergency };
         protected ValveState TripleValveState = ValveState.Lap;
 
-        public AirSinglePipe( TrainCar car )
+        public AirSinglePipe(TrainCar car)
         {
             Car = car;
             BrakePipeVolumeFT3 = .028f * (1 + car.Length);
@@ -117,20 +117,28 @@ namespace ORTS
             return s;
         }
 
-        public override void Parse(string lowercasetoken, STFReader f)
+        public float CylPSIPressure
+        {
+            get
+            {
+                return CylPressurePSI;
+            }
+        }
+
+        public override void Parse(string lowercasetoken, STFReader stf)
         {
             switch (lowercasetoken)
             {
-                case "wagon(maxhandbrakeforce": MaxHandbrakeForceN = f.ReadFloatBlock(); break;
-                case "wagon(maxbrakeforce": MaxBrakeForceN = f.ReadFloatBlock(); break;
-                case "wagon(brakecylinderpressureformaxbrakebrakeforce": MaxCylPressurePSI = AutoCylPressurePSI = f.ReadFloatBlock(); break;
-                case "wagon(triplevalveratio": AuxCylVolumeRatio = f.ReadFloatBlock(); break;
-                case "wagon(maxreleaserate": MaxReleaseRate = ReleaseRate = f.ReadFloatBlock(); break;
-                case "wagon(maxapplicationrate": MaxApplicationRate = f.ReadFloatBlock(); break;
-                case "wagon(maxauxilarychargingrate": MaxAuxilaryChargingRate = f.ReadFloatBlock(); break;
-                case "wagon(emergencyreschargingrate": EmergResChargingRate = f.ReadFloatBlock(); break;
-                case "wagon(emergencyresvolumemultiplier": EmergAuxVolumeRatio = f.ReadFloatBlock(); break;
-                case "wagon(brakepipevolume": BrakePipeVolumeFT3 = f.ReadFloatBlock(); break;
+                case "wagon(maxhandbrakeforce": MaxHandbrakeForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "wagon(maxbrakeforce": MaxBrakeForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "wagon(brakecylinderpressureformaxbrakebrakeforce": MaxCylPressurePSI = AutoCylPressurePSI = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "wagon(triplevalveratio": AuxCylVolumeRatio = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "wagon(maxreleaserate": MaxReleaseRate = ReleaseRate = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "wagon(maxapplicationrate": MaxApplicationRate = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "wagon(maxauxilarychargingrate": MaxAuxilaryChargingRate = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "wagon(emergencyreschargingrate": EmergResChargingRate = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
+                case "wagon(emergencyresvolumemultiplier": EmergAuxVolumeRatio = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "wagon(brakepipevolume": BrakePipeVolumeFT3 = stf.ReadFloatBlock(STFReader.UNITS.Any, null); break;
             }
         }
 
@@ -212,7 +220,7 @@ namespace ORTS
             if (TripleValveState == ValveState.Release)
             {
                 float threshold = RetainerPressureThresholdPSI;
-                if (Program.GraduatedRelease)
+                if (Car.Simulator.Settings.GraduatedRelease)
                 {
                     float t = (EmergResPressurePSI - BrakeLine1PressurePSI) * AuxCylVolumeRatio;
                     if (threshold < t)
@@ -224,7 +232,7 @@ namespace ORTS
                     if (AutoCylPressurePSI < threshold)
                         AutoCylPressurePSI = threshold;
                 }
-                if (!Program.GraduatedRelease && AuxResPressurePSI < EmergResPressurePSI && AuxResPressurePSI < BrakeLine1PressurePSI)
+				if (!Car.Simulator.Settings.GraduatedRelease && AuxResPressurePSI < EmergResPressurePSI && AuxResPressurePSI < BrakeLine1PressurePSI)
                 {
                     float dp = elapsedClockSeconds * EmergResChargingRate;
                     if (EmergResPressurePSI - dp < AuxResPressurePSI + dp * EmergAuxVolumeRatio)
@@ -488,16 +496,16 @@ namespace ORTS
 
         public override string GetStatus(int detailLevel)
         {
-            return string.Format( "{0:F0}", BrakeLine1PressurePSI);
+			return string.Format("{0:F0} PSI", BrakeLine1PressurePSI);
         }
 
-        public override void Parse(string lowercasetoken, STFReader f)
+        public override void Parse(string lowercasetoken, STFReader stf)
         {
             switch (lowercasetoken)
             {
-                case "wagon(maxhandbrakeforce": MaxHandbrakeForceN = f.ReadFloatBlock(); break;
-                case "wagon(maxbrakeforce": MaxBrakeForceN = f.ReadFloatBlock(); break;
-                case "wagon(brakecylinderpressureformaxbrakebrakeforce": MaxPressurePSI = f.ReadFloatBlock(); break;
+                case "wagon(maxhandbrakeforce": MaxHandbrakeForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "wagon(maxbrakeforce": MaxBrakeForceN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "wagon(brakecylinderpressureformaxbrakebrakeforce": MaxPressurePSI = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
             }
         }
 

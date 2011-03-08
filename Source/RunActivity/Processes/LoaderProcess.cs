@@ -9,73 +9,62 @@ using System.Diagnostics;
 
 namespace ORTS
 {
-    public class LoaderProcess
-    {
-        public const double UpdatePeriod = 0.1;       // 10 times per second 
-        public double LastUpdate = 0;          // last time we were upated
+	public class LoaderProcess
+	{
+		public readonly bool Threaded;
+		public readonly Profiler Profiler = new Profiler("Loader");
+		readonly Viewer3D Viewer;
+		readonly Thread Thread;
+		readonly ProcessState State;
 
-        Viewer3D Viewer;              //   by the 3D viewer 10 times a second
-        Thread LoaderThread;
+		public LoaderProcess(Viewer3D viewer)
+		{
+			Threaded = true;
+			Viewer = viewer;
+			if (Threaded)
+			{
+				State = new ProcessState();
+				Thread = new Thread(LoadLoop);
+			}
+		}
 
-        public bool Finished { get { return State.Finished; } }
+		public void Run()
+		{
+			if (Threaded)
+				Thread.Start();
+		}
 
-        ProcessState State = new ProcessState();   // manage interprocess signalling
+		public void Stop()
+		{
+			if (Threaded)
+				Thread.Abort();
+		}
 
-        public LoaderProcess(Viewer3D viewer )
-        {
-            Viewer = viewer;
-            LoaderThread = new Thread(LoadLoop);
-        }
+		public bool Finished
+		{
+			get
+			{
+				// Non-threaded updater is always "finished".
+				return !Threaded || State.Finished;
+			}
+		}
 
-        public void WaitTillFinished()
-        {
-            State.WaitTillFinished();
-        }
+		[ThreadName("Loader")]
+		void LoadLoop()
+		{
+			Thread.CurrentThread.Name = "Loader Process";
 
-        /// <summary>
-        /// LoadPrep and Load
-        /// </summary>
-        public void StartUpdate( )
-        {
-            if (!State.Finished)
-            {
-                // the loader will often fall behind, in that case let it finish
-                // before issueing a new command.
-                Viewer.RenderProcess.LoaderSlow = true;  // diagnostic info
-                return;
-            }
-            Viewer.RenderProcess.LoaderSlow = false;
+			while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
+			{
+				// Wait for a new Update() command
+				State.WaitTillStarted();
 
-            Viewer.LoadPrep();  
-
-            State.SignalStart();
-
-            LastUpdate = Program.RealTime;
-        }
-
-        public void Run( )
-        {
-            LoaderThread.Start();
-        }
-
-        public void Stop()
-        {
-            LoaderThread.Abort();
-        }
-
-        public void LoadLoop()
-        {
-			Viewer.LoaderProfiler = new Profiler("Loader");
-
-            while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
-            {
-                // Wait for a new Update() command
-                State.WaitTillStarted();
-				Viewer.LoaderProfiler.Start();
-
+#if !CRASH_ON_ERRORS
 				try
 				{
-					Viewer.Load(Viewer.RenderProcess);  // complete scan and load as necessary
+#endif
+					Update();
+#if !CRASH_ON_ERRORS
 				}
 				catch (Exception error)
 				{
@@ -84,15 +73,49 @@ namespace ORTS
 						// Unblock anyone waiting for us, report error and die.
 						State.SignalFinish();
 						Viewer.ProcessReportError(error);
+						// Finally unblock any process that may have started us, while the message was showing
+						State.SignalFinish();
 						return;
 					}
 				}
+#endif
 
-                State.SignalFinish();
-				Viewer.LoaderProfiler.Stop();
-            }
+				// Signal finished so RenderProcess can start drawing
+				State.SignalFinish();
+			}
+		}
 
-        }
+		public const double UpdatePeriod = 0.1;       // 10 times per second 
+		public double LastUpdateRealTime = 0;          // last time we were upated
 
-    } // LoaderProcess
+		[CallOnThread("Updater")]
+		public void StartUpdate()
+		{
+			// the loader will often fall behind, in that case let it finish
+			// before issueing a new command.
+			if (!Finished)
+				return;
+
+			Viewer.LoadPrep();
+
+			State.SignalStart();
+
+			LastUpdateRealTime = Viewer.RealTime;
+		}
+
+		[ThreadName("Loader")]
+		public void Update()
+		{
+			Profiler.Start();
+
+			try
+			{
+				Viewer.Load(Viewer.RenderProcess);  // complete scan and load as necessary
+			}
+			finally
+			{
+				Profiler.Stop();
+			}
+		}
+	} // LoaderProcess
 }

@@ -24,21 +24,14 @@ namespace ORTS
             if (File.Exists(wsfilename))
             {
 				Trace.Write("$");
-                STFReader reader = new STFReader(wsfilename);
-                try
+                using (STFReader stf = new STFReader(wsfilename, false))
                 {
-                    while (!reader.EndOfBlock()) // EOF
-                    {
-                        string token = reader.ReadToken();
-                        if (string.Compare(token, "Tr_Worldsoundfile", true) == 0) TR_WorldSoundFile = new TR_WorldSoundFile(reader);
-                        else reader.SkipBlock();
-                    }
+                    stf.ParseFile(new STFReader.TokenProcessor[] {
+                        new STFReader.TokenProcessor("tr_worldsoundfile", ()=>{ TR_WorldSoundFile = new TR_WorldSoundFile(stf); }),
+                    });
+                    //TODO This should be changed to STFException.TraceError() with defaults values created
                     if (TR_WorldSoundFile == null)
-                        throw (new STFException(reader, "Missing TR_WorldSoundFile statement"));
-                }
-                finally
-                {
-                    reader.Close();
+                        throw new STFException(stf, "Missing TR_WorldSoundFile statement");
                 }
             }
         }
@@ -48,14 +41,12 @@ namespace ORTS
     {
         public List<WorldSoundSource> SoundSources = new List<WorldSoundSource>();
 
-        public TR_WorldSoundFile(STFReader reader)
+        public TR_WorldSoundFile(STFReader stf)
         {
-            reader.VerifyStartOfBlock();
-            while (!reader.EndOfBlock())
-            {
-                string token = reader.ReadToken();
-                if (string.Compare(token, "Soundsource", true) == 0) SoundSources.Add (new WorldSoundSource (reader));
-            }
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("soundsource", ()=>{ SoundSources.Add(new WorldSoundSource(stf)); }),
+            });
         }
     }
 
@@ -66,23 +57,19 @@ namespace ORTS
         public float Z;
         public string SoundSourceFileName;
 
-        public WorldSoundSource(STFReader reader)
+        public WorldSoundSource(STFReader stf)
         {
-            reader.VerifyStartOfBlock();
-            while (!reader.EndOfBlock())
-            {
-                string token = reader.ReadToken();
-                if (string.Compare(token, "position", true) == 0)
-                {
-                    reader.VerifyStartOfBlock();
-                    X = reader.ReadFloat();
-                    Y = reader.ReadFloat();
-                    Z = reader.ReadFloat();
-                    reader.VerifyEndOfBlock();
-                }
-                else if (string.Compare(token, "filename", true) == 0) SoundSourceFileName = reader.ReadStringBlock();
-                else reader.SkipBlock();
-            }
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("filename", ()=>{ SoundSourceFileName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("position", ()=>{
+                    stf.MustMatch("(");
+                    X = stf.ReadFloat(STFReader.UNITS.None, null);
+                    Y = stf.ReadFloat(STFReader.UNITS.None, null);
+                    Z = stf.ReadFloat(STFReader.UNITS.None, null);
+                    stf.SkipRestOfBlock();
+                }),
+            });
         }
     }
 }

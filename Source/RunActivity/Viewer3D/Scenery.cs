@@ -110,9 +110,10 @@ namespace ORTS
                         {
                             // if not, unload the wFile
                             Trace.Write("w");
+							WorldFiles[i].DisposeCrossing(); //added to tell some crossings they are out of range
                             WorldFiles[i] = null;
                             // World sounds - By GeorgeS
-                            Viewer.WorldSounds.RemoveByTile(tile.TileX, tile.TileZ);
+                            if (Viewer.WorldSounds != null) Viewer.WorldSounds.RemoveByTile(tile.TileX, tile.TileZ);
                         }
                     }
                 }
@@ -151,7 +152,7 @@ namespace ORTS
                     Trace.Write("W");
                     WorldFiles[i] = new WorldFile(Viewer, tileX, tileZ);
                     // Load world sounds - By GeorgeS
-                    Viewer.WorldSounds.AddByTile(tileX, tileZ);
+					if (Viewer.WorldSounds != null) Viewer.WorldSounds.AddByTile(tileX, tileZ);
                     return;
                 }
 
@@ -164,18 +165,21 @@ namespace ORTS
             // THREAD SAFETY WARNING - LoaderProcess could write to this array at any time
             // its OK to iterate through this array because LoaderProcess never changes the size
             foreach (WorldFile wFile in WorldFiles)
+            {
                 if (wFile != null)
                 {
-                    wFile.PrepareFrame(frame, elapsedTime);
-                    foreach (DynatrackDrawer dTrack in wFile.dTrackList)
+                    if (Viewer.Camera.InFOV(new Vector3((wFile.TileX - Viewer.Camera.TileX) * 2048, 0, (wFile.TileZ - Viewer.Camera.TileZ) * 2048), 1448))
                     {
-                        dTrack.PrepareFrame(frame, elapsedTime);
-                    }
-                    foreach (ForestDrawer forest in wFile.forestList)
-                    {
-                        forest.PrepareFrame(frame, elapsedTime);
+                        wFile.PrepareFrame(frame, elapsedTime);
+                        foreach (DynatrackDrawer dTrack in wFile.dTrackList)
+                            dTrack.PrepareFrame(frame, elapsedTime);
+                        foreach (ForestDrawer forest in wFile.forestList)
+                            forest.PrepareFrame(frame, elapsedTime);
+						foreach (CarSpawner spawner in wFile.carSpawners)
+							spawner.SpawnCars(elapsedTime.ClockSeconds);
                     }
                 }
+            }
         }
     } // SceneryDrawer
 
@@ -187,7 +191,7 @@ namespace ORTS
     {
         public int TileX, TileZ;
 
-        private List<StaticShape> SceneryObjects = new List<StaticShape>();
+        public List<StaticShape> SceneryObjects = new List<StaticShape>();
 
         // Dynamic track objects in the world file
         public struct DyntrackParams
@@ -198,6 +202,7 @@ namespace ORTS
         }
         public List<DynatrackDrawer> dTrackList = new List<DynatrackDrawer>();
         public List<ForestDrawer> forestList = new List<ForestDrawer>();
+		public List<CarSpawner> carSpawners = new List<CarSpawner>();
 
         /// <summary>
         /// Open the specified WFile and load all the scenery objects into the viewer.
@@ -222,7 +227,7 @@ namespace ORTS
             // create all the individual scenery objects specified in the WFile
             foreach (WorldObject worldObject in WFile.Tr_Worldfile)
             {
-                if (worldObject.StaticDetailLevel > viewer.SettingsInt[(int)IntSettings.WorldObjectDensity])
+                if (worldObject.StaticDetailLevel > viewer.Settings.WorldObjectDensity)
                     continue;
 
                 // determine the full file path to the shape file for this scenery object 
@@ -237,10 +242,15 @@ namespace ORTS
 
                 // get the position of the scenery object into ORTS coordinate space
                 WorldPosition worldMatrix;
-                if( worldObject.QDirection == null )
-                    worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX,WFile.TileZ, worldObject.Position, worldObject.Matrix3x3);
-                else
-                    worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX,WFile.TileZ,worldObject.Position, worldObject.QDirection);
+				if (worldObject.Matrix3x3 != null)
+					worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX, WFile.TileZ, worldObject.Position, worldObject.Matrix3x3);
+				else if (worldObject.QDirection != null)
+					worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX, WFile.TileZ, worldObject.Position, worldObject.QDirection);
+				else
+				{
+					Trace.TraceError("Object {1} is missing Matrix3x3 and QDirection in {0}", WFileName, worldObject.UID);
+					continue;
+				}
 
 
                 if (worldObject.GetType() == typeof(MSTS.TrackObj))
@@ -268,14 +278,44 @@ namespace ORTS
                     ForestObj forestObj = (ForestObj)worldObject;
                     forestList.Add(new ForestDrawer(viewer, forestObj, worldMatrix));
                 }
-                else // It's some other type of object - not one of the above.
-                {
-					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0;
-					SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
+				else if (worldObject.GetType() == typeof(MSTS.SignalObj))
+				{
+					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
+					SceneryObjects.Add(new SignalShape(viewer, (SignalObj)worldObject, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
+				}
+				else if (worldObject.GetType() == typeof(MSTS.LevelCrossingObj))
+				{
+					SceneryObjects.Add(new LevelCrossingShape(viewer, shapeFilePath, worldMatrix, (LevelCrossingObj) worldObject, viewer.Simulator.LevelCrossings.LevelCrossingObjects));
+				}
+				else if (worldObject.GetType() == typeof(MSTS.CarSpawnerObj))
+				{
+                    if (viewer.Simulator.RDB != null)
+                        carSpawners.Add(new CarSpawner((CarSpawnerObj)worldObject, worldMatrix));
+                    else
+                        Trace.TraceWarning("Ignored car spawner {1} in {0} because route has no RDB.", WFileName, worldObject.UID);
                 }
+				else // It's some other type of object - not one of the above.
+				{
+					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
+					SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
+				}
             }
 
         } // WorldFile constructor
+
+		//treat level crossing which is out of range
+		public void DisposeCrossing()
+		{
+			LevelCrossingShape tempCrossingShape;
+			foreach (StaticShape shape in SceneryObjects)
+			{
+				if (shape.GetType() == typeof(LevelCrossingShape)) 
+				{
+					tempCrossingShape = (LevelCrossingShape)shape;
+					tempCrossingShape.crossingObj.inrange = false;
+				}
+			}
+		}
 
         private void DyntrackAddAtomic(Viewer3D viewer, DyntrackObj dTrackObj, WorldPosition worldMatrix)
         {
@@ -381,8 +421,8 @@ namespace ORTS
 
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-            foreach ( StaticShape shape in SceneryObjects )
-                shape.PrepareFrame(frame, elapsedTime.ClockSeconds );
+            foreach (StaticShape shape in SceneryObjects)
+                shape.PrepareFrame(frame, elapsedTime);
         }
 
         /// <summary>

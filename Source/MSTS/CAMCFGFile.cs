@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections;
 using System.Text;
+using Microsoft.Xna.Framework;
 
 namespace MSTS
 {
@@ -21,72 +22,44 @@ namespace MSTS
     {
         public CAMCFGFile(string filename)
         {
-            STFReader f = new STFReader(filename);
-            try
-            {
-                string token = f.ReadToken();
-                while (!f.EndOfBlock())
-                {
-                    if (token == ")") throw (new STFException(f, "Unexpected )"));
-                    else if (token == "(") f.SkipBlock();
-                        
-                    else if (0 == String.Compare(token, "camera", true))
-                    {
-                        // add this camera to the list
-                        cam = new camera(f);
-                        Cameras.Add(cam);
-                    }
-                    else f.SkipBlock();
-                    token = f.ReadToken();
-                }
-            }
-            finally
-            {
-                f.Close();
-            }
+            using (STFReader stf = new STFReader(filename, false))
+                stf.ParseFile(new STFReader.TokenProcessor[] {
+                    new STFReader.TokenProcessor("camera", ()=>{ Cameras.Add(new Camera(stf)); }),
+                });
         }
-        private camera cam;
         public ArrayList Cameras = new ArrayList(8);
     }
 
     /// <summary>
     /// Individual camera object from the config file
     /// </summary>
-    public class camera
+    public class Camera
     {
-        public camera(STFReader f)
+        public Camera(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            string token = f.ReadToken();
-
-            while (token != ")")
-            {
-                switch (token.ToLower())
-                {
-                    case "camtype": CamType=f.ReadStringBlock(); CamControl=f.ReadStringBlock(); break;
-                    case "cameraoffset": CameraOffset=new vector(f.ReadFloatBlock(),f.ReadFloatBlock(),f.ReadFloatBlock()); break;
-                    case "direction": Direction = new vector(f.ReadFloatBlock(), f.ReadFloatBlock(), f.ReadFloatBlock()); break;
-                    case "objectoffset": ObjectOffset = new vector(f.ReadFloatBlock(), f.ReadFloatBlock(), f.ReadFloatBlock()); break;
-                    case "rotationlimit": RotationLimit = new vector(f.ReadFloatBlock(), f.ReadFloatBlock(), f.ReadFloatBlock()); break;
-                    case "description": Description = f.ReadStringBlock(); break;
-                    case "fov": Fov = f.ReadFloatBlock(); break;
-                    case "zclip": ZClip = f.ReadFloatBlock(); break;
-                    case "wagonnum": WagonNum = f.ReadIntBlock(); break;
-                    default: f.SkipBlock(); break;
-                }
-                token = f.ReadToken();
-            }
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("camtype", ()=>{ CamType = stf.ReadStringBlock(null); CamControl = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("cameraoffset", ()=>{ CameraOffset = stf.ReadVector3Block(STFReader.UNITS.None, CameraOffset); }),
+                new STFReader.TokenProcessor("direction", ()=>{ Direction = stf.ReadVector3Block(STFReader.UNITS.None, Direction); }),
+                new STFReader.TokenProcessor("objectoffset", ()=>{ ObjectOffset = stf.ReadVector3Block(STFReader.UNITS.None, ObjectOffset); }),
+                new STFReader.TokenProcessor("rotationlimit", ()=>{ RotationLimit = stf.ReadVector3Block(STFReader.UNITS.None, RotationLimit); }),
+                new STFReader.TokenProcessor("description", ()=>{ Description = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("fov", ()=>{ Fov = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("zclip", ()=>{ ZClip = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("wagonnum", ()=>{ WagonNum = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+            });
         }
 
         public string CamType;
         public string CamControl;
-        public vector CameraOffset = new vector(0f,0f,0f);
-  	    public vector Direction =new vector( 0f,0f,0f );
+        public Vector3 CameraOffset = new Vector3();
+        public Vector3 Direction = new Vector3();
 	    public float Fov = 55f;
 	    public float ZClip =0.1f;
 	    public int WagonNum =-1;
-	    public vector ObjectOffset = new vector ( 0f, 0f, 0f);
-	    public vector RotationLimit = new vector ( 0f, 0f, 0f);
+        public Vector3 ObjectOffset = new Vector3();
+        public Vector3 RotationLimit = new Vector3();
 	    public string Description ="";
 
     }

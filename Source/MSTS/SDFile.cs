@@ -18,24 +18,14 @@ namespace MSTS
 
         public SDFile(string filename)
         {
-            STFReader f = new STFReader(filename);
-            try
+            using (STFReader stf = new STFReader(filename, false))
             {
-                string token = f.ReadToken();
-                while (token != "") // EOF
-                {
-                    if (token == ")") throw (new STFException(f, "Unexpected )"));
-                    else if (token == "(") f.SkipBlock();
-                    else if (0 == String.Compare(token, "shape", true)) shape = new SDShape(f);
-                    else f.SkipBlock();
-                    token = f.ReadToken();
-                }
+                stf.ParseFile(new STFReader.TokenProcessor[] {
+                    new STFReader.TokenProcessor("shape", ()=>{ shape = new SDShape(stf); }),
+                });
+                //TODO This should be changed to STFException.TraceError() with defaults values created
                 if (shape == null)
-                    throw (new STFException(f, "Missing shape statement"));
-            }
-            finally
-            {
-                f.Close();
+                    throw new STFException(stf, "Missing shape statement");
             }
         }
 
@@ -46,42 +36,22 @@ namespace MSTS
                 ESD_Bounding_Box = new ESD_Bounding_Box();
             }
 
-            public SDShape(STFReader f)
+            public SDShape(STFReader stf)
             {
-				try
-				{
-					while (!f.EOF())
-					{
-						string token = f.ReadToken();
-						if (token == "(")
-							token = f.ReadToken();
-						if (token.EndsWith(".s") || token.EndsWith(".S")) // Ignore the filename string. TODO: Check if it agrees with the SD file name? Is this important?
-						{
-							while (token != ")")
-							{
-								token = f.ReadToken();
-								if (token == "") throw (new STFException(f, "Missing )"));
-								else if (0 == String.Compare(token, "ESD_Detail_Level", true)) ESD_Detail_Level = f.ReadIntBlock();
-								else if (0 == String.Compare(token, "ESD_Alternative_Texture", true)) ESD_Alternative_Texture = f.ReadIntBlock();
-								else if (0 == String.Compare(token, "ESD_Bounding_Box", true))
-								{
-									ESD_Bounding_Box = new ESD_Bounding_Box(f);
-									if (ESD_Bounding_Box.A == null || ESD_Bounding_Box.B == null)  // ie quietly handle ESD_Bounding_Box()
-										ESD_Bounding_Box = null;
-								}
-								else if (0 == String.Compare(token, "ESD_No_Visual_Obstruction", true)) ESD_No_Visual_Obstruction = f.ReadBoolBlock();
-								else if (0 == String.Compare(token, "ESD_Snapable", true)) ESD_Snapable = f.ReadBoolBlock();
-								else f.SkipBlock();
-							}
-						}
-					}
-					// TODO - some objects have no bounding box - ie JP2BillboardTree1.sd
-					//if( ESD_Bounding_Box == null )throw( new STFError( f, "Missing ESD_Bound_Box statement" ) );
-				}
-				catch (STFException error)
-				{
-					STFException.ReportError(f, error.Message);
-				}
+                stf.ReadString(); // Ignore the filename string. TODO: Check if it agrees with the SD file name? Is this important?
+                stf.ParseBlock(new STFReader.TokenProcessor[] {
+                    new STFReader.TokenProcessor("esd_detail_level", ()=>{ ESD_Detail_Level = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+                    new STFReader.TokenProcessor("esd_alternative_texture", ()=>{ ESD_Alternative_Texture = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+                    new STFReader.TokenProcessor("esd_no_visual_obstruction", ()=>{ ESD_No_Visual_Obstruction = stf.ReadBoolBlock(true); }),
+                    new STFReader.TokenProcessor("esd_snapable", ()=>{ ESD_Snapable = stf.ReadBoolBlock(true); }),
+                    new STFReader.TokenProcessor("esd_bounding_box", ()=>{
+                        ESD_Bounding_Box = new ESD_Bounding_Box(stf);
+                        if (ESD_Bounding_Box.A == null || ESD_Bounding_Box.B == null)  // ie quietly handle ESD_Bounding_Box()
+                            ESD_Bounding_Box = null;
+                    }),
+                });
+                // TODO - some objects have no bounding box - ie JP2BillboardTree1.sd
+                //if (ESD_Bounding_Box == null) throw new STFException(stf, "Missing ESD_Bound_Box statement");
             }
             public int ESD_Detail_Level = 0;
             public int ESD_Alternative_Texture = 0;
@@ -98,27 +68,22 @@ namespace MSTS
                 B = new TWorldPosition(10, 10, 10);
             }
 
-            public ESD_Bounding_Box(STFReader f)
+            public ESD_Bounding_Box(STFReader stf)
             {
-                f.VerifyStartOfBlock();
-                if (f.PeekPastWhitespace() == ')')
-                    return;    // quietly return on ESD_Bounding_Box()
-                float X = f.ReadFloat();
-                float Y = f.ReadFloat();
-                float Z = f.ReadFloat();
+                stf.MustMatch("(");
+                string item = stf.ReadString();
+                if (item == ")") return;    // quietly return on ESD_Bounding_Box()
+                stf.StepBackOneItem();
+                float X = stf.ReadFloat(STFReader.UNITS.None, null);
+                float Y = stf.ReadFloat(STFReader.UNITS.None, null);
+                float Z = stf.ReadFloat(STFReader.UNITS.None, null);
                 A = new TWorldPosition(X, Y, Z);
-                X = f.ReadFloat();
-                Y = f.ReadFloat();
-                Z = f.ReadFloat();
+                X = stf.ReadFloat(STFReader.UNITS.None, null);
+                Y = stf.ReadFloat(STFReader.UNITS.None, null);
+                Z = stf.ReadFloat(STFReader.UNITS.None, null);
                 B = new TWorldPosition(X, Y, Z);
                 // JP2indirt.sd has extra parameters
-                for (; ; )
-                {
-                    string token = f.ReadToken();
-                    if (token == "" || token == ")")
-                        break;
-                }
-
+                stf.SkipRestOfBlock();
             }
             public TWorldPosition A = null;
             public TWorldPosition B = null;

@@ -39,7 +39,7 @@ namespace ORTS
         private Viewer3D Viewer;  // the viewer that we are tracking
         int viewerTileX, viewerTileZ;  // position of the viewer updated once per frame
         List<WirePrimitive> WirePrimitives = new List<WirePrimitive>();  // the currently loaded wire geometry
-        WireMaterial WireMaterial;
+        //WireMaterial WireMaterial;
 
         /// <summary>
         /// Called once after the graphics device is ready
@@ -120,6 +120,7 @@ namespace ORTS
 	public class WireMaterial : Material
 	{
 		public WireMaterial(RenderProcess renderProcess)
+			: base(null)
 		{
 			// create a shader if necessary
 			// load any static textures etc
@@ -129,7 +130,7 @@ namespace ORTS
 		/// Called by RenderFrame.Draw() in the RenderProcess thread for each primitive
 		/// that was loaded by PrepareFrame
 		/// </summary>
-        public override void Render(GraphicsDevice graphicsDevice, List<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
 		{
 			foreach(var item in renderItems)
 			    item.RenderPrimitive.Draw(graphicsDevice);
@@ -138,7 +139,7 @@ namespace ORTS
 
     public class WirePrimitive : RenderPrimitive
     {
-        Matrix xnaMatrix;
+        //Matrix xnaMatrix;
         // LineLists etc
 
         /// <summary>
@@ -146,7 +147,6 @@ namespace ORTS
         /// Do not reference any volatile data.
         /// Executes in the RenderProcess thread called from the Render method of the material class
         /// </summary>
-        /// <param name="graphicsDevice"></param>
         public override void Draw(GraphicsDevice graphicsDevice)
         {
             // do any draw calls on the graphics device 

@@ -16,14 +16,17 @@ using System.Diagnostics;
 
 namespace ORTS
 {
-    public class ElapsedTime
-    {
-        public float ClockSeconds;
-        public float RealSeconds;
+	public class ElapsedTime
+	{
+		public float ClockSeconds;
+		public float RealSeconds;
 
-        public static ElapsedTime Zero = new ElapsedTime();
+		public static ElapsedTime Zero = new ElapsedTime();
 
-		public static ElapsedTime operator +(ElapsedTime a, ElapsedTime b) { return new ElapsedTime() { ClockSeconds = a.ClockSeconds + b.ClockSeconds, RealSeconds = a.RealSeconds + b.RealSeconds }; }
+		public static ElapsedTime operator +(ElapsedTime a, ElapsedTime b) 
+        { 
+            return new ElapsedTime() { ClockSeconds = a.ClockSeconds + b.ClockSeconds, RealSeconds = a.RealSeconds + b.RealSeconds }; 
+        }
 
 		public void Reset()
 		{
@@ -33,162 +36,205 @@ namespace ORTS
 	}
 
 
-    /// <summary>
-    /// This is the main type for your game
-    /// </summary>
-    public class RenderProcess : Microsoft.Xna.Framework.Game
-    {
-        System.Windows.Forms.Form Form;    // the 3D view is drawn on this form
-        public Viewer3D Viewer;
-        public GraphicsDeviceManager GraphicsDeviceManager;
+	/// <summary>
+	/// This is the main type for your game
+	/// </summary>
+	[CallOnThread("Render")]
+	public class RenderProcess : Microsoft.Xna.Framework.Game
+	{
+		public const int ShadowMapCountMaximum = 4;
+		public const int ShadowMapMipCount = 4;
 
-        RenderFrame CurrentFrame;   // a frame contains a list of primitives to draw at a specified time
-        RenderFrame NextFrame;      // we prepare the next frame in the background while the current one is rendering,
+		System.Windows.Forms.Form Form;    // the 3D view is drawn on this form
+		public readonly Viewer3D Viewer;
+		public readonly Profiler Profiler = new Profiler("Render");
+		public GraphicsDeviceManager GraphicsDeviceManager;
 
-        public bool Stopped = false;  // use for shutdown
+		RenderFrame CurrentFrame;   // a frame contains a list of primitives to draw at a specified time
+		RenderFrame NextFrame;      // we prepare the next frame in the background while the current one is rendering,
 
-        public void ToggleFullScreen() { ToggleFullScreenRequested = true; } // Interprocess signalling.
-        private bool ToggleFullScreenRequested = false;
+		public bool Stopped = false;  // use for shutdown
 
-        public new bool IsMouseVisible = false;  // handles cross thread issues by signalling RenderProcess of a change
+		public void ToggleFullScreen() { ToggleFullScreenRequested = true; } // Interprocess signalling.
+		private bool ToggleFullScreenRequested = false;
 
-        // Diagnostic information
-        public float FrameRate = -1; // frames-per-second, information displayed by InfoViewer in upper left
-        public float FrameTime = -1; // seconds
-        public float FrameJitter = -1; // seconds
-		public float SmoothedFrameRate = -1;
-		public float SmoothedFrameTime = -1;
-		public float SmoothedFrameJitter = -1;
-		public bool UpdateSlow = false;  // true if the render loop finishes faster than the update loop.
-        public bool LoaderSlow = false;  // true if the loader loop is falling behind
+		public new bool IsMouseVisible = false;  // handles cross thread issues by signalling RenderProcess of a change
+
+		// Diagnostic information
+		public readonly SmoothedData FrameRate = new SmoothedData();
+		public readonly SmoothedData FrameTime = new SmoothedData();
+		public readonly SmoothedData FrameJitter = new SmoothedData();
 		public int[] PrimitiveCount = new int[(int)RenderPrimitiveSequence.Sentinel];
 		public int[] PrimitivePerFrame = new int[(int)RenderPrimitiveSequence.Sentinel];
-		public int RenderStateChangesCount = 0;
-        public int RenderStateChangesPerFrame = 0;
-        public int ImageChangesCount = 0;
-        public int ImageChangesPerFrame = 0;
+		public int[] ShadowPrimitiveCount;
+		public int[] ShadowPrimitivePerFrame;
 
-        // Timing Information -  THREAD SAFETY - don't use these outside the UpdaterProcess thread  
-        public double LastFrameTime = 0;         // real time seconds of the last simulator.update and viewer.prepareframe
-        public double LastUserInputTime = 0;     // real time seconds when we last started Viewer.HandleUserInput()
+		// Dynamic shadow map setup.
+		public static int ShadowMapCount = -1; // number of shadow maps
+		public static int[] ShadowMapDistance; // distance of shadow map center from camera
+		public static int[] ShadowMapDiameter; // diameter of shadow map
+		public static float[] ShadowMapLimit; // diameter of shadow map far edge from camera
 
-        private ElapsedTime FrameElapsedTime = new ElapsedTime();
-        private ElapsedTime UserInputElapsedTime = new ElapsedTime();
+		double LastUpdateTime = 0;
 
-        public ElapsedTime GetFrameElapsedTime()
-        {
-            if (LastFrameTime != 0)
-            {
-                FrameElapsedTime.RealSeconds = (float)(Program.RealTime - LastFrameTime);
-                FrameElapsedTime.ClockSeconds = Viewer.Simulator.GetElapsedClockSeconds(FrameElapsedTime.RealSeconds);
-            }
-            LastFrameTime = Program.RealTime;
-            return FrameElapsedTime;
-        }
+		public RenderProcess(Viewer3D viewer3D)
+		{
+			//Thread.CurrentThread.Priority = ThreadPriority.Highest;
 
-        public ElapsedTime GetUserInputElapsedTime()
-        {
-            if (LastUserInputTime != 0)
-            {
-                UserInputElapsedTime.RealSeconds = (float)(Program.RealTime - LastUserInputTime);
-                UserInputElapsedTime.ClockSeconds = Viewer.Simulator.GetElapsedClockSeconds(UserInputElapsedTime.RealSeconds);
-            }
-            LastUserInputTime = Program.RealTime;
-            return UserInputElapsedTime;
-        }
-
-        Stopwatch sw = new Stopwatch();
-
-        public RenderProcess( Viewer3D viewer3D )
-        {
-            //Thread.CurrentThread.Priority = ThreadPriority.Highest;
-            
-            System.Windows.Forms.Control control = System.Windows.Forms.Control.FromHandle(this.Window.Handle);
-            Form = control.FindForm();
-            Viewer = viewer3D;
-            GraphicsDeviceManager = new GraphicsDeviceManager(this);
-            Viewer.Configure(this);
-			Viewer.RenderProfiler = new Profiler("Render");
-			// The UpdaterProcess, started after us, will replace this.
-			Viewer.UpdaterProfiler = new Profiler("Updater");
+			System.Windows.Forms.Control control = System.Windows.Forms.Control.FromHandle(this.Window.Handle);
+			Form = control.FindForm();
+			Viewer = viewer3D;
+			GraphicsDeviceManager = new GraphicsDeviceManager(this);
+			Viewer.Configure(this);
 		}
 
-        /// <summary>
-        /// Allows the game to perform any initialization it needs after the graphics device has started
-        /// </summary>
-        protected override void Initialize()
-        {
-            Materials.Initialize(this);
-            Viewer.Initialize(this);
-            Viewer.LoadPrep();  // Does initial load before 3D window is displayed
-            Viewer.Load(this);  // after this Load is done in a background thread.
-            Viewer.LoaderProcess.Run();
-            CurrentFrame = new RenderFrame( this );
-            if (Viewer.UpdaterProcess != null)
-            {   // if its a multiprocessor machine, set up background frame updater
-                NextFrame = new RenderFrame( this );
-                Viewer.UpdaterProcess.Run();
-            }
-            base.Initialize();
-            Viewer.Simulator.Paused = false;
-        }
-
-        /// <summary>
-        /// Called regularly.   Used to update the simulator class when
-        /// the window is minimized.
-        /// </summary>
-        protected override void Update(GameTime gameTime)
-        {
-            double totalRealSeconds = gameTime.TotalRealTime.TotalSeconds;
-
-            if ( Form.WindowState == System.Windows.Forms.FormWindowState.Minimized
-                && totalRealSeconds - LastFrameTime > 0.1 ) 
-            {  // keep the everything running at a slower pace while the window is minimized
-                FrameUpdate(gameTime);
-            }
-
-            if (IsMouseVisible != base.IsMouseVisible)
-                base.IsMouseVisible = IsMouseVisible;
-
-            if (ToggleFullScreenRequested)
+		/// <summary>
+		/// Allows the game to perform any initialization it needs after the graphics device has started
+		/// </summary>
+		[ThreadName("Render")]
+		protected override void Initialize()
+		{
+            try
             {
-                GraphicsDeviceManager.ToggleFullScreen();
-                ToggleFullScreenRequested = false;
+                Thread.CurrentThread.Name = "Render Process";
             }
+            catch { }
 
-            if (Stopped)
-            {
-                Terminate();
-                this.Exit();
-            }
+			Materials.Initialize(this);
+			Viewer.Initialize(this);
 
-            base.Update(gameTime);
-        }
+			ShadowMapCount = Viewer.Settings.ShadowMapCount;
+			if ((ShadowMapCount > 1) && (Viewer.Settings.ShaderModel < 3))
+				ShadowMapCount = 1;
+			else if (ShadowMapCount < 0)
+				ShadowMapCount = 0;
+			else if (ShadowMapCount > ShadowMapCountMaximum)
+				ShadowMapCount = ShadowMapCountMaximum;
+			ShadowMapDistance = new int[ShadowMapCount];
+			ShadowMapDiameter = new int[ShadowMapCount];
+			ShadowMapLimit = new float[ShadowMapCount];
 
-        /// <summary>
-        /// This is called once per frame when the game should draw itself.
-        /// In a multiprocessor environement, it starts the background UpdateProcessor
-        /// task preparing the next frame, while it renders this frame.
-        /// In a single processor environment, it does the update/draw in
-        /// sequence using this thread alone.
-        /// </summary>
-		int ProfileFrames = 1000;
-        protected override void Draw(GameTime gameTime)
-        {
-			if (Viewer.SettingsBool[(int)BoolSettings.Profiling])
-				if (--ProfileFrames == 0)
-					Viewer.Stop();
+			ShadowPrimitiveCount = new int[ShadowMapCount];
+			ShadowPrimitivePerFrame = new int[ShadowMapCount];
 
-            if (gameTime.ElapsedRealTime.TotalSeconds > 0.001)
-            {  // a zero elapsed time indicates the window needs to be redrawn with the same content
-                // ie after restoring from minimized, or uncovering a window
-                FrameUpdate(gameTime);
-            }
+			InitializeShadowMapLocations(Viewer);
 
-			Viewer.RenderProfiler.Start();
+			Viewer.LoadPrep();  // Does initial load before 3D window is displayed
+			Viewer.Load(this);  // after this Load is done in a background thread.
+			Viewer.LoaderProcess.Run();
+			Viewer.SoundProcess.Run();
+			CurrentFrame = new RenderFrame(this);
+			NextFrame = new RenderFrame(this);
+			Viewer.UpdaterProcess.Run();
+			base.Initialize();
+			Viewer.Simulator.Paused = false;
+		}
 
-			Viewer.DisplaySize.X = GraphicsDevice.Viewport.Width;
-			Viewer.DisplaySize.Y = GraphicsDevice.Viewport.Height;
+		public static void InitializeShadowMapLocations(Viewer3D viewer)
+		{
+			var ratio = (float)viewer.DisplaySize.X / viewer.DisplaySize.Y;
+			var fov = MathHelper.ToRadians(45.0f);
+			var n = (float)0.5;
+			var f = (float)viewer.Settings.ShadowMapDistance;
+
+			var m = (float)ShadowMapCount;
+			var LastC = n;
+			for (var shadowMapIndex = 0; shadowMapIndex < ShadowMapCount; shadowMapIndex++)
+			{
+				//     Clog  = split distance i using logarithmic splitting
+				//         i
+				// Cuniform  = split distance i using uniform splitting
+				//         i
+				//         n = near view plane
+				//         f = far view plane
+				//         m = number of splits
+				//
+				//                   i/m
+				//     Clog  = n(f/n)
+				//         i
+				// Cuniform  = n+(f-n)i/m
+				//         i
+
+				// Calculate the two Cs and average them to get a good balance.
+				var i = (float)(shadowMapIndex + 1);
+				var Clog = n * (float)Math.Pow(f / n, i / m);
+				var Cuniform = n + (f - n) * i / m;
+				var C = (Clog + Cuniform) / 2;
+
+				// This shadow map goes from LastC to C; calculate the correct center and diameter for the sphere from the view frustum.
+				var center = (LastC + C) / 2;
+				var height = (float)Math.Sin(fov / 2) * C;
+				var diameter = 2 * (float)Math.Sqrt(height * height + (height * ratio) * (height * ratio) + (C - center) * (C - center));
+
+				ShadowMapDistance[shadowMapIndex] = (int)center;
+				ShadowMapDiameter[shadowMapIndex] = (int)diameter;
+				ShadowMapLimit[shadowMapIndex] = C;
+				LastC = C;
+			}
+		}
+
+		/// <summary>
+		/// Called regularly.   Used to update the simulator class when
+		/// the window is minimized.
+		/// </summary>
+		[ThreadName("Render")]
+		protected override void Update(GameTime gameTime)
+		{
+			double totalRealSeconds = gameTime.TotalRealTime.TotalSeconds;
+			// Keep the everything running at a slower pace while the window is minimized.
+			if (Form.WindowState == System.Windows.Forms.FormWindowState.Minimized && totalRealSeconds - LastUpdateTime > 0.1)
+			{
+				FrameUpdate(totalRealSeconds);
+			}
+			LastUpdateTime = totalRealSeconds;
+
+			if (IsMouseVisible != base.IsMouseVisible)
+				base.IsMouseVisible = IsMouseVisible;
+
+			if (ToggleFullScreenRequested)
+			{
+				GraphicsDeviceManager.ToggleFullScreen();
+				ToggleFullScreenRequested = false;
+			}
+
+			if (Stopped)
+			{
+				Terminate();
+				this.Exit();
+			}
+
+			base.Update(gameTime);
+		}
+
+		/// <summary>
+		/// This is called once per frame when the game should draw itself.
+		/// In a multiprocessor environement, it starts the background UpdateProcessor
+		/// task preparing the next frame, while it renders this frame.
+		/// In a single processor environment, it does the update/draw in
+		/// sequence using this thread alone.
+		/// </summary>
+		int ProfileFrames = 0;
+		[ThreadName("Render")]
+		protected override void Draw(GameTime gameTime)
+		{
+            if (Viewer.Settings.Profiling)
+                if (++ProfileFrames > Viewer.Settings.ProfilingFrameCount)
+                    Viewer.Stop();
+
+			if (gameTime.ElapsedRealTime.TotalSeconds > 0.001)
+			{  // a zero elapsed time indicates the window needs to be redrawn with the same content
+				// ie after restoring from minimized, or uncovering a window
+				FrameUpdate(gameTime.TotalRealTime.TotalSeconds);
+			}
+
+			Profiler.Start();
+
+			if ((Viewer.DisplaySize.X != GraphicsDevice.Viewport.Width) || (Viewer.DisplaySize.Y != GraphicsDevice.Viewport.Height))
+			{
+				Viewer.DisplaySize.X = GraphicsDevice.Viewport.Width;
+				Viewer.DisplaySize.Y = GraphicsDevice.Viewport.Height;
+				Viewer.WindowManager.ScreenChanged();
+			}
 
 			/* When using SynchronizeWithVerticalRetrace = true, then this isn't required
 			// if the loader is running slow, limit render's frame rates to give loader some GPU time
@@ -198,154 +244,100 @@ namespace ORTS
 			}
 			 */
 
+#if !CRASH_ON_ERRORS
 			try
 			{
+#endif
 				CurrentFrame.Draw(GraphicsDevice);
-				Viewer.WindowManager.Draw(GraphicsDevice);
 
 				for (var i = 0; i < (int)RenderPrimitiveSequence.Sentinel; i++)
 				{
 					PrimitivePerFrame[i] = PrimitiveCount[i];
 					PrimitiveCount[i] = 0;
 				}
-				RenderStateChangesPerFrame = RenderStateChangesCount;
-				RenderStateChangesCount = 0;
-				ImageChangesPerFrame = ImageChangesCount;
-				ImageChangesCount = 0;
+				for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
+				{
+					ShadowPrimitivePerFrame[shadowMapIndex] = ShadowPrimitiveCount[shadowMapIndex];
+					ShadowPrimitiveCount[shadowMapIndex] = 0;
+				}
 
 				base.Draw(gameTime);
+#if !CRASH_ON_ERRORS
 			}
 			catch (Exception error)
 			{
 				Viewer.ProcessReportError(error);
 			}
+#endif
 
-			Viewer.RenderProfiler.Stop();
-        }
+			Profiler.Stop();
+		}
 
-        private void FrameUpdate(GameTime gameTime)
-        {
-            double actualRealTime = gameTime.TotalRealTime.TotalSeconds;
+		private void FrameUpdate(double totalRealSeconds)
+		{
+			// Wait for updater to finish.
+			Viewer.UpdaterProcess.WaitTillFinished();
 
-            if (Viewer.UpdaterProcess != null)
-            {   // multi processor machine
-                // Wait for updater to finish, and flag if its slow
-                if (!Viewer.UpdaterProcess.Finished)
-                    UpdateSlow = true;
-                else
-                    UpdateSlow = false;
+			// Time to read the keyboard - must be done in XNA Game thread.
+			UserInput.Update(Viewer);
 
-                Viewer.UpdaterProcess.WaitTillFinished();
+			// Swap frames and start the next update (non-threaded updater does the whole update).
+			SwapFrames(ref CurrentFrame, ref NextFrame);
+			Viewer.UpdaterProcess.StartUpdate(NextFrame, totalRealSeconds);
+		}
 
-                // Time to read the keyboard - must be done in XNA Game thread
-                UserInput.Update(Viewer);
+		private void SwapFrames(ref RenderFrame frame1, ref RenderFrame frame2)
+		{
+			RenderFrame temp = frame1;
+			frame1 = frame2;
+			frame2 = temp;
+		}
 
-                // launch updater to prepare the next frame
-                SwapFrames(ref CurrentFrame, ref NextFrame);
-                Viewer.UpdaterProcess.StartUpdate(NextFrame, actualRealTime);
-            }
-            else
-            {   // single processor machine
-                UserInput.Update(Viewer);
+		/// <summary>
+		/// This signal is caught in the Update
+		/// </summary>
+		public void Stop()
+		{
+			Stopped = true;
+		}
 
-				Viewer.UpdaterProfiler.Start();
-                Program.RealTime = actualRealTime;
-                ElapsedTime frameElapsedTime = GetFrameElapsedTime();
+		/// <summary>
+		/// Shut down other processes and unload content
+		/// </summary>
+		private void Terminate()
+		{
+            if (Viewer.Settings.Profiling)
+                Viewer.Settings.ProfilingFrameCount = ProfileFrames;
+			Viewer.UpdaterProcess.Stop();
+			Viewer.LoaderProcess.Stop();
+			Viewer.SoundProcess.Stop();
+			Viewer.Unload(this);
+		}
 
-				try
-				{
-					ComputeFPS(frameElapsedTime.RealSeconds);
+		/// <summary>
+		/// User closed the window without pressing the exit key
+		/// </summary>
+		[ThreadName("Render")]
+		protected override void OnExiting(object sender, EventArgs args)
+		{
+			Terminate();
+			base.OnExiting(sender, args);
+		}
 
-					// Update the simulator
-					Viewer.Simulator.Update(frameElapsedTime.ClockSeconds);
+		float lastElapsedTime = -1;
 
-					Viewer.HandleUserInput(GetUserInputElapsedTime());
-					UserInput.Handled();
-
-					Viewer.HandleMouseMovement();
-
-					// Prepare the frame for drawing
-					CurrentFrame.Clear();
-					Viewer.PrepareFrame(CurrentFrame, frameElapsedTime);
-					CurrentFrame.Sort();
-				}
-				catch (Exception error)
-				{
-					Viewer.ProcessReportError(error);
-				}
-
-                // Update the loader - it should only copy volatile data and return
-                if (Program.RealTime - Viewer.LoaderProcess.LastUpdate > LoaderProcess.UpdatePeriod)
-                    Viewer.LoaderProcess.StartUpdate();
-
-				Viewer.UpdaterProfiler.Stop();
-			}
-
-        }
-
-        private void SwapFrames(ref RenderFrame frame1, ref RenderFrame frame2)
-        {
-            RenderFrame temp = frame1;
-            frame1 = frame2;
-            frame2 = temp;
-        }
-
-        /// <summary>
-        /// This signal is caught in the Update
-        /// </summary>
-        public void Stop()
-        {
-            Stopped = true;
-        }
-
-        /// <summary>
-        /// Shut down other processes and unload content
-        /// </summary>
-        private void Terminate()
-        {
-            if (Viewer.UpdaterProcess != null) Viewer.UpdaterProcess.Stop();
-            Viewer.LoaderProcess.Stop();
-            Viewer.Unload(this);
-        }
-
-        /// <summary>
-        /// User closed the window without pressing the exit key
-        /// </summary>
-        protected override void OnExiting(object sender, EventArgs args)
-        {
-            Terminate();
-            base.OnExiting(sender, args);
-        }
-
-		float lastElapsedTime = 0;
-
+		[CallOnThread("Render")]
+		[CallOnThread("Updater")]
 		public void ComputeFPS(float elapsedRealTime)
 		{
-			if (elapsedRealTime > 0.00001)
-			{
-				// Smoothing filter length
-				float rate = 3.0f / elapsedRealTime;
+			if (elapsedRealTime < 0.001)
+				return;
 
-				// Calculate current frame rate, time and jitter.
-				FrameRate = 1.0f / elapsedRealTime;
-				FrameTime = elapsedRealTime;
-				FrameJitter = Math.Abs(lastElapsedTime - elapsedRealTime);
-				lastElapsedTime = elapsedRealTime;
-
-				// Update smoothed frame rate, time and jitter.
-				if (SmoothedFrameRate < 0)
-					SmoothedFrameRate = FrameRate;
-				else
-					SmoothedFrameRate = (SmoothedFrameRate * (rate - 1.0f) + FrameRate) / rate;
-				if (SmoothedFrameTime < 0)
-					SmoothedFrameTime = FrameTime;
-				else
-					SmoothedFrameTime = (SmoothedFrameTime * (rate - 1.0f) + FrameTime) / rate;
-				if (SmoothedFrameJitter < 0)
-					SmoothedFrameJitter = FrameJitter;
-				else
-					SmoothedFrameJitter = (SmoothedFrameJitter * (rate - 1.0f) + FrameJitter) / rate;
-			}
+			FrameRate.Update(elapsedRealTime, 1f / elapsedRealTime);
+			FrameTime.Update(elapsedRealTime, elapsedRealTime);
+			if (lastElapsedTime != -1)
+				FrameJitter.Update(elapsedRealTime, Math.Abs(lastElapsedTime - elapsedRealTime));
+			lastElapsedTime = elapsedRealTime;
 		}
-    }// RenderProcess
+	}// RenderProcess
 }

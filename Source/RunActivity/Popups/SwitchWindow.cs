@@ -24,13 +24,20 @@ namespace ORTS.Popups
 		Image SwitchForwards;
 		Image SwitchBackwards;
 
+        static Texture2D SwitchStates;
+
 		public SwitchWindow(WindowManager owner)
 			: base(owner, Window.DecorationSize.X + 2 * SwitchImageSize, Window.DecorationSize.Y + 2 * SwitchImageSize, "Switch")
 		{
-			AlignCenterV();
-			AlignLeft();
-			SwitchForwards.Texture = SwitchBackwards.Texture = owner.Viewer.RenderProcess.Content.Load<Texture2D>("SwitchStates");
-		}
+            Align(AlignAt.Start, AlignAt.Middle);
+        }
+
+        protected internal override void Initialize()
+        {
+            base.Initialize();
+            if (SwitchStates == null)
+                SwitchStates = Owner.Viewer.RenderProcess.Content.Load<Texture2D>("SwitchStates");
+        }
 
 		protected override ControlLayout Layout(ControlLayout layout)
 		{
@@ -38,7 +45,8 @@ namespace ORTS.Popups
 			{
 				vbox.Add(SwitchForwards = new Image(vbox.RemainingWidth / 4, 0, vbox.RemainingWidth / 2, vbox.RemainingWidth / 2));
 				vbox.Add(SwitchBackwards = new Image(vbox.RemainingWidth / 4, 0, vbox.RemainingWidth / 2, vbox.RemainingWidth / 2));
-				SwitchForwards.Click += new Action<Control, Point>(SwitchForwards_Click);
+                SwitchForwards.Texture = SwitchBackwards.Texture = SwitchStates;
+                SwitchForwards.Click += new Action<Control, Point>(SwitchForwards_Click);
 				SwitchBackwards.Click += new Action<Control, Point>(SwitchBackwards_Click);
 			}
 			return vbox;
@@ -57,15 +65,15 @@ namespace ORTS.Popups
 		public void UpdateText(ElapsedTime elapsedTime, Train train)
 		{
 			UpdateSwitch(SwitchForwards, train, true);
-			UpdateSwitch(SwitchBackwards, train, false);
+            UpdateSwitch(SwitchBackwards, train, false);
 		}
 
 		void UpdateSwitch(Image image, Train train, bool front)
 		{
 			image.Source = new Rectangle(0, 0, SwitchImageSize, SwitchImageSize);
 
-			var traveller = new TDBTraveller(front ? train.FrontTDBTraveller : train.RearTDBTraveller);
-			if (!front)
+            var traveller = new TDBTraveller(front ^ train.LeadLocomotive.Flipped ? train.FrontTDBTraveller : train.RearTDBTraveller);
+            if (!(front ^ train.LeadLocomotive.Flipped))
 				traveller.ReverseDirection();
 
 			TrackNode SwitchPreviousNode = traveller.TN;

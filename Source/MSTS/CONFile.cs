@@ -9,33 +9,29 @@ using System.IO;
 
 namespace MSTS
 {
-	/// <summary>
-	/// Work with consist files
-	/// </summary>
-	public class CONFile
-	{
-        public string FileName;   // no extension, no path
-        public string Description;  // form the Name field or label field of the consist file
-        public Train_Config Train;
+    /// <summary>
+    /// Work with consist files
+    /// </summary>
+    public class CONFile
+    {
+        public string FileName { get; set; }   // no extension, no path
+        public string Description { get; set; } // form the Name field or label field of the consist file
+        public Train_Config Train { get; set; }
+
         public CONFile(string filenamewithpath)
         {
             FileName = Path.GetFileNameWithoutExtension(filenamewithpath);
             Description = FileName;
-            STFReader f = new STFReader(filenamewithpath);
-            try
-            {
-                while (!f.EndOfBlock()) // EOF
-                {
-                    string token = f.ReadToken();
-                    if (0 == String.Compare(token, "Train", true)) Train = new Train_Config(f);
-                    else f.SkipBlock();
-                }
-            }
-			finally
-			{
-				f.Close();
-			}
-       }
+            using (STFReader stf = new STFReader(filenamewithpath, false))
+                stf.ParseFile(new STFReader.TokenProcessor[] {
+                    new STFReader.TokenProcessor("train", ()=>{ Train = new Train_Config(stf); }),
+                });
+        }
+
+        public override string ToString()
+        {
+            return this.Train.TrainCfg.Name;
+        }
     }
 }
 

@@ -49,27 +49,27 @@ namespace ORTS
             SharedShape = SharedShapeManager.Get(Viewer, path);
         }
 
-        public virtual void PrepareFrame(RenderFrame frame, float elapsedSeconds)
+		public virtual void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
 			SharedShape.PrepareFrame(frame, Location, Flags);
         }
-    }
+    } // class StaticShape
 
 	public class StaticTrackShape : StaticShape
 	{
-        public StaticTrackShape(Viewer3D viewer, string path, WorldPosition position)
+		public StaticTrackShape(Viewer3D viewer, string path, WorldPosition position)
 			: base(viewer, path, position, ShapeFlags.AutoZBias)
-        {
-        }
+		{
+		}
 	}
 
-    /// <summary>
+	/// <summary>
     /// Has a heirarchy of objects that can be moved by adjusting the XNAMatrices
     /// at each node.
     /// </summary>
     public class PoseableShape : StaticShape
     {
-        public Matrix[] XNAMatrices = null;  // the positions of the subobjects
+        public Matrix[] XNAMatrices = new Matrix[0];  // the positions of the subobjects
 
         /// <summary>
         /// Construct and initialize the class
@@ -77,12 +77,12 @@ namespace ORTS
 		public PoseableShape(Viewer3D viewer, string path, WorldPosition initialPosition, ShapeFlags flags)
 			: base(viewer, path, initialPosition, flags)
         {
-            XNAMatrices = new Matrix[SharedShape.Matrices.Length];
-            for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
+			XNAMatrices = new Matrix[SharedShape.Matrices.Length];
+			for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                 XNAMatrices[iMatrix] = SharedShape.Matrices[iMatrix];
         }
 
-        public override void PrepareFrame(RenderFrame frame, float elapsedSeconds)
+		public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
 			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
@@ -90,10 +90,6 @@ namespace ORTS
         /// <summary>
         /// Adjust the pose of the specified node to the frame position specifed by key.
         /// </summary>
-        /// <param name="initialPose"></param>
-        /// <param name="anim_node"></param>
-        /// <param name="key"></param>
-        /// <returns></returns>
         public void AnimateMatrix( int iMatrix, float key)
         {
             if (SharedShape.Animations == null )
@@ -151,7 +147,7 @@ namespace ORTS
                     Vector3 v = Vector3.Lerp(XNA1, XNA2, amount);
                     xnaPose.Translation = v;
                 }
-                if (position1.GetType() == typeof(tcb_key)) // a tcb_key sets an absolute rotation, vs rotating the existing matrix
+                else if (position1.GetType() == typeof(tcb_key)) // a tcb_key sets an absolute rotation, vs rotating the existing matrix
                 {
                     tcb_key MSTS1 = (tcb_key)position1;
                     tcb_key MSTS2 = (tcb_key)position2;
@@ -188,19 +184,19 @@ namespace ORTS
 		{
 		}
 
-		public override void PrepareFrame(RenderFrame frame, float elapsedSeconds)
+		public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
             // if the shape has animations
             if (SharedShape.Animations != null && SharedShape.Animations[0].FrameCount > 1)
             {
                 // Compute the animation key based on framerate etc
                 // ie, with 8 frames of animation, the key will advance from 0 to 8 at the specified speed.
-                AnimationKey += ((float)SharedShape.Animations[0].FrameRate / 10f) * elapsedSeconds;
+                AnimationKey += ((float)SharedShape.Animations[0].FrameRate / 10f) * elapsedTime.ClockSeconds;
                 while (AnimationKey >= SharedShape.Animations[0].FrameCount) AnimationKey -= SharedShape.Animations[0].FrameCount;
                 while (AnimationKey < -0.00001) AnimationKey += SharedShape.Animations[0].FrameCount;
 
                 // Update the pose for each matrix
-                for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
+				for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                     AnimateMatrix(iMatrix, AnimationKey);
             }
 			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
@@ -222,27 +218,166 @@ namespace ORTS
 			MainRoute = TS.MainRoute;
 		}
 
-        public override void PrepareFrame(RenderFrame frame, float elapsedClockSeconds )
+		public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
             // ie, with 2 frames of animation, the key will advance from 0 to 1
             if (TrJunctionNode.SelectedRoute == MainRoute)
             {
-                if (AnimationKey > 0.001) AnimationKey -= 0.002f * elapsedClockSeconds*1000.0f;
+				if (AnimationKey > 0.001) AnimationKey -= 0.002f * elapsedTime.ClockSeconds * 1000.0f;
                 if (AnimationKey < 0.001) AnimationKey = 0;
             }
             else
             {
-                if (AnimationKey < 0.999) AnimationKey += 0.002f * elapsedClockSeconds*1000.0f;
+				if (AnimationKey < 0.999) AnimationKey += 0.002f * elapsedTime.ClockSeconds * 1000.0f;
                 if (AnimationKey > 0.999) AnimationKey = 1.0f;
             }
 
             // Update the pose
-            for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
+			for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                 AnimateMatrix(iMatrix, AnimationKey);
 
 			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
     } // class SwitchTrackShape
+
+	public class LevelCrossingShape : PoseableShape
+	{
+		public LevelCrossingObj crossingObj;  // has data on current aligment for the switch
+
+		List<LevelCrossingObject> crossingObjects; //all objects with the same shape
+		protected float AnimationKey = 0.0f;  // tracks position of points as they move left and right
+		private int animatedDir; //if the animation speed is negative, use it to indicate where the gate should move
+		private bool visible = true;
+		public SoundSource Sound;
+
+		public LevelCrossingShape(Viewer3D viewer, string path, WorldPosition position, LevelCrossingObj trj, LevelCrossingObject[] levelObjects)
+			: base(viewer, path, position, ShapeFlags.AutoZBias)
+		{
+			animatedDir = 0;
+			crossingObjects = new List<LevelCrossingObject>(); //sister gropu of crossing if there are parallel lines
+			crossingObj = trj; // the LevelCrossingObj, which handles details of the crossing data
+			crossingObj.inrange = true;//in viewing range
+			int i, j, max, id, found;
+			max = levelObjects.GetLength(0); //how many crossings are in the route
+			found = 0; // trItem is found or not
+			visible = trj.visible;
+			Sound = new SoundSource(viewer, position.WorldLocation, Program.Simulator.RoutePath + @"\\sound\\crossing.sms");
+			List<SoundSource> ls = new List<SoundSource>();
+			ls.Add(Sound);
+			viewer.SoundProcess.AddSoundSource(this, ls);
+			i = 0;
+			while (true) 
+			{
+				id = crossingObj.getTrItemID(i, 0);
+				if (id < 0) break;
+				found = 0;
+				//loop through all crossings, to see if they are related to this shape 
+				// maybe more than one, so they will form a sister group and know each other
+				for (j = 0; j < max; j++)
+				{
+                    if (levelObjects[j] != null && id == levelObjects[j].trItem)
+					{
+						found++;
+						levelObjects[j].levelCrossingObj = crossingObj;
+						if (crossingObjects.Contains(levelObjects[j])) continue;
+						crossingObjects.Add(levelObjects[j]);
+						levelObjects[j].endDist = this.crossingObj.levelCrParameters.crParameter2;
+						levelObjects[j].groups = crossingObjects;
+						//notify the spawner who interacts with 
+						if (levelObjects[j].carSpawner != null)
+							levelObjects[j].carSpawner.CheckGatesAgain(levelObjects[j]);
+					}
+				}
+				i++;
+			}
+			
+		}
+
+		//do animation, the speed is constant no matter what the frame rate is
+		public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
+		{
+			if (visible != true) return;
+			if (crossingObj.movingDirection == 0)
+			{
+				if (AnimationKey > 0.999) Sound.HandleEvent(4);
+				if (AnimationKey > 0.001) AnimationKey -= crossingObj.animSpeed * elapsedTime.ClockSeconds * 1000.0f;
+				if (AnimationKey < 0.001) AnimationKey = 0;
+			}
+			else
+			{
+
+				if (AnimationKey < 0.001) Sound.HandleEvent(3);
+				//Sound.Update();
+				if (crossingObj.animSpeed < 0) //loop animation
+				{
+					if (AnimationKey > 0.999f) animatedDir = 1;
+					if (AnimationKey < 0.001f) animatedDir = 0;
+					if (animatedDir == 0 && AnimationKey > 0.0f) AnimationKey -= crossingObj.animSpeed * elapsedTime.ClockSeconds * 1000.0f;
+					else if (animatedDir == 0 && AnimationKey > 0.999f)
+					{
+						animatedDir = 1;
+						AnimationKey = 0.999f;
+					}
+					else if (animatedDir == 1 && AnimationKey < 1.0f)
+					{
+						AnimationKey += crossingObj.animSpeed * elapsedTime.ClockSeconds * 1000.0f;
+					}
+					else
+					{
+						animatedDir = 0;
+						AnimationKey = 0.001f;
+					}
+				}
+				else
+				{
+					if (AnimationKey < 0.999) AnimationKey += crossingObj.animSpeed * elapsedTime.ClockSeconds * 1000.0f; //0.0005
+					if (AnimationKey > 0.999) AnimationKey = 1.0f;
+				}
+			}
+
+
+			// Update the pose
+			for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
+				AnimateMatrix(iMatrix, AnimationKey);
+
+			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
+		}
+	} // class LevelCrossingShape
+
+	public class RoadCarShape : PoseableShape
+	{
+		protected float AnimationKey = 0.0f;  // tracks position of points as they move left and right
+		int movingDirection = 0;
+		public WorldPosition movablePosition;//move to new location needs this
+
+		public RoadCarShape(Viewer3D viewer, string path, WorldPosition position)
+			: base(viewer, path, position, ShapeFlags.AutoZBias)
+		{
+			movablePosition = new WorldPosition(position);
+		}
+
+		//do animation, the speed is constant no matter what the frame rate is
+		public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
+		{
+			if (movingDirection == 0)
+			{
+				if (AnimationKey > 0.001) AnimationKey -= 0.02f * elapsedTime.ClockSeconds * 1000.0f;
+				if (AnimationKey < 0.001) AnimationKey = 0;
+			}
+			else
+			{
+				if (AnimationKey < 0.999) AnimationKey += 0.02f * elapsedTime.ClockSeconds * 1000.0f; //0.0005
+				if (AnimationKey > 0.999) AnimationKey = 1.0f;
+			}
+
+
+			// Update the pose
+			for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
+				AnimateMatrix(iMatrix, AnimationKey);
+
+			SharedShape.PrepareFrame(frame, movablePosition, XNAMatrices, Flags);
+		}
+	} // class LevelCrossingShape
 
     /// <summary>
     /// Conserves memory by sharing the basic shape data with multiple instances in the scene.
@@ -262,7 +397,7 @@ namespace ORTS
 				}
 				catch (Exception error)
 				{
-					Trace.WriteLine(path);
+					Trace.TraceInformation(path);
 					Trace.WriteLine(error);
 					if (EmptyShape == null)
 						EmptyShape = new SharedShape(viewer);
@@ -333,11 +468,11 @@ namespace ORTS
         public string textureFolder;  // Temporary
 
         // This data is common to all instances of the shape
-        public string[] MatrixNames;
-        public Matrix[] Matrices;               // the original natural pose for this shape - shared by all instances
+        public List<string> MatrixNames = new List<string>();
+        public Matrix[] Matrices = new Matrix[0];  // the original natural pose for this shape - shared by all instances
         public animations Animations = null;
 
-        private LodControl[] LodControls = null;
+        public LodControl[] LodControls = null;
         
         /// <summary>
         /// Create an empty shape used as a sub when the shape won't load
@@ -347,8 +482,6 @@ namespace ORTS
         {
             Viewer = viewer;
             FilePath = "Empty";
-            MatrixNames = new string[0];
-            Matrices = new Matrix[0];
             Animations = null;
             LodControls = new LodControl[0];
         }
@@ -399,17 +532,16 @@ namespace ORTS
                 string SDfilePath = FilePath + "d";
                 SDFile SDFile = new SDFile(SDfilePath);
                 altTex = SDFile.shape.ESD_Alternative_Texture;
-                Helpers helper = new Helpers();
-                textureFolder = helper.GetTextureFolder(Viewer, altTex);
+				textureFolder = Helpers.GetTextureFolder(Viewer, altTex);
                 if (altTex == 257) isNightEnabled = 1;
             }
 
             int matrixCount = sFile.shape.matrices.Count;
-            MatrixNames = new string[matrixCount];
+			MatrixNames.Capacity = matrixCount;
             Matrices = new Matrix[matrixCount];
             for (int i = 0; i < matrixCount; ++i)
             {
-                MatrixNames[i] = sFile.shape.matrices[i].Name.ToUpper();
+                MatrixNames.Add(sFile.shape.matrices[i].Name.ToUpper());
                 Matrices[i] = XNAMatrixFromMSTS(sFile.shape.matrices[i]);
             }
             Animations = sFile.shape.animations;
@@ -642,8 +774,8 @@ namespace ORTS
 
                     shapePrimitive.IndexCount = indexCount;
 
-                    shapePrimitive.IndexBuffer = new IndexBuffer(sharedShape.Viewer.GraphicsDevice, sizeof(short) * indexCount, BufferUsage.WriteOnly, IndexElementSize.SixteenBits);
-                    shapePrimitive.IndexBuffer.SetData<short>(indexData);
+                    shapePrimitive.IndexBuffer = new IndexBuffer(sharedShape.Viewer.GraphicsDevice, typeof(short), indexCount, BufferUsage.WriteOnly);
+                    shapePrimitive.IndexBuffer.SetData(indexData);
 
                     shapePrimitive.VertexBufferSet = vertexBufferSet;
 
@@ -781,39 +913,35 @@ namespace ORTS
         public void PrepareFrame(RenderFrame frame, WorldPosition location, Matrix[] animatedXNAMatrices, ShapeFlags flags)
         {
             // Locate relative to the camera
-            int dTileX = location.TileX - Viewer.Camera.TileX;
-            int dTileZ = location.TileZ - Viewer.Camera.TileZ;
-			Vector3 mstsLocation = location.Location + new Vector3(dTileX * 2048, 0, dTileZ * 2048);
+			var dTileX = location.TileX - Viewer.Camera.TileX;
+			var dTileZ = location.TileZ - Viewer.Camera.TileZ;
+			var mstsLocation = location.Location;
+			mstsLocation.X += dTileX * 2048;
+			mstsLocation.Z += dTileZ * 2048;
+			var xnaDTileTranslation = location.XNAMatrix;
+			xnaDTileTranslation.M41 += dTileX * 2048;
+			xnaDTileTranslation.M43 -= dTileZ * 2048;
 
 			foreach (var lodControl in LodControls)
 			{
 				// Start with the furthest away distance, then look for a nearer one in range of the camera.
-				var chosenDistanceLevel = lodControl.DistanceLevels[lodControl.DistanceLevels.Length - 1];
-				foreach (var distanceLevel in lodControl.DistanceLevels)
-				{
-					if (Viewer.Camera.InRange(mstsLocation, distanceLevel.ViewSphereRadius + distanceLevel.ViewingDistance))
-					{
-						chosenDistanceLevel = distanceLevel;
-						break;
-					}
-				}
-
-				Matrix xnaDTileTranslation = Matrix.CreateTranslation(dTileX * 2048, 0, -dTileZ * 2048);  // object is offset from camera this many tiles
-				xnaDTileTranslation = location.XNAMatrix * xnaDTileTranslation;
-
+				var chosenDistanceLevelIndex = lodControl.DistanceLevels.Length - 1;
+				while ((chosenDistanceLevelIndex > 0) && Viewer.Camera.InRange(mstsLocation, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewSphereRadius, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewingDistance))
+					chosenDistanceLevelIndex--;
+				var chosenDistanceLevel = lodControl.DistanceLevels[chosenDistanceLevelIndex];
 				foreach (var subObject in chosenDistanceLevel.SubObjects)
 				{
 					foreach (var shapePrimitive in subObject.ShapePrimitives)
 					{
-						Matrix xnaMatrix = Matrix.Identity;
-						int iNode = shapePrimitive.iHierarchy;
+						var xnaMatrix = Matrix.Identity;
+						var iNode = shapePrimitive.iHierarchy;
 						while (iNode != -1)
 						{
 							if (shapePrimitive.Hierarchy[iNode] != -1) // MSTS ignores root matrix,  ('floating objects problem' )
-								xnaMatrix *= animatedXNAMatrices[iNode];         // TODO, can we reduce memory allocations during this matrix math
+								Matrix.Multiply(ref xnaMatrix, ref animatedXNAMatrices[iNode], out xnaMatrix);
 							iNode = shapePrimitive.Hierarchy[iNode];
 						}
-						xnaMatrix *= xnaDTileTranslation;
+						Matrix.Multiply(ref xnaMatrix, ref xnaDTileTranslation, out xnaMatrix);
 
 						// TODO make shadows depend on shape overrides
 
@@ -834,6 +962,10 @@ namespace ORTS
                 iNode = h[iNode];
             }
             return matrix;
+        }
+        public int GetParentMatrix(int iNode)
+        {
+            return LodControls[0].DistanceLevels[0].SubObjects[0].ShapePrimitives[0].Hierarchy[iNode];
         }
 
     }// class SharedShape

@@ -6,6 +6,8 @@
 /// Author: James Ross
 
 using System;
+using System.Diagnostics;
+using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -18,8 +20,8 @@ namespace ORTS.Popups
 		public Matrix XNAWorld;
 		protected WindowManager Owner;
 		bool visible = false;
-		Rectangle location = new Rectangle(0, 0, 100, 100);
-		string Caption;
+        Rectangle location;
+		readonly string Caption;
 		ControlLayout WindowLayout;
 		VertexBuffer WindowVertexBuffer;
 		IndexBuffer WindowIndexBuffer;
@@ -30,13 +32,32 @@ namespace ORTS.Popups
 			location = new Rectangle(0, 0, width, height);
 			Caption = caption;
 			Owner.Add(this);
-			VisibilityChanged();
-			LocationChanged();
-			SizeChanged();
 		}
 
-		protected virtual void VisibilityChanged()
+        protected internal virtual void Initialize()
+        {
+            VisibilityChanged();
+            LocationChanged();
+            SizeChanged();
+        }
+
+        protected internal virtual void Save(BinaryWriter outf)
+        {
+            outf.Write(visible);
+            outf.Write((float)location.X / (Owner.ScreenSize.X - location.Width));
+            outf.Write((float)location.Y / (Owner.ScreenSize.Y - location.Height));
+        }
+
+        protected internal virtual void Restore(BinaryReader inf)
+        {
+            visible = inf.ReadBoolean();
+            location.X = (int)(inf.ReadSingle() * (Owner.ScreenSize.X - location.Width));
+            location.Y = (int)(inf.ReadSingle() * (Owner.ScreenSize.Y - location.Height));
+        }
+
+        protected virtual void VisibilityChanged()
 		{
+            Owner.WriteWindowZOrder();
 		}
 
 		protected virtual void LocationChanged()
@@ -54,7 +75,7 @@ namespace ORTS.Popups
 		{
 		}
 
-		public bool Visible
+        public bool Visible
 		{
 			get
 			{
@@ -70,7 +91,23 @@ namespace ORTS.Popups
 			}
 		}
 
-		public Rectangle Location
+        public virtual bool Interactive
+        {
+            get
+            {
+                return true;
+            }
+        }
+
+        public virtual bool TopMost
+        {
+            get
+            {
+                return false;
+            }
+        }
+
+        public Rectangle Location
 		{
 			get
 			{
@@ -78,9 +115,13 @@ namespace ORTS.Popups
 			}
 		}
 
+        public virtual void TabAction()
+        {
+        }
+
 		public void MoveTo(int x, int y)
 		{
-			x = (int)MathHelper.Clamp(x, 0, Owner.ScreenSize.X - location.Width);
+            x = (int)MathHelper.Clamp(x, 0, Owner.ScreenSize.X - location.Width);
 			y = (int)MathHelper.Clamp(y, 0, Owner.ScreenSize.Y - location.Height);
 
 			if ((location.X != x) || (location.Y != y))
@@ -107,45 +148,25 @@ namespace ORTS.Popups
 			}
 		}
 
-		public void AlignTop()
+		public enum AlignAt
 		{
-			MoveTo(location.X, 0);
+			Start,
+			Middle,
+			End,
+		};
+
+		public void Align(AlignAt horizontal, AlignAt vertical)
+		{
+            MoveTo(horizontal == AlignAt.Start ? 0 : horizontal == AlignAt.Middle ? (Owner.ScreenSize.X - location.Width) / 2 : Owner.ScreenSize.X - location.Width,
+				vertical == AlignAt.Start ? 0 : vertical == AlignAt.Middle ? (Owner.ScreenSize.Y - location.Height) / 2 : Owner.ScreenSize.Y - location.Height);
 		}
 
-		public void AlignBottom()
+		protected internal void Layout()
 		{
-			MoveTo(location.X, Owner.ScreenSize.Y);
-		}
-
-		public void AlignLeft()
-		{
-			MoveTo(0, location.Y);
-		}
-
-		public void AlignRight()
-		{
-			MoveTo(Owner.ScreenSize.X, location.Y);
-		}
-
-		public void AlignCenterV()
-		{
-			MoveTo(location.X, (Owner.ScreenSize.Y - location.Height) / 2);
-		}
-
-		public void AlignCenterH()
-		{
-			MoveTo((Owner.ScreenSize.X - location.Width) / 2, location.Y);
-		}
-
-		public void AlignCenter()
-		{
-			MoveTo((Owner.ScreenSize.X - location.Width) / 2, (Owner.ScreenSize.Y - location.Height) / 2);
-		}
-
-		protected void Layout()
-		{
-			WindowLayout = new WindowControlLayout(this, location.Width, location.Height);
-			Layout(WindowLayout);
+			var windowLayout = new WindowControlLayout(this, location.Width, location.Height);
+            if (Owner.ScreenSize != Point.Zero)
+                Layout(windowLayout);
+            WindowLayout = windowLayout;
 		}
 
 		protected virtual ControlLayout Layout(ControlLayout layout)
@@ -164,37 +185,37 @@ namespace ORTS.Popups
 				// Edges/corners are 32px (1/4th image size).
 				var vertexData = new[] {
 					//  0  1  2  3
-					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 0 * location.Height + 00, 0), new Vector2(0.00f, 0.00f)),
-					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 0 * location.Height + 00, 0), new Vector2(0.25f, 0.00f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 0 * location.Height + 00, 0), new Vector2(0.75f, 0.00f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 0 * location.Height + 00, 0), new Vector2(1.00f, 0.00f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 0 * location.Height + 00, 0), new Vector2(0.00f / 2, 0.00f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 0 * location.Height + 00, 0), new Vector2(0.25f / 2, 0.00f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 0 * location.Height + 00, 0), new Vector2(0.75f / 2, 0.00f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 0 * location.Height + 00, 0), new Vector2(1.00f / 2, 0.00f)),
 					//  4  5  6  7
-					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 0 * location.Height + 32, 0), new Vector2(0.00f, 0.25f)),
-					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 0 * location.Height + 32, 0), new Vector2(0.25f, 0.25f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 0 * location.Height + 32, 0), new Vector2(0.75f, 0.25f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 0 * location.Height + 32, 0), new Vector2(1.00f, 0.25f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 0 * location.Height + 32, 0), new Vector2(0.00f / 2, 0.25f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 0 * location.Height + 32, 0), new Vector2(0.25f / 2, 0.25f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 0 * location.Height + 32, 0), new Vector2(0.75f / 2, 0.25f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 0 * location.Height + 32, 0), new Vector2(1.00f / 2, 0.25f)),
 					//  8  9 10 11
-					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 1 * location.Height - 32, 0), new Vector2(0.00f, 0.75f)),
-					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 1 * location.Height - 32, 0), new Vector2(0.25f, 0.75f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 1 * location.Height - 32, 0), new Vector2(0.75f, 0.75f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 1 * location.Height - 32, 0), new Vector2(1.00f, 0.75f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 1 * location.Height - 32, 0), new Vector2(0.00f / 2, 0.75f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 1 * location.Height - 32, 0), new Vector2(0.25f / 2, 0.75f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 1 * location.Height - 32, 0), new Vector2(0.75f / 2, 0.75f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 1 * location.Height - 32, 0), new Vector2(1.00f / 2, 0.75f)),
 					// 12 13 14 15
-					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 1 * location.Height - 00, 0), new Vector2(0.00f, 1.00f)),
-					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 1 * location.Height - 00, 0), new Vector2(0.25f, 1.00f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 1 * location.Height - 00, 0), new Vector2(0.75f, 1.00f)),
-					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 1 * location.Height - 00, 0), new Vector2(1.00f, 1.00f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 00, 1 * location.Height - 00, 0), new Vector2(0.00f / 2, 1.00f)),
+					new VertexPositionTexture(new Vector3(0 * location.Width + 32, 1 * location.Height - 00, 0), new Vector2(0.25f / 2, 1.00f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 32, 1 * location.Height - 00, 0), new Vector2(0.75f / 2, 1.00f)),
+					new VertexPositionTexture(new Vector3(1 * location.Width - 00, 1 * location.Height - 00, 0), new Vector2(1.00f / 2, 1.00f)),
 				};
 				WindowVertexBuffer = new VertexBuffer(graphicsDevice, typeof(VertexPositionTexture), vertexData.Length, BufferUsage.WriteOnly);
 				WindowVertexBuffer.SetData(vertexData);
 			}
 			if (WindowIndexBuffer == null)
 			{
-				var indexData = new int[] {
+				var indexData = new short[] {
 					0, 4, 1, 5, 2, 6, 3, 7,
 					11, 6, 10, 5, 9, 4, 8,
 					12, 9, 13, 10, 14, 11, 15,
 				};
-				WindowIndexBuffer = new IndexBuffer(graphicsDevice, typeof(int), indexData.Length, BufferUsage.WriteOnly);
+				WindowIndexBuffer = new IndexBuffer(graphicsDevice, typeof(short), indexData.Length, BufferUsage.WriteOnly);
 				WindowIndexBuffer.SetData(indexData);
 			}
 

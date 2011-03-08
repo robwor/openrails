@@ -40,25 +40,27 @@ namespace ORTS
         float MaxRPMChangeRate = 0;
         float PercentChangePerSec = .2f;
 
-        public MSTSDieselLocomotive(string wagFile, TrainCar previousCar)
-            : base(wagFile, previousCar)
+		public MSTSDieselLocomotive(Simulator simulator, string wagFile, TrainCar previousCar)
+            : base(simulator, wagFile, previousCar)
         {
         }
 
         /// <summary>
         /// Parse the wag file parameters required for the simulator and viewer classes
         /// </summary>
-        public override void Parse(string lowercasetoken, STFReader f)
+        public override void Parse(string lowercasetoken, STFReader stf)
         {
             switch (lowercasetoken)
             {
-                case "engine(dieselengineidlerpm": IdleRPM = ParseW(f.ReadStringBlock(), f); break;
-                case "engine(dieselenginemaxrpm": MaxRPM = ParseN(f.ReadStringBlock(), f); break;
-                case "engine(dieselenginemaxrpmchangerate": MaxRPMChangeRate = ParseN(f.ReadStringBlock(), f); break;
+                case "engine(dieselengineidlerpm": IdleRPM = stf.ReadFloatBlock(STFReader.UNITS.Power, null); break;
+                case "engine(dieselenginemaxrpm": MaxRPM = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "engine(dieselenginemaxrpmchangerate": MaxRPMChangeRate = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+
+                case "engine(effects(dieselspecialeffects": ParseEffects(lowercasetoken, stf); break;
                 // for example
-                //case "engine(sound": CabSoundFileName = f.ReadStringBlock(); break;
-                //case "engine(cabview": CVFFileName = f.ReadStringBlock(); break;
-                default: base.Parse(lowercasetoken, f); break;
+                //case "engine(sound": CabSoundFileName = stf.ReadStringBlock(); break;
+                //case "engine(cabview": CVFFileName = stf.ReadStringBlock(); break;
+                default: base.Parse(lowercasetoken, stf); break;
             }
 
             if (IdleRPM != 0 && MaxRPM != 0 && MaxRPMChangeRate != 0)
@@ -178,6 +180,21 @@ namespace ORTS
         public MSTSDieselLocomotiveViewer(Viewer3D viewer, MSTSDieselLocomotive car)
             : base(viewer, car)
         {
+            // Now all the particle drawers have been setup, assign them textures based
+            // on what emitters we know about.
+            string dieselTexture = viewer.Simulator.BasePath + @"\GLOBAL\TEXTURES\dieselsmoke.ace";
+
+            foreach (KeyValuePair<string, List<ParticleEmitterDrawer>> pair in ParticleDrawers)
+            {
+                if (pair.Key == "Exhaust1")
+                {
+                    foreach (ParticleEmitterDrawer drawer in pair.Value)
+                    {
+                        drawer.SetTexture(SharedTextureManager.Get(viewer.RenderProcess.GraphicsDevice, dieselTexture));
+                        drawer.SetEmissionRate(20);
+                    }
+                }
+            }
         }
 
         /// <summary>

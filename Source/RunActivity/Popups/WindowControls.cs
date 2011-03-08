@@ -16,6 +16,7 @@ namespace ORTS.Popups
 	public abstract class Control
 	{
 		public Rectangle Position;
+        public object Tag;
 		public event Action<Control, Point> Click;
 
 		protected Control(int x, int y, int width, int height)
@@ -143,6 +144,90 @@ namespace ORTS.Popups
 			spriteBatch.DrawString(Materials.PopupWindowMaterial.DefaultFont, Text, pos, Color);
 		}
 	}
+
+	public class LabelShadow : Control
+	{
+		public const int ShadowSize = 8;
+		public const int ShadowExtraSizeX = 4;
+		public const int ShadowExtraSizeY = 0;
+
+		public Color Color;
+
+		public LabelShadow(int x, int y, int width, int height)
+			: base(x, y, width, height)
+		{
+			Color = Color.White;
+		}
+
+		public LabelShadow(int width, int height)
+			: this(0, 0, width, height)
+		{
+		}
+
+		internal override void Draw(SpriteBatch spriteBatch, Point offset)
+		{
+			spriteBatch.Draw(WindowManager.LabelShadowTexture, new Rectangle(offset.X + Position.X - ShadowExtraSizeX, offset.Y + Position.Y - ShadowExtraSizeY, ShadowSize + ShadowExtraSizeY, Position.Height + 2 * ShadowExtraSizeY), new Rectangle(0, 0, ShadowSize, 2 * ShadowSize), Color);
+			spriteBatch.Draw(WindowManager.LabelShadowTexture, new Rectangle(offset.X + Position.X - ShadowExtraSizeX + ShadowSize + ShadowExtraSizeY, offset.Y + Position.Y - ShadowExtraSizeY, Position.Width + 2 * ShadowExtraSizeX - 2 * ShadowSize - 2 * ShadowExtraSizeY, Position.Height + 2 * ShadowExtraSizeY), new Rectangle(ShadowSize, 0, ShadowSize, 2 * ShadowSize), Color);
+			spriteBatch.Draw(WindowManager.LabelShadowTexture, new Rectangle(offset.X + Position.X + ShadowExtraSizeX - ShadowSize - ShadowExtraSizeY + Position.Width, offset.Y + Position.Y - ShadowExtraSizeY, ShadowSize + ShadowExtraSizeY, Position.Height + 2 * ShadowExtraSizeY), new Rectangle(2 * ShadowSize, 0, ShadowSize, 2 * ShadowSize), Color);
+		}
+	}
+
+    public class TextFlow : Control
+    {
+        static readonly char[] Whitespace = new[] { ' ', '\t', '\r', '\n' };
+
+		public string Text;
+		public Color Color;
+        List<string> Lines = new List<string>();
+
+		public TextFlow(int x, int y, int width, string text)
+			: base(x, y, width, 0)
+		{
+			Text = text.Replace('\t', ' ');
+			Color = Color.White;
+            Reflow();
+		}
+
+        public TextFlow(int width, string text)
+			: this(0, 0, width, text)
+		{
+		}
+
+        void Reflow()
+        {
+            Lines.Clear();
+            var position = 0;
+            while (position < Text.Length)
+            {
+                var wrap = position;
+                var search = position;
+                while (search != -1 && Text[search] != '\n' && Materials.PopupWindowMaterial.DefaultFont.MeasureString(Text.Substring(position, search - position)).X < Position.Width)
+                {
+                    wrap = search;
+                    search = Text.IndexOfAny(Whitespace, search + 1);
+                }
+                if (search == -1)
+                    wrap = Text.Length;
+                else if (Text[search] == '\n')
+                    wrap = search;
+                else if (wrap == position)
+                    wrap = search;
+                Lines.Add(Text.Substring(position, wrap - position));
+                position = wrap + 1;
+            }
+            Position.Height = Lines.Count * Materials.PopupWindowMaterial.DefaultFont.LineSpacing;
+        }
+
+        internal override void Draw(SpriteBatch spriteBatch, Point offset)
+        {
+            var pos = new Vector2(offset.X + Position.X, offset.Y + Position.Y);
+            foreach (var line in Lines)
+            {
+                spriteBatch.DrawString(Materials.PopupWindowMaterial.DefaultFont, line, pos, Color);
+                pos.Y += Materials.PopupWindowMaterial.DefaultFont.LineSpacing;
+            }
+        }
+    }
 
 	public class Image : Control
 	{
@@ -274,6 +359,13 @@ namespace ORTS.Popups
 			return sb.Client;
 		}
 
+		public ControlLayout AddLayoutScrollboxVertical(int width)
+		{
+			var sb = InternalAdd(new ControlLayoutScrollboxVertical(width, RemainingHeight));
+			sb.Initialize();
+			return sb.Client;
+		}
+
 		internal override void Draw(SpriteBatch spriteBatch, Point offset)
 		{
 			foreach (var control in controls)
@@ -396,10 +488,7 @@ namespace ORTS.Popups
 		{
 		}
 
-		internal void Initialize()
-		{
-			Client = InternalAdd(new ControlLayoutHorizontal(RemainingWidth, RemainingHeight));
-		}
+		internal abstract void Initialize();
 
 		public abstract int ScrollSize { get; }
 	}
@@ -411,17 +500,21 @@ namespace ORTS.Popups
 		{
 		}
 
+		internal override void Initialize()
+		{
+			Client = InternalAdd(new ControlLayoutHorizontal(RemainingWidth, RemainingHeight));
+		}
+
 		internal override void Draw(SpriteBatch spriteBatch, Point offset)
 		{
-			var scrollSize = ScrollSize;
-			var thumbOffset = (int)((float)(Position.Width - 3 * ScrollbarSize) * (float)ScrollPosition / (float)scrollSize);
+			var thumbOffset = (int)((float)(Position.Width - 3 * ScrollbarSize) * (float)ScrollPosition / (float)ScrollSize);
 
 			// Left button
 			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X, offset.Y + Position.Y + Position.Height - ScrollbarSize, ScrollbarSize, ScrollbarSize), new Rectangle(0, 0, ScrollbarSize, ScrollbarSize), Color.White);
 			// Left gutter
 			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + ScrollbarSize, offset.Y + Position.Y + Position.Height - ScrollbarSize, thumbOffset, ScrollbarSize), new Rectangle(2 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White);
 			// Thumb
-			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + ScrollbarSize + thumbOffset, offset.Y + Position.Y + Position.Height - ScrollbarSize, ScrollbarSize, ScrollbarSize), new Rectangle(ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White);
+            spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + ScrollbarSize + thumbOffset, offset.Y + Position.Y + Position.Height - ScrollbarSize, ScrollbarSize, ScrollbarSize), new Rectangle(ScrollSize > 0 ? ScrollbarSize : 2 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White);
 			// Right gutter
 			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + 2 * ScrollbarSize + thumbOffset, offset.Y + Position.Y + Position.Height - ScrollbarSize, Position.Width - 3 * ScrollbarSize - thumbOffset, ScrollbarSize), new Rectangle(2 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White);
 			// Right button
@@ -447,6 +540,8 @@ namespace ORTS.Popups
 				Client.Position.Width = Client.CurrentLeft;
 				if (e.MouseDownPosition.Y > Position.Bottom - ScrollbarSize)
 				{
+					var thumbOffset = (int)((float)(Position.Width - 3 * ScrollbarSize) * (float)ScrollPosition / (float)ScrollSize);
+
 					// Mouse down occured within the scrollbar.
 					if (e.MouseDownPosition.X < Position.Left + ScrollbarSize)
 					{
@@ -455,10 +550,24 @@ namespace ORTS.Popups
 						Client.MoveBy(ScrollPosition - newScrollPosition, 0);
 						ScrollPosition = newScrollPosition;
 					}
+					else if (e.MouseDownPosition.X < Position.Left + ScrollbarSize + thumbOffset)
+					{
+						// Mouse down occured on left gutter.
+						var newScrollPosition = Math.Max(0, ScrollPosition - 100);
+						Client.MoveBy(ScrollPosition - newScrollPosition, 0);
+						ScrollPosition = newScrollPosition;
+					}
 					else if (e.MouseDownPosition.X > Position.Right - ScrollbarSize)
 					{
 						// Mouse down occured on right button.
-						var newScrollPosition = Math.Min(ScrollPosition + 10, ScrollSize);
+						var newScrollPosition = Math.Min(ScrollPosition + 10, Math.Max(0, ScrollSize));
+						Client.MoveBy(ScrollPosition - newScrollPosition, 0);
+						ScrollPosition = newScrollPosition;
+					}
+					else if (e.MouseDownPosition.X > Position.Left + 2 * ScrollbarSize + thumbOffset)
+					{
+						// Mouse down occured on right gutter.
+                        var newScrollPosition = Math.Min(ScrollPosition + 100, Math.Max(0, ScrollSize));
 						Client.MoveBy(ScrollPosition - newScrollPosition, 0);
 						ScrollPosition = newScrollPosition;
 					}
@@ -480,6 +589,108 @@ namespace ORTS.Popups
 		{
 			get {
 				return Client.CurrentLeft - Position.Width;
+			}
+		}
+	}
+
+	public class ControlLayoutScrollboxVertical : ControlLayoutScrollbox
+	{
+		internal ControlLayoutScrollboxVertical(int width, int height)
+			: base(width, height)
+		{
+		}
+
+		internal override void Initialize()
+		{
+			Client = InternalAdd(new ControlLayoutVertical(RemainingWidth, RemainingHeight));
+		}
+
+		internal override void Draw(SpriteBatch spriteBatch, Point offset)
+		{
+			var thumbOffset = (int)((float)(Position.Height - 3 * ScrollbarSize) * (float)ScrollPosition / (float)ScrollSize);
+			var rotateOrigin = new Vector2(0, ScrollbarSize);
+
+			// Top button
+			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + Position.Width - ScrollbarSize, offset.Y + Position.Y, ScrollbarSize, ScrollbarSize), new Rectangle(0, 0, ScrollbarSize, ScrollbarSize), Color.White, (float)Math.PI / 2, rotateOrigin, SpriteEffects.None, 0);
+			// Top gutter
+			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + Position.Width - ScrollbarSize, offset.Y + Position.Y + ScrollbarSize, thumbOffset, ScrollbarSize), new Rectangle(2 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White, (float)Math.PI / 2, rotateOrigin, SpriteEffects.None, 0);
+			// Thumb
+            spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + Position.Width - ScrollbarSize, offset.Y + Position.Y + ScrollbarSize + thumbOffset, ScrollbarSize, ScrollbarSize), new Rectangle(ScrollSize > 0 ? ScrollbarSize : 2 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White, (float)Math.PI / 2, rotateOrigin, SpriteEffects.None, 0);
+			// Bottom gutter
+			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + Position.Width - ScrollbarSize, offset.Y + Position.Y + 2 * ScrollbarSize + thumbOffset, Position.Height - 3 * ScrollbarSize - thumbOffset, ScrollbarSize), new Rectangle(2 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White, (float)Math.PI / 2, rotateOrigin, SpriteEffects.None, 0);
+			// Bottom button
+			spriteBatch.Draw(WindowManager.ScrollbarTexture, new Rectangle(offset.X + Position.X + Position.Width - ScrollbarSize, offset.Y + Position.Y + Position.Height - ScrollbarSize, ScrollbarSize, ScrollbarSize), new Rectangle(3 * ScrollbarSize, 0, ScrollbarSize, ScrollbarSize), Color.White, (float)Math.PI / 2, rotateOrigin, SpriteEffects.None, 0);
+
+			// Draw contents inside a scissor rectangle (so they're clipped to the client area).
+			spriteBatch.End();
+			var oldScissorRectangle = spriteBatch.GraphicsDevice.ScissorRectangle;
+			spriteBatch.GraphicsDevice.ScissorRectangle = new Rectangle(offset.X + Position.X, offset.Y + Position.Y, Position.Width - ScrollbarSize, Position.Height);
+			spriteBatch.GraphicsDevice.RenderState.ScissorTestEnable = true;
+			spriteBatch.Begin(WindowManager.BeginSpriteBlendMode, WindowManager.BeginSpriteSortMode, WindowManager.BeginSaveStateMode);
+			base.Draw(spriteBatch, offset);
+			spriteBatch.End();
+			spriteBatch.GraphicsDevice.ScissorRectangle = oldScissorRectangle;
+			spriteBatch.GraphicsDevice.RenderState.ScissorTestEnable = false;
+			spriteBatch.Begin(WindowManager.BeginSpriteBlendMode, WindowManager.BeginSpriteSortMode, WindowManager.BeginSaveStateMode);
+		}
+
+		internal override bool HandleUserInput(WindowMouseEvent e)
+		{
+			if (UserInput.IsMouseLeftButtonDown())
+			{
+				Client.Position.Height = Client.CurrentTop;
+				if (e.MouseDownPosition.X > Position.Right - ScrollbarSize)
+				{
+					var thumbOffset = (int)((float)(Position.Height - 3 * ScrollbarSize) * (float)ScrollPosition / (float)ScrollSize);
+
+					// Mouse down occured within the scrollbar.
+					if (e.MouseDownPosition.Y < Position.Top + ScrollbarSize)
+					{
+						// Mouse down occured on top button.
+						var newScrollPosition = Math.Max(0, ScrollPosition - 10);
+						Client.MoveBy(0, ScrollPosition - newScrollPosition);
+						ScrollPosition = newScrollPosition;
+					}
+					else if (e.MouseDownPosition.Y < Position.Top + ScrollbarSize + thumbOffset)
+					{
+						// Mouse down occured on top gutter.
+						var newScrollPosition = Math.Max(0, ScrollPosition - 100);
+						Client.MoveBy(0, ScrollPosition - newScrollPosition);
+						ScrollPosition = newScrollPosition;
+					}
+					else if (e.MouseDownPosition.Y > Position.Bottom - ScrollbarSize)
+					{
+						// Mouse down occured on bottom button.
+                        var newScrollPosition = Math.Min(ScrollPosition + 10, Math.Max(0, ScrollSize));
+						Client.MoveBy(0, ScrollPosition - newScrollPosition);
+						ScrollPosition = newScrollPosition;
+					}
+					else if (e.MouseDownPosition.Y > Position.Top + 2 * ScrollbarSize + thumbOffset)
+					{
+						// Mouse down occured on bottom gutter.
+                        var newScrollPosition = Math.Min(ScrollPosition + 100, Math.Max(0, ScrollSize));
+						Client.MoveBy(0, ScrollPosition - newScrollPosition);
+						ScrollPosition = newScrollPosition;
+					}
+					return true;
+				}
+			}
+			return base.HandleUserInput(e);
+		}
+
+		public override int RemainingWidth
+		{
+			get
+			{
+				return base.RemainingWidth - ScrollbarSize;
+			}
+		}
+
+		public override int ScrollSize
+		{
+			get
+			{
+				return Client.CurrentTop - Position.Height;
 			}
 		}
 	}

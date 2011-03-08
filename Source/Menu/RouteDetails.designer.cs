@@ -28,252 +28,278 @@
         /// </summary>
         private void InitializeComponent()
         {
-            this.txtDescription = new System.Windows.Forms.TextBox();
-            this.txtName = new System.Windows.Forms.TextBox();
-            this.txtBriefing = new System.Windows.Forms.TextBox();
-            this.grpEnvironment = new System.Windows.Forms.GroupBox();
-            this.txtDifficulty = new System.Windows.Forms.TextBox();
-            this.label1 = new System.Windows.Forms.Label();
-            this.txtWeather = new System.Windows.Forms.TextBox();
-            this.lblWeather = new System.Windows.Forms.Label();
-            this.txtSeason = new System.Windows.Forms.TextBox();
-            this.lblSeason = new System.Windows.Forms.Label();
-            this.txtDuration = new System.Windows.Forms.TextBox();
-            this.lblDuration = new System.Windows.Forms.Label();
-            this.txtStartTime = new System.Windows.Forms.TextBox();
-            this.lblStartTime = new System.Windows.Forms.Label();
-            this.buttonClose = new System.Windows.Forms.Button();
-            this.grpDescription = new System.Windows.Forms.GroupBox();
-            this.grpBriefing = new System.Windows.Forms.GroupBox();
-            this.grpEnvironment.SuspendLayout();
-            this.grpDescription.SuspendLayout();
-            this.grpBriefing.SuspendLayout();
-            this.SuspendLayout();
-            // 
-            // txtDescription
-            // 
-            this.txtDescription.Location = new System.Drawing.Point(6, 19);
-            this.txtDescription.Multiline = true;
-            this.txtDescription.Name = "txtDescription";
-            this.txtDescription.ReadOnly = true;
-            this.txtDescription.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtDescription.Size = new System.Drawing.Size(304, 124);
-            this.txtDescription.TabIndex = 0;
-            this.txtDescription.TabStop = false;
-            // 
-            // txtName
-            // 
-            this.txtName.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
-                        | System.Windows.Forms.AnchorStyles.Right)));
-            this.txtName.BorderStyle = System.Windows.Forms.BorderStyle.None;
-            this.txtName.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.txtName.ForeColor = System.Drawing.Color.Blue;
-            this.txtName.Location = new System.Drawing.Point(12, 12);
-            this.txtName.Name = "txtName";
-            this.txtName.ReadOnly = true;
-            this.txtName.Size = new System.Drawing.Size(316, 19);
-            this.txtName.TabIndex = 0;
-            this.txtName.TabStop = false;
-            this.txtName.Text = "After The Storm";
-            this.txtName.TextAlign = System.Windows.Forms.HorizontalAlignment.Center;
-            // 
-            // txtBriefing
-            // 
-            this.txtBriefing.Location = new System.Drawing.Point(6, 19);
-            this.txtBriefing.Multiline = true;
-            this.txtBriefing.Name = "txtBriefing";
-            this.txtBriefing.ReadOnly = true;
-            this.txtBriefing.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtBriefing.Size = new System.Drawing.Size(304, 124);
-            this.txtBriefing.TabIndex = 0;
-            this.txtBriefing.TabStop = false;
-            // 
-            // grpEnvironment
-            // 
-            this.grpEnvironment.Controls.Add(this.txtDifficulty);
-            this.grpEnvironment.Controls.Add(this.label1);
-            this.grpEnvironment.Controls.Add(this.txtWeather);
-            this.grpEnvironment.Controls.Add(this.lblWeather);
-            this.grpEnvironment.Controls.Add(this.txtSeason);
-            this.grpEnvironment.Controls.Add(this.lblSeason);
-            this.grpEnvironment.Controls.Add(this.txtDuration);
-            this.grpEnvironment.Controls.Add(this.lblDuration);
-            this.grpEnvironment.Controls.Add(this.txtStartTime);
-            this.grpEnvironment.Controls.Add(this.lblStartTime);
-            this.grpEnvironment.Location = new System.Drawing.Point(12, 347);
-            this.grpEnvironment.Name = "grpEnvironment";
-            this.grpEnvironment.Size = new System.Drawing.Size(316, 97);
-            this.grpEnvironment.TabIndex = 3;
-            this.grpEnvironment.TabStop = false;
-            this.grpEnvironment.Text = "Environment";
-            // 
-            // txtDifficulty
-            // 
-            this.txtDifficulty.Location = new System.Drawing.Point(70, 71);
-            this.txtDifficulty.Name = "txtDifficulty";
-            this.txtDifficulty.ReadOnly = true;
-            this.txtDifficulty.Size = new System.Drawing.Size(75, 20);
-            this.txtDifficulty.TabIndex = 9;
-            this.txtDifficulty.TabStop = false;
-            // 
-            // label1
-            // 
-            this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(6, 74);
-            this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(50, 13);
-            this.label1.TabIndex = 8;
-            this.label1.Text = "Difficulty:";
-            // 
-            // txtWeather
-            // 
-            this.txtWeather.Location = new System.Drawing.Point(235, 45);
-            this.txtWeather.Name = "txtWeather";
-            this.txtWeather.ReadOnly = true;
-            this.txtWeather.Size = new System.Drawing.Size(75, 20);
-            this.txtWeather.TabIndex = 7;
-            this.txtWeather.TabStop = false;
-            // 
-            // lblWeather
-            // 
-            this.lblWeather.AutoSize = true;
-            this.lblWeather.Location = new System.Drawing.Point(178, 48);
-            this.lblWeather.Name = "lblWeather";
-            this.lblWeather.Size = new System.Drawing.Size(51, 13);
-            this.lblWeather.TabIndex = 6;
-            this.lblWeather.Text = "Weather:";
-            // 
-            // txtSeason
-            // 
-            this.txtSeason.Location = new System.Drawing.Point(70, 45);
-            this.txtSeason.Name = "txtSeason";
-            this.txtSeason.ReadOnly = true;
-            this.txtSeason.Size = new System.Drawing.Size(75, 20);
-            this.txtSeason.TabIndex = 5;
-            this.txtSeason.TabStop = false;
-            // 
-            // lblSeason
-            // 
-            this.lblSeason.AutoSize = true;
-            this.lblSeason.Location = new System.Drawing.Point(6, 48);
-            this.lblSeason.Name = "lblSeason";
-            this.lblSeason.Size = new System.Drawing.Size(46, 13);
-            this.lblSeason.TabIndex = 4;
-            this.lblSeason.Text = "Season:";
-            // 
-            // txtDuration
-            // 
-            this.txtDuration.Location = new System.Drawing.Point(235, 19);
-            this.txtDuration.Name = "txtDuration";
-            this.txtDuration.ReadOnly = true;
-            this.txtDuration.Size = new System.Drawing.Size(75, 20);
-            this.txtDuration.TabIndex = 3;
-            this.txtDuration.TabStop = false;
-            // 
-            // lblDuration
-            // 
-            this.lblDuration.AutoSize = true;
-            this.lblDuration.Location = new System.Drawing.Point(178, 22);
-            this.lblDuration.Name = "lblDuration";
-            this.lblDuration.Size = new System.Drawing.Size(50, 13);
-            this.lblDuration.TabIndex = 2;
-            this.lblDuration.Text = "Duration:";
-            // 
-            // txtStartTime
-            // 
-            this.txtStartTime.Location = new System.Drawing.Point(70, 19);
-            this.txtStartTime.Name = "txtStartTime";
-            this.txtStartTime.ReadOnly = true;
-            this.txtStartTime.Size = new System.Drawing.Size(75, 20);
-            this.txtStartTime.TabIndex = 1;
-            this.txtStartTime.TabStop = false;
-            // 
-            // lblStartTime
-            // 
-            this.lblStartTime.AutoSize = true;
-            this.lblStartTime.Location = new System.Drawing.Point(6, 22);
-            this.lblStartTime.Name = "lblStartTime";
-            this.lblStartTime.Size = new System.Drawing.Size(58, 13);
-            this.lblStartTime.TabIndex = 0;
-            this.lblStartTime.Text = "Start Time:";
-            // 
-            // buttonClose
-            // 
-            this.buttonClose.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.buttonClose.Location = new System.Drawing.Point(253, 450);
-            this.buttonClose.Name = "buttonClose";
-            this.buttonClose.Size = new System.Drawing.Size(75, 23);
-            this.buttonClose.TabIndex = 4;
-            this.buttonClose.Text = "Close";
-            this.buttonClose.UseVisualStyleBackColor = true;
-            this.buttonClose.Click += new System.EventHandler(this.cmdClose_Click);
-            // 
-            // grpDescription
-            // 
-            this.grpDescription.Controls.Add(this.txtDescription);
-            this.grpDescription.Location = new System.Drawing.Point(12, 37);
-            this.grpDescription.Name = "grpDescription";
-            this.grpDescription.Size = new System.Drawing.Size(316, 149);
-            this.grpDescription.TabIndex = 1;
-            this.grpDescription.TabStop = false;
-            this.grpDescription.Text = "Description";
-            // 
-            // grpBriefing
-            // 
-            this.grpBriefing.Controls.Add(this.txtBriefing);
-            this.grpBriefing.Location = new System.Drawing.Point(12, 192);
-            this.grpBriefing.Name = "grpBriefing";
-            this.grpBriefing.Size = new System.Drawing.Size(316, 149);
-            this.grpBriefing.TabIndex = 2;
-            this.grpBriefing.TabStop = false;
-            this.grpBriefing.Text = "Briefing";
-            // 
-            // DetailsForm
-            // 
-            this.AcceptButton = this.buttonClose;
-            this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(340, 485);
-            this.Controls.Add(this.grpBriefing);
-            this.Controls.Add(this.grpDescription);
-            this.Controls.Add(this.buttonClose);
-            this.Controls.Add(this.grpEnvironment);
-            this.Controls.Add(this.txtName);
-            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = false;
-            this.Name = "DetailsForm";
-            this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
-            this.Text = "RouteDetails";
-            this.grpEnvironment.ResumeLayout(false);
-            this.grpEnvironment.PerformLayout();
-            this.grpDescription.ResumeLayout(false);
-            this.grpDescription.PerformLayout();
-            this.grpBriefing.ResumeLayout(false);
-            this.grpBriefing.PerformLayout();
-            this.ResumeLayout(false);
-            this.PerformLayout();
+			System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(DetailsForm));
+			this.textDescription = new System.Windows.Forms.TextBox();
+			this.textBriefing = new System.Windows.Forms.TextBox();
+			this.groupEnvironment = new System.Windows.Forms.GroupBox();
+			this.textWeather = new System.Windows.Forms.TextBox();
+			this.labelWeather = new System.Windows.Forms.Label();
+			this.textSeason = new System.Windows.Forms.TextBox();
+			this.labelSeason = new System.Windows.Forms.Label();
+			this.textStartTime = new System.Windows.Forms.TextBox();
+			this.labelStartTime = new System.Windows.Forms.Label();
+			this.buttonClose = new System.Windows.Forms.Button();
+			this.groupBoxDescription = new System.Windows.Forms.GroupBox();
+			this.groupBoxBriefing = new System.Windows.Forms.GroupBox();
+			this.groupBox1 = new System.Windows.Forms.GroupBox();
+			this.groupBoxActivity = new System.Windows.Forms.GroupBox();
+			this.labelDifficulty = new System.Windows.Forms.Label();
+			this.textDifficulty = new System.Windows.Forms.TextBox();
+			this.labelDuration = new System.Windows.Forms.Label();
+			this.textDuration = new System.Windows.Forms.TextBox();
+			this.groupEnvironment.SuspendLayout();
+			this.groupBoxDescription.SuspendLayout();
+			this.groupBoxBriefing.SuspendLayout();
+			this.groupBoxActivity.SuspendLayout();
+			this.SuspendLayout();
+			// 
+			// textDescription
+			// 
+			this.textDescription.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+						| System.Windows.Forms.AnchorStyles.Left)
+						| System.Windows.Forms.AnchorStyles.Right)));
+			this.textDescription.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textDescription.Location = new System.Drawing.Point(6, 19);
+			this.textDescription.Multiline = true;
+			this.textDescription.Name = "textDescription";
+			this.textDescription.ReadOnly = true;
+			this.textDescription.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+			this.textDescription.Size = new System.Drawing.Size(588, 75);
+			this.textDescription.TabIndex = 0;
+			this.textDescription.TabStop = false;
+			// 
+			// textBriefing
+			// 
+			this.textBriefing.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+						| System.Windows.Forms.AnchorStyles.Left)
+						| System.Windows.Forms.AnchorStyles.Right)));
+			this.textBriefing.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textBriefing.Location = new System.Drawing.Point(6, 19);
+			this.textBriefing.Multiline = true;
+			this.textBriefing.Name = "textBriefing";
+			this.textBriefing.ReadOnly = true;
+			this.textBriefing.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+			this.textBriefing.Size = new System.Drawing.Size(588, 175);
+			this.textBriefing.TabIndex = 0;
+			this.textBriefing.TabStop = false;
+			// 
+			// groupEnvironment
+			// 
+			this.groupEnvironment.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
+						| System.Windows.Forms.AnchorStyles.Right)));
+			this.groupEnvironment.Controls.Add(this.textStartTime);
+			this.groupEnvironment.Controls.Add(this.labelStartTime);
+			this.groupEnvironment.Controls.Add(this.textSeason);
+			this.groupEnvironment.Controls.Add(this.labelSeason);
+			this.groupEnvironment.Controls.Add(this.textWeather);
+			this.groupEnvironment.Controls.Add(this.labelWeather);
+			this.groupEnvironment.Location = new System.Drawing.Point(12, 324);
+			this.groupEnvironment.Name = "groupEnvironment";
+			this.groupEnvironment.Size = new System.Drawing.Size(300, 58);
+			this.groupEnvironment.TabIndex = 2;
+			this.groupEnvironment.TabStop = false;
+			this.groupEnvironment.Text = "Environment";
+			// 
+			// textWeather
+			// 
+			this.textWeather.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textWeather.Location = new System.Drawing.Point(202, 32);
+			this.textWeather.Name = "textWeather";
+			this.textWeather.ReadOnly = true;
+			this.textWeather.Size = new System.Drawing.Size(92, 13);
+			this.textWeather.TabIndex = 3;
+			this.textWeather.TabStop = false;
+			// 
+			// labelWeather
+			// 
+			this.labelWeather.AutoSize = true;
+			this.labelWeather.Location = new System.Drawing.Point(199, 16);
+			this.labelWeather.Name = "labelWeather";
+			this.labelWeather.Size = new System.Drawing.Size(48, 13);
+			this.labelWeather.TabIndex = 2;
+			this.labelWeather.Text = "Weather";
+			// 
+			// textSeason
+			// 
+			this.textSeason.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textSeason.Location = new System.Drawing.Point(104, 32);
+			this.textSeason.Name = "textSeason";
+			this.textSeason.ReadOnly = true;
+			this.textSeason.Size = new System.Drawing.Size(92, 13);
+			this.textSeason.TabIndex = 5;
+			this.textSeason.TabStop = false;
+			// 
+			// labelSeason
+			// 
+			this.labelSeason.AutoSize = true;
+			this.labelSeason.Location = new System.Drawing.Point(101, 16);
+			this.labelSeason.Name = "labelSeason";
+			this.labelSeason.Size = new System.Drawing.Size(43, 13);
+			this.labelSeason.TabIndex = 4;
+			this.labelSeason.Text = "Season";
+			// 
+			// textStartTime
+			// 
+			this.textStartTime.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textStartTime.Location = new System.Drawing.Point(6, 32);
+			this.textStartTime.Name = "textStartTime";
+			this.textStartTime.ReadOnly = true;
+			this.textStartTime.Size = new System.Drawing.Size(92, 13);
+			this.textStartTime.TabIndex = 7;
+			this.textStartTime.TabStop = false;
+			// 
+			// labelStartTime
+			// 
+			this.labelStartTime.AutoSize = true;
+			this.labelStartTime.Location = new System.Drawing.Point(3, 16);
+			this.labelStartTime.Name = "labelStartTime";
+			this.labelStartTime.Size = new System.Drawing.Size(55, 13);
+			this.labelStartTime.TabIndex = 6;
+			this.labelStartTime.Text = "Start Time";
+			// 
+			// buttonClose
+			// 
+			this.buttonClose.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+			this.buttonClose.DialogResult = System.Windows.Forms.DialogResult.OK;
+			this.buttonClose.Location = new System.Drawing.Point(537, 388);
+			this.buttonClose.Name = "buttonClose";
+			this.buttonClose.Size = new System.Drawing.Size(75, 23);
+			this.buttonClose.TabIndex = 3;
+			this.buttonClose.Text = "Close";
+			this.buttonClose.UseVisualStyleBackColor = true;
+			// 
+			// groupBoxDescription
+			// 
+			this.groupBoxDescription.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
+						| System.Windows.Forms.AnchorStyles.Right)));
+			this.groupBoxDescription.Controls.Add(this.textDescription);
+			this.groupBoxDescription.Location = new System.Drawing.Point(12, 12);
+			this.groupBoxDescription.Name = "groupBoxDescription";
+			this.groupBoxDescription.Size = new System.Drawing.Size(600, 100);
+			this.groupBoxDescription.TabIndex = 0;
+			this.groupBoxDescription.TabStop = false;
+			// 
+			// groupBoxBriefing
+			// 
+			this.groupBoxBriefing.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
+						| System.Windows.Forms.AnchorStyles.Right)));
+			this.groupBoxBriefing.Controls.Add(this.groupBox1);
+			this.groupBoxBriefing.Controls.Add(this.textBriefing);
+			this.groupBoxBriefing.Location = new System.Drawing.Point(12, 118);
+			this.groupBoxBriefing.Name = "groupBoxBriefing";
+			this.groupBoxBriefing.Size = new System.Drawing.Size(600, 200);
+			this.groupBoxBriefing.TabIndex = 1;
+			this.groupBoxBriefing.TabStop = false;
+			// 
+			// groupBox1
+			// 
+			this.groupBox1.Location = new System.Drawing.Point(307, 206);
+			this.groupBox1.Name = "groupBox1";
+			this.groupBox1.Size = new System.Drawing.Size(293, 58);
+			this.groupBox1.TabIndex = 4;
+			this.groupBox1.TabStop = false;
+			this.groupBox1.Text = "groupBox1";
+			// 
+			// groupBoxActivity
+			// 
+			this.groupBoxActivity.Controls.Add(this.textDuration);
+			this.groupBoxActivity.Controls.Add(this.labelDuration);
+			this.groupBoxActivity.Controls.Add(this.textDifficulty);
+			this.groupBoxActivity.Controls.Add(this.labelDifficulty);
+			this.groupBoxActivity.Location = new System.Drawing.Point(318, 324);
+			this.groupBoxActivity.Name = "groupBoxActivity";
+			this.groupBoxActivity.Size = new System.Drawing.Size(294, 58);
+			this.groupBoxActivity.TabIndex = 4;
+			this.groupBoxActivity.TabStop = false;
+			this.groupBoxActivity.Text = "Activity";
+			// 
+			// labelDifficulty
+			// 
+			this.labelDifficulty.AutoSize = true;
+			this.labelDifficulty.Location = new System.Drawing.Point(104, 16);
+			this.labelDifficulty.Name = "labelDifficulty";
+			this.labelDifficulty.Size = new System.Drawing.Size(47, 13);
+			this.labelDifficulty.TabIndex = 10;
+			this.labelDifficulty.Text = "Difficulty";
+			// 
+			// textDifficulty
+			// 
+			this.textDifficulty.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textDifficulty.Location = new System.Drawing.Point(107, 32);
+			this.textDifficulty.Name = "textDifficulty";
+			this.textDifficulty.ReadOnly = true;
+			this.textDifficulty.Size = new System.Drawing.Size(92, 13);
+			this.textDifficulty.TabIndex = 11;
+			this.textDifficulty.TabStop = false;
+			// 
+			// labelDuration
+			// 
+			this.labelDuration.AutoSize = true;
+			this.labelDuration.Location = new System.Drawing.Point(6, 16);
+			this.labelDuration.Name = "labelDuration";
+			this.labelDuration.Size = new System.Drawing.Size(47, 13);
+			this.labelDuration.TabIndex = 12;
+			this.labelDuration.Text = "Duration";
+			// 
+			// textDuration
+			// 
+			this.textDuration.BorderStyle = System.Windows.Forms.BorderStyle.None;
+			this.textDuration.Location = new System.Drawing.Point(9, 32);
+			this.textDuration.Name = "textDuration";
+			this.textDuration.ReadOnly = true;
+			this.textDuration.Size = new System.Drawing.Size(92, 13);
+			this.textDuration.TabIndex = 13;
+			this.textDuration.TabStop = false;
+			// 
+			// DetailsForm
+			// 
+			this.AcceptButton = this.buttonClose;
+			this.AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
+			this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
+			this.CancelButton = this.buttonClose;
+			this.ClientSize = new System.Drawing.Size(624, 423);
+			this.Controls.Add(this.groupBoxDescription);
+			this.Controls.Add(this.groupBoxBriefing);
+			this.Controls.Add(this.groupEnvironment);
+			this.Controls.Add(this.groupBoxActivity);
+			this.Controls.Add(this.buttonClose);
+			this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
+			this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
+			this.MaximizeBox = false;
+			this.MinimizeBox = false;
+			this.Name = "DetailsForm";
+			this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
+			this.groupEnvironment.ResumeLayout(false);
+			this.groupEnvironment.PerformLayout();
+			this.groupBoxDescription.ResumeLayout(false);
+			this.groupBoxDescription.PerformLayout();
+			this.groupBoxBriefing.ResumeLayout(false);
+			this.groupBoxBriefing.PerformLayout();
+			this.groupBoxActivity.ResumeLayout(false);
+			this.groupBoxActivity.PerformLayout();
+			this.ResumeLayout(false);
 
         }
 
         #endregion
 
-        private System.Windows.Forms.TextBox txtDescription;
-        private System.Windows.Forms.TextBox txtName;
-        private System.Windows.Forms.TextBox txtBriefing;
-        private System.Windows.Forms.GroupBox grpEnvironment;
-        private System.Windows.Forms.Label lblStartTime;
-        private System.Windows.Forms.TextBox txtDuration;
-        private System.Windows.Forms.Label lblDuration;
-        private System.Windows.Forms.TextBox txtStartTime;
-        private System.Windows.Forms.Label lblSeason;
-        private System.Windows.Forms.Label lblWeather;
-        private System.Windows.Forms.TextBox txtSeason;
-        private System.Windows.Forms.Label label1;
-        private System.Windows.Forms.TextBox txtWeather;
-        private System.Windows.Forms.TextBox txtDifficulty;
+		private System.Windows.Forms.TextBox textDescription;
+        private System.Windows.Forms.TextBox textBriefing;
+        private System.Windows.Forms.GroupBox groupEnvironment;
+		private System.Windows.Forms.Label labelStartTime;
+        private System.Windows.Forms.TextBox textStartTime;
+        private System.Windows.Forms.Label labelSeason;
+        private System.Windows.Forms.Label labelWeather;
+		private System.Windows.Forms.TextBox textSeason;
+		private System.Windows.Forms.TextBox textWeather;
         private System.Windows.Forms.Button buttonClose;
-        private System.Windows.Forms.GroupBox grpDescription;
-        private System.Windows.Forms.GroupBox grpBriefing;
+        private System.Windows.Forms.GroupBox groupBoxDescription;
+		private System.Windows.Forms.GroupBox groupBoxBriefing;
+		private System.Windows.Forms.GroupBox groupBox1;
+		private System.Windows.Forms.GroupBox groupBoxActivity;
+		private System.Windows.Forms.Label labelDifficulty;
+		private System.Windows.Forms.TextBox textDifficulty;
+		private System.Windows.Forms.Label labelDuration;
+		private System.Windows.Forms.TextBox textDuration;
     }
 }

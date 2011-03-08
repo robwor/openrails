@@ -55,9 +55,9 @@ namespace ORTS
             }
         }
 
-        public MSTSNotchController(STFReader f)
+        public MSTSNotchController(STFReader stf)
         {
-            Parse(f);
+            Parse(stf);
         }
 
         public MSTSNotchController(BinaryReader inf)
@@ -76,33 +76,30 @@ namespace ORTS
             return StepSize != 0;
         }
 
-        public void Parse(STFReader f)
+        public void Parse(STFReader stf)
         {
-            f.VerifyStartOfBlock();
-            MinimumValue = f.ReadFloat();
-            MaximumValue = f.ReadFloat();
-            StepSize = f.ReadFloat();
-            IntermediateValue = CurrentValue = f.ReadFloat();
+            stf.MustMatch("(");
+            MinimumValue = stf.ReadFloat(STFReader.UNITS.Any, null);
+            MaximumValue = stf.ReadFloat(STFReader.UNITS.Any, null);
+            StepSize = stf.ReadFloat(STFReader.UNITS.Any, null);
+            IntermediateValue = CurrentValue = stf.ReadFloat(STFReader.UNITS.Any, null);
             //Console.WriteLine("controller {0} {1} {2} {3}", MinimumValue, MaximumValue, StepSize, CurrentValue);
-            f.ReadTokenNoComment(); // numnotches
-            f.VerifyStartOfBlock();
-            f.ReadInt();
-            for (; ; )
-            {
-                string token = f.ReadTokenNoComment().ToLower();
-                if (token == ")") break;
-                if (token == "notch")
-                {
-                    f.VerifyStartOfBlock();
-                    float value = f.ReadFloat();
-                    int smooth = f.ReadInt();
-                    string type = f.ReadString();
+            string token = stf.ReadItem(); // s/b numnotches
+            if (string.Compare(token, "NumNotches", true) != 0) // handle error in gp38.eng where extra parameter provided before NumNotches statement 
+                stf.ReadItem();
+            stf.MustMatch("(");
+            stf.ReadInt(STFReader.UNITS.None, null);
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("notch", ()=>{
+                    stf.MustMatch("(");
+                    float value = stf.ReadFloat(STFReader.UNITS.Any, null);
+                    int smooth = stf.ReadInt(STFReader.UNITS.Any, null);
+                    string type = stf.ReadString();
                     //Console.WriteLine("Notch {0} {1} {2}", value, smooth, type);
-                    Notches.Add(new MSTSNotch(value, smooth, type, f));
-                    if (type != ")")
-                        f.VerifyEndOfBlock();
-                }
-            }
+                    Notches.Add(new MSTSNotch(value, smooth, type, stf));
+                    if (type != ")") stf.SkipRestOfBlock();
+                }),
+            });
             SetValue(CurrentValue);
         }
 
@@ -125,6 +122,55 @@ namespace ORTS
                 CurrentValue = Notches[CurrentNotch].Value;
 
             IntermediateValue = CurrentValue;
+        }
+
+        /// <summary>
+        /// Sets the controller value based on a RailDriver control
+        /// </summary>
+        /// <param name="percent"></param>
+        public float SetRDPercent(float percent)
+        {
+            float v = (MinimumValue < 0 && percent < 0 ? -MinimumValue : MaximumValue) * percent / 100;
+            if (v < MinimumValue)
+                v = MinimumValue;
+            CurrentValue = v;
+            if (CurrentNotch >= 0)
+            {
+                if (Notches[Notches.Count - 1].Type == MSTSNotchType.Emergency)
+                    v = Notches[Notches.Count - 1].Value * percent / 100;
+                for (; ; )
+                {
+                    MSTSNotch notch = Notches[CurrentNotch];
+                    if (CurrentNotch > 0 && v < notch.Value)
+                    {
+                        MSTSNotch prev= Notches[CurrentNotch-1];
+                        if (!notch.Smooth && !prev.Smooth && v - prev.Value > .45 * (notch.Value - prev.Value))
+                            break;
+                        CurrentNotch--;
+                        continue;
+                    }
+                    if (CurrentNotch < Notches.Count - 1)
+                    {
+                        MSTSNotch next = Notches[CurrentNotch + 1];
+                        if (next.Type != MSTSNotchType.Emergency)
+                        {
+                            if ((notch.Smooth || next.Smooth) && v < next.Value)
+                                break;
+                            if (!notch.Smooth && !next.Smooth && v - notch.Value < .55 * (next.Value - notch.Value))
+                                break;
+                            CurrentNotch++;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                if (Notches[CurrentNotch].Smooth)
+                    CurrentValue = v;
+                else
+                    CurrentValue = Notches[CurrentNotch].Value;
+            }
+            IntermediateValue = CurrentValue;
+            return 100 * CurrentValue;
         }
 
         public void StartIncrease()

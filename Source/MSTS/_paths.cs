@@ -38,7 +38,9 @@ namespace MSTS
 			{
 				DefaultLocation = "c:\\program files\\microsoft games\\train simulator";
 
-				RegistryKey RK = Registry.LocalMachine.OpenSubKey("SOFTWARE\\Microsoft\\Microsoft Games\\Train Simulator\\1.0");
+				RegistryKey RK = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Microsoft Games\Train Simulator\1.0");
+				if (RK == null)
+					RK = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Wow6432Node\Microsoft\Microsoft Games\Train Simulator\1.0");
 				if (RK != null)
 					DefaultLocation = (string)RK.GetValue("Path", DefaultLocation);
 
@@ -106,9 +108,6 @@ namespace MSTS
         /// <summary>
         /// Given a soundfile reference in a cvf file, return the path to the sound file
         /// </summary>
-        /// <param name="wagfilename"></param>
-        /// <param name="soundfile"></param>
-        /// <returns></returns>
         public static string SMSSoundPath(string smsfilename, string soundfile)
         {
             string smsSoundPath = Path.GetDirectoryName(smsfilename) + @"\" + soundfile;

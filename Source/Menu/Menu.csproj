@@ -12,8 +12,7 @@
     <AssemblyName>Menu</AssemblyName>
     <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
-    <ApplicationIcon>
-    </ApplicationIcon>
+    <ApplicationIcon>..\openrails.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -23,6 +22,8 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <DocumentationFile>..\..\Program\Menu.XML</DocumentationFile>
+    <NoWarn>1587,1591</NoWarn>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -31,6 +32,8 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <DocumentationFile>..\..\Program\Menu.XML</DocumentationFile>
+    <NoWarn>1587,1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="ICSharpCode.SharpZipLib, Version=0.81.0.1407, Culture=neutral, PublicKeyToken=1b03e6acf1164f73">
@@ -59,6 +62,12 @@
     <Compile Include="..\MSTS\ACTFile.cs">
       <Link>MSTS\ACTFile.cs</Link>
     </Compile>
+    <Compile Include="..\MSTS\CONFile.cs">
+      <Link>MSTS\CONFile.cs</Link>
+    </Compile>
+    <Compile Include="..\MSTS\PATFile.cs">
+      <Link>MSTS\PATFile.cs</Link>
+    </Compile>
     <Compile Include="..\MSTS\TRKFile.cs">
       <Link>MSTS\TRKFile.cs</Link>
     </Compile>
@@ -67,6 +76,15 @@
     </Compile>
     <Compile Include="..\MSTS\_STF.cs">
       <Link>MSTS\_STF.cs</Link>
+    </Compile>
+    <Compile Include="..\ORTS\Menu\Activities.cs">
+      <Link>ORTS\Menu\Activities.cs</Link>
+    </Compile>
+    <Compile Include="..\ORTS\Menu\Folders.cs">
+      <Link>ORTS\Menu\Folders.cs</Link>
+    </Compile>
+    <Compile Include="..\ORTS\Menu\Routes.cs">
+      <Link>ORTS\Menu\Routes.cs</Link>
     </Compile>
     <Compile Include="ExploreForm.cs">
       <SubType>Form</SubType>
@@ -107,34 +125,16 @@
     <EmbeddedResource Include="Options.resx">
       <DependentUpon>Options.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Properties\Resources.resx">
-      <Generator>ResXFileCodeGenerator</Generator>
-      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
-      <SubType>Designer</SubType>
-    </EmbeddedResource>
     <EmbeddedResource Include="RouteDetails.resx">
       <DependentUpon>RouteDetails.cs</DependentUpon>
     </EmbeddedResource>
-    <Compile Include="Properties\Resources.Designer.cs">
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Resources.resx</DependentUpon>
-      <DesignTime>True</DesignTime>
-    </Compile>
-    <None Include="Properties\Settings.settings">
-      <Generator>SettingsSingleFileGenerator</Generator>
-      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
-    </None>
-    <Compile Include="Properties\Settings.Designer.cs">
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Settings.settings</DependentUpon>
-      <DesignTimeSharedInput>True</DesignTimeSharedInput>
-    </Compile>
     <Compile Include="RouteDetails.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="RouteDetails.designer.cs">
       <DependentUpon>RouteDetails.cs</DependentUpon>
     </Compile>
+    <Compile Include="Task.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\openrails.ico">

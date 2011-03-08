@@ -29,47 +29,18 @@ namespace MSTS
 		/// <param name="filePath"></param>
 		public SRVFile( string filePath )
 		{
-			STFReader inf = new STFReader( filePath );
-			try
-			{
-				while( !inf.EOF() )
-				{
-					inf.ReadToken();
-
-					switch( inf.Tree )
-					{
-						case "Service_Definition(Serial":
-							Serial = inf.ReadIntBlock();
-							break;
-						case "Service_Definition(Name":
-							Name = inf.ReadStringBlock();
-							break;
-						case "Service_Definition(Train_Config":
-							Train_Config = inf.ReadStringBlock();
-							break;
-						case "Service_Definition(PathID":
-							PathID = inf.ReadStringBlock();
-							break;
-						case "Service_Definition(MaxWheelAcceleration":
-							MaxWheelAcceleration = (float)inf.ReadDoubleBlock();
-							break;
-						case "Service_Definition(Efficiency":
-							Efficiency = (float)inf.ReadDoubleBlock();
-							break;
-						case "Service_Definition(TimeTable":
-                            inf.SkipBlock(); // todo complete parse
-							break;
-					}
-				}
-			}
-			finally
-			{
-				inf.Close();
-			}
-		}
-
-
+            using (STFReader stf = new STFReader(filePath, false))
+                stf.ParseFile(new STFReader.TokenProcessor[] {
+                    new STFReader.TokenProcessor("service_definition", ()=> { stf.MustMatch("("); stf.ParseBlock(new STFReader.TokenProcessor[] {
+                        new STFReader.TokenProcessor("serial", ()=>{ Serial = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+                        new STFReader.TokenProcessor("name", ()=>{ Name = stf.ReadStringBlock(null); }),
+                        new STFReader.TokenProcessor("train_config", ()=>{ Train_Config = stf.ReadStringBlock(null); }),
+                        new STFReader.TokenProcessor("pathid", ()=>{ PathID = stf.ReadStringBlock(null); }),
+                        new STFReader.TokenProcessor("maxwheelacceleration", ()=>{ MaxWheelAcceleration = stf.ReadFloatBlock(STFReader.UNITS.Any, null); }),
+                        new STFReader.TokenProcessor("efficiency", ()=>{ Efficiency = stf.ReadFloatBlock(STFReader.UNITS.Any, null); }),
+                    });}),
+                });
+        }
 	} // SRVFile
-
 }
 
