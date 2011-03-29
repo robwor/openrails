@@ -99,26 +99,6 @@ namespace ORTS
 			Trace.Write(" TRK");
 			TRK = new TRKFile(MSTSPath.GetTRKFileName(RoutePath));
 
-			//Establish default track profile
-			Trace.Write(" TRP");
-			if (Directory.Exists(RoutePath) && File.Exists(RoutePath + @"\TrProfile.xml"))
-			{
-				// XML-style
-				TRP = new TRPFile(RoutePath + @"\TrProfile.xml");
-			}
-			else if (Directory.Exists(RoutePath) && File.Exists(RoutePath + @"\TrProfile.dat"))
-			{
-				// MSTS-style
-				TRP = new TRPFile(RoutePath + @"\TrProfile.dat");
-			}
-			else
-			{
-				// default
-				TRP = new TRPFile("");
-			}
-			// FOR DEBUGGING: Writes XML file from current TRP
-			//TRP.TrackProfile.SaveAsXML(@"C:/Users/Walt/Desktop/TrProfile.xml");
-
 			Trace.Write(" TDB");
 			TDB = new TDBFile(RoutePath + @"\" + TRK.Tr_RouteFile.FileName + ".tdb");
 
@@ -144,8 +124,12 @@ namespace ORTS
                 RDB = new RDBFile(rdbFile);
             }
 
-			Trace.Write(" CARSPAWN");
-			CarSpawnerFile = new CarSpawnerFile(RoutePath + @"\carspawn.dat", RoutePath + @"\shapes\"); 
+			var carSpawnFile = RoutePath + @"\carspawn.dat";
+			if (File.Exists(carSpawnFile))
+			{
+				Trace.Write(" CARSPAWN");
+				CarSpawnerFile = new CarSpawnerFile(RoutePath + @"\carspawn.dat", RoutePath + @"\shapes\");
+			}
 
 		}
 		public void SetActivity(string activityPath)

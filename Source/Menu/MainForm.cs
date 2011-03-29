@@ -17,7 +17,7 @@ namespace ORTS
 {
 	public partial class MainForm : Form
 	{
-		string FolderDataFile;
+        bool Initialized;
 		List<Folder> Folders = new List<Folder>();
 		List<Route> Routes = new List<Route>();
 		List<Activity> Activities = new List<Activity>();
@@ -39,17 +39,25 @@ namespace ORTS
 			Font = SystemFonts.MessageBoxFont;
 
 			// Set title to show revision or build info.
-			Text = String.Format(Program.Revision == "000" ? "{0} BUILD {2}" : "{0} V{1}", Application.ProductName, Program.Revision, Program.Build);
+			Text = String.Format(Program.Version.Length > 0 ? "{0} {1}" : "{0} BUILD {2}", Application.ProductName, Program.Version, Program.Build);
 
 			CleanupPre021();
-
-			LoadFolders();
 		}
 
 		void MainForm_Shown(object sender, EventArgs e)
 		{
 			LoadOptions();
-		}
+
+            if (!Initialized)
+            {
+                Initialized = true;
+
+                LoadFolders();
+
+                if (Folders.Count == 0)
+                    MessageBox.Show("Microsoft Train Simulator doesn't appear to be installed.\nClick on 'Add...' to point Open Rails at your Microsoft Train Simulator folder.", Application.ProductName);
+            }
+        }
 
 		void MainForm_FormClosing(object sender, FormClosingEventArgs e)
 		{
@@ -81,12 +89,9 @@ namespace ORTS
 						form.textBoxDescription.Text = Path.GetFileName(folderBrowser.SelectedPath);
 						if (form.ShowDialog(this) == DialogResult.OK)
 						{
-							var folder = new Folder(form.textBoxDescription.Text, folderBrowser.SelectedPath);
-							Folders.Add(folder);
-							listBoxFolders.Items.Add(folder.Name);
-							if (listBoxFolders.SelectedIndex < 0 && listBoxFolders.Items.Count > 0)
-								listBoxFolders.SelectedIndex = 0;
+                            Folders.Add(new Folder(form.textBoxDescription.Text, folderBrowser.SelectedPath));
 							SaveFolders();
+                            LoadFolders();
 						}
 					}
 				}
@@ -180,7 +185,7 @@ namespace ORTS
 			if (null != Registry.CurrentUser.OpenSubKey("SOFTWARE\\ORTS"))
 				Registry.CurrentUser.DeleteSubKeyTree("SOFTWARE\\ORTS");
 
-			if (!File.Exists(FolderDataFile))
+			if (!File.Exists(Folder.FolderDataFile))
 			{
 				// Handle name change that occured at version 0021
 				string oldFolderDataFileName = Program.UserDataFolder + @"\..\ORTS\folder.dat";
@@ -188,7 +193,7 @@ namespace ORTS
 				{
 					if (File.Exists(oldFolderDataFileName))
 					{
-						File.Copy(oldFolderDataFileName, FolderDataFile);
+                        File.Copy(oldFolderDataFileName, Folder.FolderDataFile);
 						Directory.Delete(Path.GetDirectoryName(oldFolderDataFileName), true);
 					}
 				}
@@ -238,9 +243,6 @@ namespace ORTS
                 MessageBox.Show(error.ToString());
             }
 
-            if (Folders.Count == 0)
-                MessageBox.Show("Microsoft Train Simulator doesn't appear to be installed.\nClick on 'Add...' to point Open Rails at your Microsoft Train Simulator folder.", Application.ProductName);
-
 			listBoxFolders.Items.Clear();
 			foreach (var folder in Folders)
 				listBoxFolders.Items.Add(folder.Name);
@@ -253,15 +255,7 @@ namespace ORTS
 
 		void SaveFolders()
 		{
-			using (BinaryWriter outf = new BinaryWriter(File.Open(FolderDataFile, FileMode.Create)))
-			{
-				outf.Write(Folders.Count);
-				foreach (var folder in Folders)
-				{
-					outf.Write(folder.Path);
-					outf.Write(folder.Name);
-				}
-			}
+            Folder.SetFolders(Folders);
 		}
 
 		void LoadRoutes()

@@ -210,7 +210,10 @@ namespace ORTS
             Trace.Write(" TTYPE");
             TTypeDatFile = new TTypeDatFile(Simulator.RoutePath + @"\TTYPE.DAT");
 
-			Tiles = new Tiles(Simulator.RoutePath + @"\TILES\");
+            Trace.Write(" TRP");
+            TRPFile.CreateTrackProfile(Simulator.RoutePath, out Simulator.TRP);
+
+            Tiles = new Tiles(Simulator.RoutePath + @"\TILES\");
 			MilepostUnitsMetric = Simulator.TRK.Tr_RouteFile.MilepostUnitsMetric;
 			SetupBackgroundProcesses();
 		}
@@ -410,7 +413,10 @@ namespace ORTS
 				Simulator.PlayerLocomotive.Train.CalculatePositionOfCars(0);  // fix the front traveller
 				Simulator.PlayerLocomotive.Train.RepositionRearTraveller();    // fix the rear traveller
                 PlayerLocomotiveViewer = TrainDrawer.GetViewer(Simulator.PlayerLocomotive);
-				Camera.Activate();
+                if (!Camera.IsAvailable)
+                    FrontCamera.Activate();
+                else
+                    Camera.Activate();
 			}
 
             if (UserInput.IsPressed(UserCommands.CameraCab) && CabCamera.IsAvailable) CabCamera.Activate();

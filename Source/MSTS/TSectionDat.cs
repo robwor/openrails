@@ -133,8 +133,9 @@ namespace MSTS
 
 		public TrackSection Get( uint targetSectionIndex )
 		{
-			if (ContainsKey(targetSectionIndex))
-				return this[targetSectionIndex];
+            TrackSection ts;
+            if (TryGetValue(targetSectionIndex, out ts))
+                return ts;
 			if (MissingTrackSectionWarnings++ < 5)
 				Trace.TraceWarning("TDB references track section not listed in global or dynamic TSECTION.DAT: " + targetSectionIndex.ToString());
             return null;
@@ -257,7 +258,7 @@ namespace MSTS
 		{
             using (STFReader stf = new STFReader(pathNameExt, false))
             {
-                if (stf.SIMISsignature != "SIMISA@@@@@@@@@@JINX0T0t______")
+                if (stf.SimisSignature != "SIMISA@@@@@@@@@@JINX0T0t______")
                 {
                     Trace.TraceWarning("Ignoring invalid TSECTION.DAT in route folder.");
                     return;

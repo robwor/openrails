@@ -99,6 +99,13 @@ namespace ORTS
             return String.Format("TN={0} TS={1}", iTrackNode, iTrVectorSection);
         }
 
+        public static TDBTraveller Reversed(TDBTraveller copy)
+        {
+            var t = new TDBTraveller(copy);
+            t.ReverseDirection();
+            return t;
+        }
+
         public TDBTraveller(TDBTraveller copy)
         {
             TDB = copy.TDB;
@@ -200,15 +207,25 @@ namespace ORTS
         /// </summary>
         public float DistanceTo(int tileX, int tileZ, float wx, float wy, float wz)
         {
-            TDBTraveller traveller = new TDBTraveller(this);
-            return DistanceTo(tileX, tileZ, wx, wy, wz, ref traveller);
+            return DistanceTo(tileX, tileZ, wx, wy, wz, float.MaxValue);
+        }
+
+        public float DistanceTo(int tileX, int tileZ, float wx, float wy, float wz, float maxDistance)
+        {
+            var traveller = new TDBTraveller(this);
+            return DistanceTo(tileX, tileZ, wx, wy, wz, ref traveller, maxDistance);
         }
 
         public float DistanceTo(int tileX, int tileZ, float wx, float wy, float wz, ref TDBTraveller traveller)
         {
+            return DistanceTo(tileX, tileZ, wx, wy, wz, ref traveller, float.MaxValue);
+        }
+
+        public float DistanceTo(int tileX, int tileZ, float wx, float wy, float wz, ref TDBTraveller traveller, float maxDistance)
+        {
             float accumulatedDistance = 0;
 
-            while (true)  // we will exit this loop when we find the waypoint or run out of track
+            while (accumulatedDistance < maxDistance)  // we will exit this loop when we find the waypoint or run out of track
             {
                 float initialOffset = traveller.Offset;
                 if (traveller.TS != null && traveller.Direction > 0)  // moving forward
@@ -310,10 +327,9 @@ namespace ORTS
 
                 if (traveller.TN.TrEndNode)
                     return -1;   // we are at the end and didn't find the waypoint
+            }
 
-
-            } // end while(true )
-
+            return -1;
         }
 
         public TrJunctionNode TrJunctionNodeBehind()

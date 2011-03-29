@@ -67,6 +67,7 @@ namespace MSTS
                             case TokenID.CollideObject:
                             case TokenID.Static: Add(new StaticObj(subBlock, currentWatermark)); break;
                             case TokenID.TrackObj: Add(new TrackObj(subBlock, currentWatermark)); break;
+							case TokenID.CarSpawner: //unicode 
 							case (TokenID)357: Add(new CarSpawnerObj(subBlock, currentWatermark)); //car spawner
 								break; //car spawner. The tokenid number is wrong
                             case TokenID.Siding: subBlock.Skip(); break; // TODO
@@ -440,6 +441,7 @@ namespace MSTS
 		public float animSpeed = 0.005f; //compute the speed based on LevelCrTiming
 		public float warningTime;
 		public bool visible = true;
+		public bool silent = false;
 		public LevelCrossingObj(SBR block, int detailLevel)
 		{
 
@@ -459,7 +461,8 @@ namespace MSTS
 							break;
 						case TokenID.CrashProbability: crashProbability = subBlock.ReadInt(); break;
 						case TokenID.LevelCrData: levelCrData = new LevelCrData(subBlock);
-							if (levelCrData.crData1 != 0) visible = false;
+                            visible = (levelCrData.crData1 & 0x1) == 0;
+                            silent = !visible || (levelCrData.crData1 & 0x6) == 0x6;
 							break;
 						case TokenID.LevelCrTiming: levelCrTiming = new LevelCrTiming(subBlock);
 							animSpeed = 1.0f / (800.0f * levelCrTiming.animTiming);//hard code to make 4 seconds move realistic in 40 frame/second

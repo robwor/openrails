@@ -29,6 +29,17 @@ namespace ORTS.Popups
 		{
             Align(AlignAt.Middle, AlignAt.Middle);
 
+            Tabs.Add(new TabData(Tab.KeyboardShortcuts, "Key Commands", (cl) =>
+            {
+                var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
+                foreach (UserCommands command in Enum.GetValues(typeof(UserCommands)))
+                {
+                    var line = scrollbox.AddLayoutHorizontal(TextHeight);
+                    var width = line.RemainingWidth / 2;
+                    line.Add(new Label(width, line.RemainingHeight, UserInput.FormatCommandName(command)));
+                    line.Add(new Label(width, line.RemainingHeight, UserInput.Commands[(int)command].ToString()));
+                }
+            }));
             if (owner.Viewer.Simulator.Activity != null)
             {
                 Tabs.Add(new TabData(Tab.ActivityBriefing, "Briefing", (cl) =>
@@ -63,12 +74,15 @@ namespace ORTS.Popups
                             var stopAt = task as ActivityTaskPassengerStopAt;
                             if (stopAt != null)
                             {
+                                Label arrive, depart;
                                 var hbox = scrollbox.AddLayoutHorizontal(TextHeight);
                                 hbox.Add(new Label(colWidth * 3, hbox.RemainingHeight, stopAt.PlatformEnd1.Station));
                                 hbox.Add(new Label(colWidth, hbox.RemainingHeight, stopAt.SchArrive.ToString("HH:mm:ss"), LabelAlignment.Center));
-                                hbox.Add(new Label(colWidth, hbox.RemainingHeight, stopAt.ActArrive.HasValue ? stopAt.ActArrive.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue ? "(missed)" : "", LabelAlignment.Center));
+                                hbox.Add(arrive = new Label(colWidth, hbox.RemainingHeight, stopAt.ActArrive.HasValue ? stopAt.ActArrive.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue && task.NextTask != null ? "(missed)" : "", LabelAlignment.Center));
                                 hbox.Add(new Label(colWidth, hbox.RemainingHeight, stopAt.SchDepart.ToString("HH:mm:ss"), LabelAlignment.Center));
-                                hbox.Add(new Label(colWidth, hbox.RemainingHeight, stopAt.ActDepart.HasValue ? stopAt.ActDepart.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue ? "(missed)" : "", LabelAlignment.Center));
+                                hbox.Add(depart = new Label(colWidth, hbox.RemainingHeight, stopAt.ActDepart.HasValue ? stopAt.ActDepart.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue && task.NextTask != null ? "(missed)" : "", LabelAlignment.Center));
+                                arrive.Color = NextStationWindow.GetArrivalColor(stopAt.SchArrive, stopAt.ActArrive);
+                                depart.Color = NextStationWindow.GetDepartColor(stopAt.SchDepart, stopAt.ActDepart);
                             }
                         }
                     }
@@ -87,17 +101,6 @@ namespace ORTS.Popups
                     ((MSTSLocomotive)owner.Viewer.Simulator.PlayerLocomotive).EngineOperatingProcedures.Length > 0)
                 {
                     scrollbox.Add(new TextFlow(scrollbox.RemainingWidth, ((MSTSLocomotive)owner.Viewer.Simulator.PlayerLocomotive).EngineOperatingProcedures));
-                }
-            }));
-            Tabs.Add(new TabData(Tab.KeyboardShortcuts, "Key Commands", (cl) =>
-            {
-                var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
-                foreach (UserCommands command in Enum.GetValues(typeof(UserCommands)))
-                {
-                    var line = scrollbox.AddLayoutHorizontal(TextHeight);
-                    var width = line.RemainingWidth / 2;
-                    line.Add(new Label(width, line.RemainingHeight, UserInput.FormatCommandName(command)));
-                    line.Add(new Label(width, line.RemainingHeight, UserInput.Commands[(int)command].ToString()));
                 }
             }));
         }
