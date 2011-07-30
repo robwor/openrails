@@ -1,14 +1,11 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Principal Author:
-///    Wayne Campbell
-/// Contributors:
-///    Rick Grout
-///    Walt Niehoff
-///     
+﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections.Generic;
@@ -27,11 +24,12 @@ namespace ORTS
         public static PrecipShader PrecipShader = null;
         public static LightGlowShader LightGlowShader = null;
         public static LightConeShader LightConeShader = null;
-        public static SpriteBatchMaterial SpriteBatchMaterial = null;
+		public static SpriteBatchMaterial SpriteBatchMaterial = null;
+		public static SpriteBatchLineMaterial SpriteBatchLineMaterial = null;
+		public static ActivityInforMaterial DrawInforMaterial = null;
 		private static Dictionary<string, WaterMaterial> WaterMaterials = new Dictionary<string, WaterMaterial>();
-		private static SkyMaterial SkyMaterial = null;        
+        private static SkyMaterial SkyMaterial = null;
         private static PrecipMaterial PrecipMaterial = null;
-        private static DynatrackMaterial DynatrackMaterial = null;
         private static LightGlowMaterial LightGlowMaterial = null;
         private static LightConeMaterial LightConeMaterial = null;
         private static Dictionary<string, TerrainMaterial> TerrainMaterials = new Dictionary<string, TerrainMaterial>();
@@ -63,11 +61,12 @@ namespace ORTS
             PrecipShader = new PrecipShader(renderProcess.GraphicsDevice, renderProcess.Content);
             LightGlowShader = new LightGlowShader(renderProcess.GraphicsDevice, renderProcess.Content);
             LightConeShader = new LightConeShader(renderProcess.GraphicsDevice, renderProcess.Content);
-            SpriteBatchMaterial = new SpriteBatchMaterial(renderProcess);
-            // WaterMaterial here.
+			SpriteBatchMaterial = new SpriteBatchMaterial(renderProcess);
+			SpriteBatchLineMaterial = new SpriteBatchLineMaterial(renderProcess);
+			DrawInforMaterial = new ActivityInforMaterial(renderProcess);
+			// WaterMaterial here.
             SkyMaterial = new SkyMaterial(renderProcess);
             PrecipMaterial = new PrecipMaterial(renderProcess);
-            DynatrackMaterial = new DynatrackMaterial(renderProcess);
             LightGlowMaterial = new LightGlowMaterial(renderProcess);
             LightConeMaterial = new LightConeMaterial(renderProcess);
             MissingTexture = renderProcess.Content.Load<Texture2D>("blank");
@@ -93,7 +92,7 @@ namespace ORTS
             return Load(renderProcess, materialName, textureName, options, 0);
         }
 
-		public static Material Load(RenderProcess renderProcess, string materialName, string textureName, int options, float mipMapBias )
+        public static Material Load(RenderProcess renderProcess, string materialName, string textureName, int options, float mipMapBias)
         {
             System.Diagnostics.Debug.Assert(IsInitialized, "Must initialize Materials before using.");
             if (!IsInitialized)             // this shouldn't happen, but if it does
@@ -102,14 +101,18 @@ namespace ORTS
                 Initialize(renderProcess);  // warn, and do it now rather than fail
             }
 
-            if( textureName != null )
+            if (textureName != null)
                 textureName = textureName.ToLower();
 
             switch (materialName)
             {
-                case "SpriteBatch":
-                    return SpriteBatchMaterial;
-                case "Terrain":
+				case "SpriteBatch":
+					return SpriteBatchMaterial;
+				case "SpriteBatchLine":
+					return SpriteBatchLineMaterial;
+				case "DrawInforMaterial":
+					return DrawInforMaterial;
+				case "Terrain":
                     if (!TerrainMaterials.ContainsKey(textureName))
                     {
                         TerrainMaterial material = new TerrainMaterial(renderProcess, textureName);
@@ -153,8 +156,6 @@ namespace ORTS
                         return new ParticleEmitterMaterial(renderProcess);
                 case "PrecipMaterial":
                     return PrecipMaterial;
-                case "DynatrackMaterial":
-                    return DynatrackMaterial;
                 case "LightGlowMaterial":
                     return LightGlowMaterial;
                 case "LightConeMaterial":
@@ -254,7 +255,8 @@ namespace ORTS
 
             if (!SharedTextures.ContainsKey(path))
             {
-                try { 
+                try
+                {
                     Texture2D texture = MSTS.ACEFile.Texture2DFromFile(device, path);
                     SharedTextures.Add(path, texture);
                     return texture;
@@ -305,18 +307,76 @@ namespace ORTS
 		}
 	}
 
-	public class SpriteBatchMaterial : Material
+    public class BasicMaterial : Material
+    {
+        public BasicMaterial(string key)
+            : base(key)
+        {
+        }
+
+        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+        {
+            foreach (var item in renderItems)
+                item.RenderPrimitive.Draw(graphicsDevice);
+        }
+    }
+
+    public class BasicBlendedMaterial : BasicMaterial
+    {
+        public BasicBlendedMaterial(string key)
+            : base(key)
+        {
+        }
+
+        public override bool GetBlending(RenderPrimitive renderPrimitive)
+        {
+            return true;
+        }
+    }
+
+    public class SpriteBatchMaterial : BasicBlendedMaterial
+    {
+        public SpriteBatch SpriteBatch;
+
+        public SpriteBatchMaterial(RenderProcess renderProcess)
+            : base(null)
+        {
+            SpriteBatch = new SpriteBatch(renderProcess.GraphicsDevice);
+        }
+
+		public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
+		{
+            SpriteBatch.Begin(SpriteBlendMode.AlphaBlend, SpriteSortMode.Immediate, SaveStateMode.None);
+		}
+
+		public override void ResetState(GraphicsDevice graphicsDevice)
+		{
+			SpriteBatch.End();
+
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = false;
+            rs.AlphaFunction = CompareFunction.Always;
+            rs.AlphaTestEnable = false;
+            rs.DepthBufferEnable = true;
+            rs.DestinationBlend = Blend.Zero;
+            rs.SourceBlend = Blend.One;
+        }
+	}
+
+	//Material to draw lines, which needs to open z-buffer
+	public class SpriteBatchLineMaterial : Material
 	{
 		public SpriteBatch SpriteBatch;
-		public SpriteFont DefaultFont;
+		public Texture2D Texture;
 		public RenderProcess RenderProcess;  // for diagnostics only
 
-		public SpriteBatchMaterial(RenderProcess renderProcess)
+		public SpriteBatchLineMaterial(RenderProcess renderProcess)
 			: base(null)
 		{
 			RenderProcess = renderProcess;
 			SpriteBatch = new SpriteBatch(renderProcess.GraphicsDevice);
-			DefaultFont = renderProcess.Content.Load<SpriteFont>("Arial");
+			Texture = new Texture2D(SpriteBatch.GraphicsDevice, 1, 1, 1, TextureUsage.None, SurfaceFormat.Color);
+			Texture.SetData(new[] { Color.White });
 		}
 
 		public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
@@ -325,25 +385,26 @@ namespace ORTS
 			Vector3 screenScaling = new Vector3(scaling);
 			Matrix xForm = Matrix.CreateScale(screenScaling);
 			SpriteBatch.Begin(SpriteBlendMode.AlphaBlend, SpriteSortMode.Immediate, SaveStateMode.SaveState, xForm);
+			SpriteBatch.GraphicsDevice.RenderState.DepthBufferEnable = true;//want to line to have z-buffer effect
 		}
 
 		public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
 		{
-            foreach (var item in renderItems)
-            {
-                item.RenderPrimitive.Draw(graphicsDevice);
-            }
+			foreach (var item in renderItems)
+			{
+				item.RenderPrimitive.Draw(graphicsDevice);
+			}
 		}
 
 		public override void ResetState(GraphicsDevice graphicsDevice)
 		{
-			SpriteBatch.End();
+			SpriteBatch.End();//DepthBufferEnable will be restored to previous state
 		}
 
-        public override bool GetBlending(RenderPrimitive renderPrimitive)
-        {
-            return true;
-        }
+		public override bool GetBlending(RenderPrimitive renderPrimitive)
+		{
+			return true;
+		}
 	}
 
 	public class SceneryMaterial : Material
@@ -583,7 +644,8 @@ namespace ORTS
 			while (ShaderPasses.MoveNext())
             {
 				ShaderPasses.Current.Begin();
-                foreach(RenderItem item in renderItems)
+
+                foreach (RenderItem item in renderItems)
                 {
                     SceneryShader.SetMatrix(ref item.XNAMatrix, ref XNAViewMatrix, ref viewProj);
                     SceneryShader.ZBias = item.RenderPrimitive.ZBias;
@@ -645,7 +707,7 @@ namespace ORTS
         readonly public RenderProcess RenderProcess;  // for diagnostics only
 		IEnumerator<EffectPass> ShaderPasses;
 
-		public TerrainMaterial(RenderProcess renderProcess, string terrainTexture )
+        public TerrainMaterial(RenderProcess renderProcess, string terrainTexture)
 			: base(terrainTexture)
 		{
             SceneryShader = Materials.SceneryShader;
@@ -667,9 +729,6 @@ namespace ORTS
             rs.AlphaBlendEnable = false;
 			rs.AlphaTestEnable = false;
 			rs.CullMode = CullMode.CullCounterClockwiseFace;
-
-			graphicsDevice.VertexDeclaration = TerrainPatch.PatchVertexDeclaration;
-			graphicsDevice.Indices = TerrainPatch.PatchIndexBuffer;
 		}
 
 		public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
@@ -887,7 +946,8 @@ namespace ORTS
         public Texture2D texture = null;
         public RenderProcess renderProcess;
 
-        public ParticleEmitterMaterial(RenderProcess renderProcess) : base(null)
+        public ParticleEmitterMaterial(RenderProcess renderProcess)
+            : base(null)
         {
             this.renderProcess = renderProcess;
             particleEmitterShader = Materials.ParticleEmitterShader;
@@ -906,8 +966,6 @@ namespace ORTS
 
         public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
         {
-            particleEmitterShader.CameraTileXY = new Vector2(renderProcess.Viewer.Camera.TileX, renderProcess.Viewer.Camera.TileZ);
-
             particleEmitterShader.Begin();
 
             foreach (EffectPass pass in particleEmitterShader.CurrentTechnique.Passes)
@@ -917,6 +975,7 @@ namespace ORTS
                 foreach (var item in renderItems)
                 {
                     ParticleEmitter emitter = (ParticleEmitter)item.RenderPrimitive;
+                    particleEmitterShader.CameraTileXY = emitter.CameraTileXZ;
                     particleEmitterShader.ColorTint = emitter.ColorTint;
                     particleEmitterShader.EmitDirection = emitter.EmitterData.Direction;
                     particleEmitterShader.EmitSize = emitter.EmitterData.NozzleWidth;
@@ -1028,106 +1087,6 @@ namespace ORTS
 			return true;
 		}
 	}
-
-	public class DynatrackMaterial : Material
-    {
-        SceneryShader SceneryShader;
-        Texture2D Image1;
-        Texture2D Image1s;
-        Texture2D Image2;
-        string TexturePath;
-        public RenderProcess RenderProcess;
-
-		public DynatrackMaterial(RenderProcess renderProcess)
-			: base(null)
-		{
-            TrProfile profile = renderProcess.Viewer.Simulator.TRP.TrackProfile;
-            
-            RenderProcess = renderProcess;
-            SceneryShader = Materials.SceneryShader;
-            TexturePath = RenderProcess.Viewer.Simulator.RoutePath + @"\textures" + @"\" + profile.Image1Name; 
-            Image1 = SharedTextureManager.Get(renderProcess.GraphicsDevice, TexturePath);
-            TexturePath = RenderProcess.Viewer.Simulator.RoutePath + @"\textures\snow" + @"\" + profile.Image1sName; 
-            if (File.Exists(TexturePath))
-                Image1s = SharedTextureManager.Get(renderProcess.GraphicsDevice, TexturePath);
-            else // Use file in base texture folder
-                Image1s = Image1;
-            TexturePath = RenderProcess.Viewer.Simulator.RoutePath + @"\textures" + @"\" + profile.Image2Name; 
-            Image2 = SharedTextureManager.Get(renderProcess.GraphicsDevice, TexturePath);
-        } // end DynatrackMaterial() (constructor)
-
-		public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
-		{
-			SceneryShader.CurrentTechnique = SceneryShader.Techniques[RenderProcess.Viewer.Settings.ShaderModel >= 3 ? "ImagePS3" : "ImagePS2"];
-
-            var rs = graphicsDevice.RenderState;
-            rs.DestinationBlend = Blend.InverseSourceAlpha;
-			rs.SourceBlend = Blend.SourceAlpha;
-		} // end SetState()
-
-		public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
-        {
-            var rs = graphicsDevice.RenderState;
-            foreach (var item in renderItems)   // Is this ever more than one for dynamic track?
-                                                // I guess there's nothing to be gained from changing it.
-            {
-                DynatrackMesh mesh = (DynatrackMesh)item.RenderPrimitive;
-                for (int lodIndex = 0; lodIndex <= mesh.LastIndex; lodIndex++)
-                {
-                    LODItem lod = (LODItem)mesh.TrProfile.LODItems[lodIndex];
-                    // The following are controlled by options in the track profile
-                    if (lod.Texture == DynatrackTextures.Image1)
-                    {
-                        if (RenderProcess.Viewer.Simulator.Weather == MSTS.WeatherType.Snow ||
-                                RenderProcess.Viewer.Simulator.Season == MSTS.SeasonType.Winter)
-                            SceneryShader.ImageMap_Tex = Image1s;
-                        else
-                            SceneryShader.ImageMap_Tex = Image1;
-                    }
-                    else if (lod.Texture == DynatrackTextures.Image2)
-                        SceneryShader.ImageMap_Tex = Image2;
-                    // else SceneryShader.ImageMap_Tex will remain unchanged
-
-                    SceneryShader.LightingSpecular = lod.LightingSpecular;
-                    graphicsDevice.SamplerStates[0].MipMapLevelOfDetailBias =
-                                lod.MipMapLevelOfDetailBias;
-                    rs.AlphaBlendEnable =
-                                lod.AlphaBlendEnable;
-
-                    Matrix viewproj = XNAViewMatrix * XNAProjectionMatrix;
-                    SceneryShader.SetMatrix(ref item.XNAMatrix, ref XNAViewMatrix, ref viewproj);
-                    SceneryShader.ZBias = item.RenderPrimitive.ZBias;
-					SceneryShader.Apply();
-
-                    mesh.DrawIndex = lodIndex; // Communicate to Draw which LOD to draw.
-                    SceneryShader.Begin();
-                    foreach (EffectPass pass in SceneryShader.CurrentTechnique.Passes)
-                    {
-                        pass.Begin();
-                        item.RenderPrimitive.Draw(graphicsDevice);
-                        pass.End();
-                    }
-                    SceneryShader.End();
-                } // end for i
-            }
-        } // end Render() (DynatrackMaterial)
-
-		public override void ResetState(GraphicsDevice graphicsDevice)
-		{
-			SceneryShader.LightingSpecular = 0;
-			SceneryShader.Apply();
-
-            var rs = graphicsDevice.RenderState;
-            rs.AlphaBlendEnable = false;
-			rs.DestinationBlend = Blend.Zero;
-			rs.SourceBlend = Blend.One;
-		} // end ResetState()
-
-		public override bool GetBlending(RenderPrimitive renderPrimitive)
-		{
-			return true;
-		} // end GetBlending()
-    }
 
 	public class ForestMaterial : Material
     {
@@ -1496,7 +1455,6 @@ namespace ORTS
 
 	public class PopupWindowMaterial : Material
 	{
-		public SpriteFont DefaultFont;
 		IEnumerator<EffectPass> ShaderPassesPopupWindow;
 		IEnumerator<EffectPass> ShaderPassesPopupWindowGlass;
 		IEnumerator<EffectPass> ShaderPasses;
@@ -1504,7 +1462,6 @@ namespace ORTS
 		public PopupWindowMaterial(RenderProcess renderProcess)
 			: base(null)
 		{
-			DefaultFont = renderProcess.Content.Load<SpriteFont>("Arial");
 		}
 
 		public void SetState(GraphicsDevice graphicsDevice, Texture2D screen)
@@ -1568,11 +1525,11 @@ namespace ORTS
 			: base(null)
 		{
             RenderProcess = renderProcess;
-            if( basicEffect == null )
+            if (basicEffect == null)
             {
                 basicEffect = new BasicEffect(renderProcess.GraphicsDevice, null);
                 basicEffect.Alpha = 1.0f;
-                basicEffect.DiffuseColor = new Vector3(197.0f/255.0f, 203.0f/255.0f, 37.0f/255.0f);
+                basicEffect.DiffuseColor = new Vector3(197.0f / 255.0f, 203.0f / 255.0f, 37.0f / 255.0f);
                 basicEffect.SpecularColor = new Vector3(0.25f, 0.25f, 0.25f);
                 basicEffect.SpecularPower = 5.0f;
                 basicEffect.AmbientLightColor = new Vector3(0.2f, 0.2f, 0.2f);
@@ -1617,5 +1574,84 @@ namespace ORTS
             }
             basicEffect.End();
         }
+	}
+
+	//Material to draw train car numbers, sidings and platforms
+	public class ActivityInforMaterial : Material
+	{
+		public SpriteBatch SpriteBatch;
+		public Texture2D Texture;
+		public SpriteFont Font;
+		public RenderProcess RenderProcess;  // for diagnostics only
+		Viewer3D Viewer;
+
+		//texts are aligned as table cells, but they can be either in table A or table B
+		public List<Vector2>[] AlignedTextA;
+		public List<Vector2>[] AlignedTextB;
+		public float LineSpacing;
+
+		public ActivityInforMaterial(RenderProcess renderProcess)
+			: base(null)
+		{
+			RenderProcess = renderProcess;
+			Viewer = RenderProcess.Viewer;
+			SpriteBatch = new SpriteBatch(renderProcess.GraphicsDevice);
+			Texture = new Texture2D(SpriteBatch.GraphicsDevice, 1, 1, 1, TextureUsage.None, SurfaceFormat.Color);
+			Texture.SetData(new[] { Color.White });
+			Font = renderProcess.Content.Load<SpriteFont>("ArialMedium");
+            LineSpacing = Font.LineSpacing * 3 / 4;
+			if (LineSpacing < 10) LineSpacing = 10; //if spacing between text lines is too small
+		}
+
+		public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
+		{
+			float scaling = (float)graphicsDevice.PresentationParameters.BackBufferHeight / RenderProcess.GraphicsDeviceManager.PreferredBackBufferHeight;
+			Vector3 screenScaling = new Vector3(scaling);
+			Matrix xForm = Matrix.CreateScale(screenScaling);
+			SpriteBatch.Begin(SpriteBlendMode.AlphaBlend, SpriteSortMode.Immediate, SaveStateMode.SaveState, xForm);
+			SpriteBatch.GraphicsDevice.RenderState.DepthBufferEnable = true;//want the line to have z-buffer effect
+		}
+
+		public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+		{
+			//texts are put to a virtual table on the screen, which has one column each row, and texts in the same row
+			//do not overlap each other. to put more information, we created two tables, and a primitive can use either of them. 
+			//For example, train car name use AlignedTextA, and siding names use AlignedTextB
+			//each rending process, we will clear the text in the tables before put texts in
+			if (AlignedTextA == null || Viewer.GraphicsDevice.Viewport.Height / (int)LineSpacing + 1 != AlignedTextA.Length)
+			{
+				AlignedTextA = new List<Vector2>[Viewer.GraphicsDevice.Viewport.Height / (int)LineSpacing + 1];
+				for (var i = 0; i < AlignedTextA.Length; i++) AlignedTextA[i] = new List<Vector2>();
+			}
+			else
+			{
+				foreach (List<Vector2> ls in AlignedTextA) ls.Clear();
+			}
+
+			if (AlignedTextB == null || Viewer.GraphicsDevice.Viewport.Height / (int)LineSpacing + 1 != AlignedTextB.Length)
+			{
+				AlignedTextB = new List<Vector2>[Viewer.GraphicsDevice.Viewport.Height / (int)LineSpacing + 1];
+				for (var i = 0; i < AlignedTextB.Length; i++) AlignedTextB[i] = new List<Vector2>();
+			}
+			else
+			{
+				foreach (List<Vector2> ls in AlignedTextB) ls.Clear();
+			}
+
+			foreach (var item in renderItems)
+			{
+				item.RenderPrimitive.Draw(graphicsDevice);
+			}
+		}
+
+		public override void ResetState(GraphicsDevice graphicsDevice)
+		{
+			SpriteBatch.End();//DepthBufferEnable will be restored to previous state
+		}
+
+		public override bool GetBlending(RenderPrimitive renderPrimitive)
+		{
+			return true;
+		}
 	}
 }

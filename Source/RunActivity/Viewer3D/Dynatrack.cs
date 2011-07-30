@@ -1,13 +1,11 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Principal Author:
-///    Rick Grout
-/// Contributors:
-///    Walt Niehoff
-///    
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections;
@@ -30,12 +28,6 @@ using MSTS;
 
 namespace ORTS
 {
-    public enum DynatrackTextures
-    {
-        none = 0,
-        Image1, Image1s, Image2
-    }
-
     #region Dynatrack
     public class Dynatrack
     {
@@ -155,30 +147,43 @@ namespace ORTS
     #region DynatrackDrawer
     public class DynatrackDrawer
     {
-        Viewer3D Viewer;
-        Material dtrackMaterial;
-
-        // Classes reqiring instantiation
-        public DynatrackMesh dtrackMesh;
-
         #region Class variables
+        Viewer3D Viewer;
         WorldPosition worldPosition;
+        public DynatrackMesh dtrackMesh;
         #endregion
 
         #region Constructor
-        /// <summary>
-        /// DynatrackDrawer constructor
-        /// </summary>
-        public DynatrackDrawer(Viewer3D viewer, DyntrackObj dtrack, WorldPosition position, WorldPosition endPosition)
-        {
-            Viewer = viewer;
-            worldPosition = position;
-            dtrackMaterial = Materials.Load(Viewer.RenderProcess, "DynatrackMaterial");
+		/// <summary>
+		/// DynatrackDrawer constructor
+		/// </summary>
+		public DynatrackDrawer(Viewer3D viewer, DyntrackObj dtrack, WorldPosition position, WorldPosition endPosition)
+		{
+			Viewer = viewer;
+			worldPosition = position;
 
-            // Instantiate classes
-            dtrackMesh = new DynatrackMesh(Viewer.RenderProcess, dtrack, worldPosition, endPosition);
-        } // end DynatrackDrawer constructor
-        #endregion
+			if (viewer.Simulator.TRP == null)
+			{
+				// First to need a track profile creates it
+				Trace.Write(" TRP");
+				// Creates profile and loads materials into SceneryMaterials
+				TRPFile.CreateTrackProfile(viewer.RenderProcess, viewer.Simulator.RoutePath, out viewer.Simulator.TRP);
+			}
+
+			// Instantiate classes
+			dtrackMesh = new DynatrackMesh(Viewer.RenderProcess, dtrack, worldPosition, endPosition);
+		} // end DynatrackDrawer constructor
+		
+		/// <summary>
+		/// DynatrackDrawer default constructor, without DyntrackObj
+		/// </summary>
+		public DynatrackDrawer(Viewer3D viewer, WorldPosition position, WorldPosition endPosition)
+		{
+			Viewer = viewer;
+			worldPosition = position;
+
+		} // end DynatrackDrawer constructor
+		#endregion
 
         /// <summary>
         /// PrepareFrame adds any object mesh in-FOV to the RenderItemCollection. 
@@ -200,92 +205,156 @@ namespace ORTS
             // Ignore any mesh not in field-of-view
             if (!Viewer.Camera.InFOV(dtrackMesh.MSTSLODCenter, dtrackMesh.ObjectRadius)) return;
 
-            // Scan LODs in reverse order, and find first LOD in-range
-            LODItem lod;
-            int lodIndex = dtrackMesh.LODGrid.Length;
-            do
+            // Scan LODs in forward order, and find first LOD in-range
+            LOD lod;
+            int lodIndex;
+            for (lodIndex = 0; lodIndex < dtrackMesh.TrProfile.LODs.Count; lodIndex++)
             {
-                if (--lodIndex < 0) return; // No LOD in-range
-                lod = (LODItem)dtrackMesh.TrProfile.LODItems[lodIndex];
-            } while (!Viewer.Camera.InRange(dtrackMesh.MSTSLODCenter, 0, lod.CutoffRadius));
-            dtrackMesh.LastIndex = lodIndex; // Mark index farthest in-range LOD
+                lod = (LOD)dtrackMesh.TrProfile.LODs[lodIndex];
+                if (Viewer.Camera.InRange(dtrackMesh.MSTSLODCenter, 0, lod.CutoffRadius)) break;
+            }
+            if (lodIndex == dtrackMesh.TrProfile.LODs.Count) return;
+            // lodIndex marks first in-range LOD
 
             // Initialize xnaXfmWrtCamTile to object-tile to camera-tile translation:
             Matrix xnaXfmWrtCamTile = Matrix.CreateTranslation(tileOffsetWrtCamera);
             xnaXfmWrtCamTile = worldPosition.XNAMatrix * xnaXfmWrtCamTile; // Catenate to world transformation
             // (Transformation is now with respect to camera-tile origin)
 
-            // Add dtrackMesh to the RenderItems collection
-            frame.AddPrimitive(dtrackMaterial, dtrackMesh, RenderPrimitiveGroup.World, ref xnaXfmWrtCamTile, ShapeFlags.AutoZBias);
+            int lastIndex;
+            // Add in-view LODs to the RenderItems collection
+            if (dtrackMesh.TrProfile.LODMethod == TrProfile.LODMethods.CompleteReplacement)
+            {
+                // CompleteReplacement case
+                lastIndex = lodIndex; // Add only the LOD that is the first in-view
+            }
+            else
+            {
+                // ComponentAdditive case
+                // Add all LODs from the smallest in-view CutOffRadius to the last
+                lastIndex = dtrackMesh.TrProfile.LODs.Count - 1;
+            }
+            while (lodIndex <= lastIndex)
+            {
+                lod = (LOD)dtrackMesh.TrProfile.LODs[lodIndex];
+                for (int j = lod.PrimIndexStart; j < lod.PrimIndexStop; j++)
+                {
+                    frame.AddPrimitive(dtrackMesh.ShapePrimitives[j].Material, dtrackMesh.ShapePrimitives[j],
+                        RenderPrimitiveGroup.World, ref xnaXfmWrtCamTile, ShapeFlags.AutoZBias);
+                }
+                lodIndex++;
+            }
         } // end PrepareFrame
     } // end DynatrackDrawer
     #endregion
 
     #region DynatrackProfile
-    // A track profile consists of a number of groups used for LOD considerations.  Here, these groups
-    // are called "LODItems."  Each group consists of one of more "polylines".  A polyline is a 
-    // chain of line segments successively interconnected. A polyline of n segments is defined by n+1 "vertices."
-    // (Use of a polyline allows for use of more than single segments.  For example, a ballast LOD could be 
-    // defined as left slope, level, right slope - a single polyline of four vertices.)
 
-    // Track profile file class
+    // A track profile consists of a number of groups used for LOD considerations.  There are LODs,
+    // Levels-Of-Detail, each of which contains subgroups.  Here, these subgroups are called "LODItems."  
+    // Each group consists of one of more "polylines".  A polyline is a chain of line segments successively 
+    // interconnected. A polyline of n segments is defined by n+1 "vertices."  (Use of a polyline allows 
+    // for use of more than single segments.  For example, a ballast LOD could be defined as left slope, 
+    // level, right slope - a single polyline of four vertices.)
+    #region TRPFile
+    /// <summary>
+    ///  Track profile file class
+    /// </summary>
     public class TRPFile
     {
-        // A single track profile member variable
-        public TrProfile TrackProfile;
+        public TrProfile TrackProfile; // Represents the track profile
+        //public RenderProcess RenderProcess; // TODO: Pass this along in function calls
 
-        public TRPFile(string filespec)
+        /// <summary>
+        /// Creates a TRPFile instance from a track profile file (XML or STF) or canned.
+        /// (Precedence is XML [.XML], STF [.DAT], default [canned]).
+        /// </summary>
+        /// <param name="renderProcess">Render process.</param>
+        /// <param name="routePath">Path to route.</param>
+        /// <param name="trpFile">TRPFile created (out).</param>
+        public static void CreateTrackProfile(RenderProcess renderProcess, string routePath, out TRPFile trpFile)
+        {
+            string path = routePath + @"\TrackProfiles";
+            //Establish default track profile
+            if (Directory.Exists(path) && File.Exists(path + @"\TrProfile.xml"))
+            {
+                // XML-style
+                trpFile = new TRPFile(renderProcess, path + @"\TrProfile.xml");
+            }
+            else if (Directory.Exists(path) && File.Exists(path + @"\TrProfile.stf"))
+            {
+                // MSTS-style
+                trpFile = new TRPFile(renderProcess, path + @"\TrProfile.stf");
+            }
+            else
+            {
+                // default
+                trpFile = new TRPFile(renderProcess, "");
+            }
+            // FOR DEBUGGING: Writes XML file from current TRP
+            //TRP.TrackProfile.SaveAsXML(@"C:/Users/Walt/Desktop/TrProfile.xml");
+        } // end CreateTrackProfile
+
+        /// <summary>
+        /// Create TrackProfile from a track profile file.  
+        /// (Defaults on empty or nonexistent filespec.)
+        /// </summary>
+        /// <param name="renderProcess">Render process.</param>
+        /// <param name="filespec">Complete filepath string to track profile file.</param>
+        public TRPFile(RenderProcess renderProcess, string filespec)
         {
             if (filespec == "")
             {
                 // No track profile provided, use default
-                TrackProfile = new TrProfile();
+                TrackProfile = new TrProfile(renderProcess);
                 Trace.Write("(default)");
                 return;
             }
             FileInfo fileInfo = new FileInfo(filespec);
             if (!fileInfo.Exists)
             {
-                TrackProfile = new TrProfile(); // Default profile if no file
+                TrackProfile = new TrProfile(renderProcess); // Default profile if no file
                 Trace.Write("(default)");
             }
             else
             {
                 string fext = filespec.Substring(filespec.LastIndexOf('.')); // File extension
+
                 switch (fext.ToUpper())
                 {
-                    case ".DAT": // MSTS-style
+                    case ".STF": // MSTS-style
                         using (STFReader stf = new STFReader(filespec, false))
                         {
                             // "EXPERIMENTAL" header is temporary
-                            if (stf.SimisSignature != "EXPERIMENTAL")
+                            if (stf.SimisSignature != "SIMISA@@@@@@@@@@JINX0p0t______")
                             {
                                 STFException.TraceError(stf, "Invalid header - file will not be processed. Using DEFAULT profile.");
-                                TrackProfile = new TrProfile(); // Default profile if no file
+                                TrackProfile = new TrProfile(renderProcess); // Default profile if no file
                             }
                             else
                                 try
                                 {
                                     stf.ParseBlock(new STFReader.TokenProcessor[] {
-                                        new STFReader.TokenProcessor("trprofile", ()=>{ TrackProfile = new TrProfile(stf); }),
+                                        new STFReader.TokenProcessor("trprofile", ()=>{ TrackProfile = new TrProfile(renderProcess, stf); }),
                                     });
                                 }
                                 catch (Exception e)
                                 {
-                                    STFException.TraceError(stf, "Track profile DAT constructor failed because " + e.Message + ". Using DEFAULT profile.");
-                                    TrackProfile = new TrProfile(); // Default profile if no file
+                                    STFException.TraceError(stf, "Track profile STF constructor failed because " + e.Message + ". Using DEFAULT profile.");
+                                    TrackProfile = new TrProfile(renderProcess); // Default profile if no file
                                 }
                                 finally
                                 {
                                     if (TrackProfile == null)
                                     {
-                                        STFException.TraceError(stf, "Track profile DAT constructor failed. Using DEFAULT profile.");
-                                        TrackProfile = new TrProfile(); // Default profile if no file
+                                        STFException.TraceError(stf, "Track profile STF constructor failed. Using DEFAULT profile.");
+                                        TrackProfile = new TrProfile(renderProcess); // Default profile if no file
                                     }
                                 }
                         }
-                        Trace.Write("(.DAT)");
+                        Trace.Write("(.STF)");
                         break;
+
                     case ".XML": // XML-style
                         // Convention: .xsd filename must be the same as .xml filename and in same path.
                         // Form filespec for .xsd file
@@ -305,47 +374,19 @@ namespace ORTS
                         // Create an XML reader for the .xml file
                         using (XmlReader reader = XmlReader.Create(filespec, settings))
                         {
-                            TrackProfile = new TrProfile(reader);
+                            TrackProfile = new TrProfile(renderProcess, reader);
                         }
                         Trace.Write("(.XML)");
                         break;
+
                     default:
                         // File extension not supported; create a default track profile
-                        TrackProfile = new TrProfile();
+                        TrackProfile = new TrProfile(renderProcess);
                         Trace.Write("(default)");
                         break;
                 } // end switch
-            }
+            } // else
         } // end TRPFile constructor
-
-        /// <summary>
-        /// Creates a TRPFile instance from a track profile file (XML or STF) or canned.
-        /// (Precedence is XML [.XML], STF [.DAT], default [canned]).
-        /// </summary>
-        /// <param name="routePath">Path to route.</param>
-        /// <param name="trpFile">TRPFile created (out).</param>
-        public static void CreateTrackProfile(string routePath, out TRPFile trpFile)
-        {
-            //Establish default track profile
-            //Trace.Write(" TRP");
-            if (Directory.Exists(routePath) && File.Exists(routePath + @"\TrProfile.xml"))
-            {
-                // XML-style
-                trpFile = new TRPFile(routePath + @"\TrProfile.xml");
-            }
-            else if (Directory.Exists(routePath) && File.Exists(routePath + @"\TrProfile.dat"))
-            {
-                // MSTS-style
-                trpFile = new TRPFile(routePath + @"\TrProfile.dat");
-            }
-            else
-            {
-                // default
-                trpFile = new TRPFile("");
-            }
-            // FOR DEBUGGING: Writes XML file from current TRP
-            //TRP.TrackProfile.SaveAsXML(@"C:/Users/Walt/Desktop/TrProfile.xml");
-        } // end CreateTrackProfile
 
         // ValidationEventHandler callback function
         void ValidationCallback(object sender, ValidationEventArgs args)
@@ -367,74 +408,240 @@ namespace ORTS
 
     } // end class TRPFile
 
+    #endregion
+
+    #region TrProfile
+
     // Dynamic track profile class
     public class TrProfile
     {
-        // NumVertices and NumSegments used for sizing vertex and index buffers
-        public uint NumVertices;                     // Total independent vertices in profile
-        public uint NumSegments;                     // Total line segment count in profile
+        #region Class Variables
+        RenderProcess RenderProcess;
+        string RoutePath;
 
-        public ArrayList LODItems = new ArrayList(); // Array of profile items corresponding to levels-of-detail
+        public string Name; // e.g., "Default track profile"
+        public int ReplicationPitch; //TBD: Replication pitch alternative
+        public LODMethods LODMethod = LODMethods.None; // LOD method of control
+        public float ChordSpan; // Base method: No. of profiles generated such that span is ChordSpan degrees
+        // If a PitchControl is defined, then the base method is compared to the PitchControl method,
+        // and the ChordSpan is adjusted to compensate.
+        public PitchControls PitchControl = PitchControls.None; // Method of control for profile replication pitch
+        public float PitchControlScalar; // Scalar parameter for PitchControls
+        public ArrayList LODs = new ArrayList(); // Array of Levels-Of-Detail
+        #endregion
 
-        public string Name;                          // e.g., "Default track profile"
-        public string Image1Name = "";               // For primary texture image file name
-        public string Image1sName = "";              // For wintertime alternate
-        public string Image2Name = "";               // For secondary texture image file name
+        #region Enumerations
+        /// <summary>
+        /// Enumeration of LOD control methods
+        /// </summary>
+        public enum LODMethods
+        {
+            /// <summary>
+            /// None -- No LODMethod specified; defaults to ComponentAdditive.
+            /// </summary>
+            None = 0,
+
+            /// <summary>
+            /// ComponentAdditive -- Each LOD is a COMPONENT that is ADDED as the camera gets closer.
+            /// </summary>
+            ComponentAdditive = 1,
+
+            /// <summary>
+            /// CompleteReplacement -- Each LOD group is a COMPLETE model that REPLACES another as the camera moves.
+            /// </summary>
+            CompleteReplacement = 2
+        } // end enum LODMethods
+
+        /// <summary>
+        /// Enumeration of cross section replication pitch control methods.
+        /// </summary>
+        public enum PitchControls
+        {
+            /// <summary>
+            /// None -- No pitch control method specified.
+            /// </summary>
+            None = 0,
+
+            /// <summary>
+            /// ChordLength -- Constant length of chord.
+            /// </summary>
+            ChordLength,
+
+            /// <summary>
+            /// Chord Displacement -- Constant maximum displacement of chord from arc.
+            /// </summary>
+            ChordDisplacement
+        } // end enum PitchControls
+
+        #endregion
+
+        #region TrProfile Constructors
+
+        /// <summary>
+        /// TrProfile constructor (default - builds from self-contained data)
+        /// <param name="renderProcess">RenderProcess.</param>
+        /// </summary>
+        public TrProfile(RenderProcess renderProcess) 
+        {
+            // Default TrProfile constructor
+            RenderProcess = renderProcess;
+            RoutePath = renderProcess.Viewer.Simulator.RoutePath;
+
+            Name = "Default Dynatrack profile";
+            LODMethod = LODMethods.ComponentAdditive;
+            ChordSpan = 1.0f; // Base Method: Generates profiles spanning no more than 1 degree
+
+            PitchControl = PitchControls.ChordLength;       // Target chord length
+            PitchControlScalar = 10.0f;                     // Hold to no more than 10 meters
+            //PitchControl = PitchControls.ChordDisplacement; // Target chord displacement from arc
+            //PitchControlScalar = 0.034f;                    // Hold to no more than 34 mm (half rail width)
+
+            LOD lod;            // Local LOD instance
+            LODItem lodItem;    // Local LODItem instance
+            Polyline pl;        // Local Polyline instance
+
+            // RAILSIDES
+            lod = new LOD(700.0f); // Create LOD for railsides with specified CutoffRadius
+            lodItem = new LODItem("Railsides");
+            lodItem.TexName = "acleantrack2.ace";
+            lodItem.ShaderName = "TexDiff";
+            lodItem.LightModelName = "OptSpecular0";
+            lodItem.AlphaTestMode = 0;
+            lodItem.TexAddrModeName = "Wrap";
+            lodItem.ESD_Alternative_Texture = 0;
+            lodItem.MipMapLevelOfDetailBias = 0;
+            lodItem.LoadMaterial(RenderProcess, lodItem);
+
+            pl = new Polyline(this, "left_outer", 2);
+            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
+            pl.Vertices.Add(new Vertex(-.8675f, .200f, 0.0f, -1f, 0f, 0f, -.139362f, .101563f));
+            pl.Vertices.Add(new Vertex(-.8675f, .325f, 0.0f, -1f, 0f, 0f, -.139363f, .003906f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+
+            pl = new Polyline(this, "left_inner", 2);
+            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
+            pl.Vertices.Add(new Vertex(-.7175f, .325f, 0.0f, 1f, 0f, 0f, -.139363f, .003906f));
+            pl.Vertices.Add(new Vertex(-.7175f, .200f, 0.0f, 1f, 0f, 0f, -.139362f, .101563f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+
+            pl = new Polyline(this, "right_inner", 2);
+            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
+            pl.Vertices.Add(new Vertex(.7175f, .200f, 0.0f, -1f, 0f, 0f, -.139362f, .101563f));
+            pl.Vertices.Add(new Vertex(.7175f, .325f, 0.0f, -1f, 0f, 0f, -.139363f, .003906f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+
+            pl = new Polyline(this, "right_outer", 2);
+            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
+            pl.Vertices.Add(new Vertex(.8675f, .325f, 0.0f, 1f, 0f, 0f, -.139363f, .003906f));
+            pl.Vertices.Add(new Vertex(.8675f, .200f, 0.0f, 1f, 0f, 0f, -.139362f, .101563f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+
+            lod.LODItems.Add(lodItem); // Append this LODItem to LODItems array
+            LODs.Add(lod); // Append this LOD to LODs array
+            
+            // RAILTOPS
+            lod = new LOD(1200.0f); // Create LOD for railtops with specified CutoffRadius
+            // Single LODItem in this case
+            lodItem = new LODItem("Railtops");
+            lodItem.TexName = "acleantrack2.ace";
+            lodItem.ShaderName = "TexDiff";
+            lodItem.LightModelName = "OptSpecular25";
+            lodItem.AlphaTestMode = 0;
+            lodItem.TexAddrModeName = "Wrap";
+            lodItem.ESD_Alternative_Texture = 0;
+            lodItem.MipMapLevelOfDetailBias = 0;
+            lodItem.LoadMaterial(RenderProcess, lodItem);
+
+            pl = new Polyline(this, "right", 2);
+            pl.DeltaTexCoord = new Vector2(.0744726f, 0f);
+            pl.Vertices.Add(new Vertex(-.8675f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .126953f));
+            pl.Vertices.Add(new Vertex(-.7175f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .224609f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+   
+            pl = new Polyline(this, "left", 2);
+            pl.DeltaTexCoord = new Vector2(.0744726f, 0f);
+            pl.Vertices.Add(new Vertex(.7175f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .126953f));
+            pl.Vertices.Add(new Vertex(.8675f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .224609f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+
+            lod.LODItems.Add(lodItem); // Append this LODItem to LODItems array
+            LODs.Add(lod); // Append this LOD to LODs array
+
+            // BALLAST
+            lod = new LOD(2000.0f); // Create LOD for ballast with specified CutoffRadius
+            // Single LODItem in this case
+            lodItem = new LODItem("Ballast");
+            lodItem.TexName = "acleantrack1.ace";
+            lodItem.ShaderName = "BlendATexDiff";
+            lodItem.LightModelName = "OptSpecular0";
+            lodItem.AlphaTestMode = 0;
+            lodItem.TexAddrModeName = "Wrap";
+            lodItem.ESD_Alternative_Texture = 1;
+            lodItem.MipMapLevelOfDetailBias = -1f;
+            lodItem.LoadMaterial(RenderProcess, lodItem);
+
+            pl = new Polyline(this, "ballast", 2);
+            pl.DeltaTexCoord = new Vector2(0.0f, 0.2088545f);
+            pl.Vertices.Add(new Vertex(-2.5f, 0.2f, 0.0f, 0f, 1f, 0f, -.153916f, -.280582f));
+            pl.Vertices.Add(new Vertex(2.5f, 0.2f, 0.0f, 0f, 1f, 0f, .862105f, -.280582f));
+            lodItem.Polylines.Add(pl);
+            lodItem.Accum(pl.Vertices.Count);
+
+            lod.LODItems.Add(lodItem); // Append this LODItem to LODItems array
+            LODs.Add(lod); // Append this LOD to LODs array
+
+        } // end TrProfile() default constructor
 
         /// <summary>
         /// TrProfile constructor from STFReader-style profile file
         /// </summary>
-        public TrProfile(STFReader stf)
+        public TrProfile(RenderProcess renderProcess, STFReader stf)
         {
-            NumVertices = 0;
-            NumSegments = 0;
-
             Name = "Default Dynatrack profile";
-            Image1Name = "acleantrack1.ace";
-            Image1sName = "acleantrack1.ace";
-            Image2Name = "acleantrack2.ace";
 
             stf.MustMatch("(");
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("name", ()=>{ Name = stf.ReadStringBlock(null); }),
-                new STFReader.TokenProcessor("image1name", ()=>{ Image1Name = stf.ReadStringBlock(null); }),
-                new STFReader.TokenProcessor("image1sname", ()=>{ Image1sName = stf.ReadStringBlock(null); }),
-                new STFReader.TokenProcessor("image2name", ()=>{ Image2Name = stf.ReadStringBlock(null); }),
-                new STFReader.TokenProcessor("loditem", ()=>{ LODItems.Add(new LODItem(stf, this)); }),
+                new STFReader.TokenProcessor("lodmethod", ()=> { LODMethod = GetLODMethod(stf.ReadStringBlock(null)); }),
+                new STFReader.TokenProcessor("chordspan", ()=>{ ChordSpan = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                new STFReader.TokenProcessor("pitchcontrol", ()=> { PitchControl = GetPitchControl(stf.ReadStringBlock(null)); }),
+                new STFReader.TokenProcessor("pitchcontrolscalar", ()=>{ PitchControlScalar = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                new STFReader.TokenProcessor("lod", ()=> { LODs.Add(new LOD(renderProcess, stf)); }),
             });
-            // Checks for required member variables: 
-            // Name not required.
-            // Image1Name, Image1sName, and Image2Name initialized as MSTS defaults.
-            if (LODItems.Count == 0) throw new Exception("missing LODItems");
+
+            if (LODs.Count == 0) throw new Exception("missing LODs");
 
         } // end TrProfile(STFReader) constructor
 
         /// <summary>
         /// TrProfile constructor from XML profile file
         /// </summary>
-        public TrProfile(XmlReader reader)
+        public TrProfile(RenderProcess renderProcess, XmlReader reader)
         {
-            NumVertices = 0;
-            NumSegments = 0;
-
             if (reader.IsStartElement())
             {
                 if (reader.Name == "TrProfile")
                 {
                     // root
                     Name = reader.GetAttribute("Name");
-                    Image1Name = reader.GetAttribute("Image1Name");
-                    Image1sName = reader.GetAttribute("Image1sName");
-                    Image2Name = reader.GetAttribute("Image2Name");
+                    LODMethod = GetLODMethod(reader.GetAttribute("LODMethod"));
+                    ChordSpan = float.Parse(reader.GetAttribute("ChordSpan"));
+                    PitchControl = GetPitchControl(reader.GetAttribute("PitchControl"));
+                    PitchControlScalar = float.Parse(reader.GetAttribute("PitchControlScalar"));
                 }
                 else
                 {
                     //TODO: Need to handle ill-formed XML profile
                 }
             }
-
-            string name;
-            LODItem lod = null;
+            LOD lod = null;
+            LODItem lodItem = null;
             Polyline pl = null;
             Vertex v;
             string[] s;
@@ -445,183 +652,219 @@ namespace ORTS
                 {
                     switch (reader.Name)
                     {
+                        case "LOD":
+                            lod = new LOD(float.Parse(reader.GetAttribute("CutoffRadius")));
+                            LODs.Add(lod);
+                            break;
                         case "LODItem":
-                            name = reader.GetAttribute("Name");
-                            lod = new LODItem(name);
-                            lod.Texture = LODDefineTexture(reader.GetAttribute("Texture"));
-                            if (lod.Texture == DynatrackTextures.none) lod.Texture = LODDefaultTexture();
-                            lod.LightingSpecular = float.Parse(reader.GetAttribute("LightingSpecular"));
-                            lod.CutoffRadius = float.Parse(reader.GetAttribute("CutoffRadius"));
-                            lod.MipMapLevelOfDetailBias = float.Parse(reader.GetAttribute("MipMapLevelOfDetailBias"));
-                            lod.AlphaBlendEnable = bool.Parse(reader.GetAttribute("AlphaBlendEnable"));
-                            LODItems.Add(lod);
+                            lodItem = new LODItem(reader.GetAttribute("Name"));
+                            lodItem.TexName = reader.GetAttribute("TexName");
+                            
+                            lodItem.ShaderName = reader.GetAttribute("ShaderName");
+                            lodItem.LightModelName = reader.GetAttribute("LightModelName");
+                            lodItem.AlphaTestMode = int.Parse(reader.GetAttribute("AlphaTestMode"));
+                            lodItem.TexAddrModeName = reader.GetAttribute("TexAddrModeName");
+                            lodItem.ESD_Alternative_Texture = int.Parse(reader.GetAttribute("ESD_Alternative_Texture"));
+                            lodItem.MipMapLevelOfDetailBias = float.Parse(reader.GetAttribute("MipMapLevelOfDetailBias"));
+
+                            lodItem.LoadMaterial(renderProcess, lodItem);
+                            lod.LODItems.Add(lodItem);
                             break;
                         case "Polyline":
                             pl = new Polyline();
                             pl.Name = reader.GetAttribute("Name");
-                            s = reader.GetAttribute("DeltaTexCoord").Split(sep);
+                            s = reader.GetAttribute("DeltaTexCoord").Split(sep, StringSplitOptions.RemoveEmptyEntries);
                             pl.DeltaTexCoord = new Vector2(float.Parse(s[0]), float.Parse(s[1]));
-                            lod.Polylines.Add(pl);
+                            lodItem.Polylines.Add(pl);
                             break;
                         case "Vertex":
                             v = new Vertex();
-                            s = reader.GetAttribute("Position").Split(sep);
+                            s = reader.GetAttribute("Position").Split(sep, StringSplitOptions.RemoveEmptyEntries);
                             v.Position = new Vector3(float.Parse(s[0]), float.Parse(s[1]), float.Parse(s[2]));
-                            s = reader.GetAttribute("Normal").Split(sep);
+                            s = reader.GetAttribute("Normal").Split(sep, StringSplitOptions.RemoveEmptyEntries);
                             v.Normal = new Vector3(float.Parse(s[0]), float.Parse(s[1]), float.Parse(s[2]));
-                            s = reader.GetAttribute("TexCoord").Split(sep);
+                            s = reader.GetAttribute("TexCoord").Split(sep, StringSplitOptions.RemoveEmptyEntries);
                             v.TexCoord = new Vector2(float.Parse(s[0]), float.Parse(s[1]));
                             pl.Vertices.Add(v);
-                            NumVertices++; // Bump vertex count
-                            if (pl.Vertices.Count > 1) NumSegments++;
+                            lodItem.NumVertices++; // Bump vertex count
+                            if (pl.Vertices.Count > 1) lodItem.NumSegments++;
                             break;
                         default:
                             break;
                     }
                 }
             }
+            if (LODs.Count == 0) throw new Exception("missing LODs");
         } // end TrProfile(XmlReader) constructor
 
         /// <summary>
-        /// LODDefineTexture returns a texture based on the texture identifier string.
-        /// </summary>
-        public DynatrackTextures LODDefineTexture(string textureID)
-        {
-            DynatrackTextures texture;
-            switch (textureID)
-            {
-                case "Image1":
-                    texture = DynatrackTextures.Image1;
-                    break;
-                case "Image1s":
-                    texture = DynatrackTextures.Image1s;
-                    break;
-                case "Image2":
-                    texture = DynatrackTextures.Image2;
-                    break;
-                case null: // No Texture attribute in the LOD 
-                    texture = DynatrackTextures.none;
-                    break;
-                default: // Everything else
-                    texture = DynatrackTextures.Image1;
-                    Trace.TraceWarning("Texture " + texture + "not defined; substituting Image1.");
-                    break;
-            } // end switch (texture)
-            return texture;
-        } // end LODDefineTexture
-
-        /// <summary>
-        /// LODDefaultTexture returns the texture used by the last LOD unless this is the first LOD,
-        /// in which case it returns Image1. 
-        /// </summary>
-        public DynatrackTextures LODDefaultTexture()
-        {
-                // Use the texture from the last LOD
-                int lastIndex = this.LODItems.Count - 1;
-                if (lastIndex > 0) return ((LODItem)this.LODItems[lastIndex]).Texture;
-                else
-                {
-                    // If this is the first LOD in the profile and there is no Texture,
-                    // use Image1 and flag this with a warning message.
-                    Trace.TraceWarning("No Texture specified in initial LOD of track profile; substituting Image1.");
-                    return DynatrackTextures.Image1;
-                }
-        } // end LODDefaultTexture
-
-        /// <summary>
         /// TrProfile constructor (default - builds from self-contained data)
+        /// <param name="renderProcess">RenderProcess.</param>
+        /// <param name="x">Parameter x is a placeholder.</param>
         /// </summary>
-        public TrProfile() // Nasty: void return type is not allowed. (See MSDN for compiler error CS0542.)
+        public TrProfile(RenderProcess renderProcess, int x)
         {
             // Default TrProfile constructor
-            LODItem lod; // Local LODItem instance
-            Polyline pl; // Local polyline instance
-
-            // We're going to be counting vertices and segments as we create them; so intialize:
-            NumVertices = 0;
-            NumSegments = 0;
-
+            RenderProcess = renderProcess;
+            RoutePath = renderProcess.Viewer.Simulator.RoutePath;
             Name = "Default Dynatrack profile";
-            Image1Name = "acleantrack1.ace";
-            Image1sName = "acleantrack1.ace";
-            Image2Name = "acleantrack2.ace";
+        } // end TrProfile() constructor for inherited class
 
-            // Make ballast
-            lod = new LODItem("Ballast");
-            lod.CutoffRadius = 2000.0f;
-            lod.MipMapLevelOfDetailBias = -1;
-            lod.AlphaBlendEnable = true;
-            lod.LightingSpecular = 0;
-            lod.Texture = DynatrackTextures.Image1;
-            LODItems.Add(lod); // Append to LODItems array
+        #endregion
 
-            pl = new Polyline(this, "ballast", 2);
-            pl.DeltaTexCoord = new Vector2(0.0f, 0.2088545f);
-            pl.Vertices.Add(new Vertex(-2.5f, 0.2f, 0.0f, 0f, 1f, 0f, -.153916f, -.280582f));
-            pl.Vertices.Add(new Vertex(2.5f, 0.2f, 0.0f, 0f, 1f, 0f, .862105f, -.280582f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
-            
-            // make railtops
-            lod = new LODItem("Railtops");
-            lod.CutoffRadius = 1200.0f;
-            lod.MipMapLevelOfDetailBias = 0;
-            lod.AlphaBlendEnable = false;
-            lod.LightingSpecular = 25;
-            lod.Texture = DynatrackTextures.Image2;
-            LODItems.Add(lod); // Append to LODItems array
+        #region TrProfile Helpers
+        /// <summary>
+        /// Gets a member of the LODMethods enumeration that corresponds to sLODMethod.
+        /// </summary>
+        /// <param name="sLODMethod">String that identifies desired LODMethod.</param>
+        /// <returns>LODMethod</returns>
+        public LODMethods GetLODMethod(string sLODMethod)
+        {
+            string s = sLODMethod.ToLower();
+            switch (s)
+            {
+                case "none":
+                    return LODMethods.None;
 
-            pl = new Polyline(this, "right", 2);
-            pl.DeltaTexCoord = new Vector2(.0744726f, 0f);
-            pl.Vertices.Add(new Vertex(-.8675f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .126953f));
-            pl.Vertices.Add(new Vertex(-.7175f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .224609f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
-   
-            pl = new Polyline(this, "left", 2);
-            pl.DeltaTexCoord = new Vector2(.0744726f, 0f);
-            pl.Vertices.Add(new Vertex(.7175f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .126953f));
-            pl.Vertices.Add(new Vertex(.8675f, .325f, 0.0f, 0f, 1f, 0f, .232067f, .224609f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
+                case "completereplacement":
+                    return LODMethods.CompleteReplacement;
 
-            // make railsides
-            lod = new LODItem("Railsides");
-            lod.CutoffRadius = 700.0f;
-            lod.MipMapLevelOfDetailBias = 0;
-            lod.AlphaBlendEnable = false;
-            lod.LightingSpecular = 0;
-            lod.Texture = DynatrackTextures.Image2;
-            LODItems.Add(lod); // Append to LODItems array
+                case "componentadditive":
+                default:
+                    return LODMethods.ComponentAdditive;
+            }
+        } // end GetLODMethod
 
-            pl = new Polyline(this, "left_outer", 2);
-            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
-            pl.Vertices.Add(new Vertex(-.8675f, .200f, 0.0f, -1f, 0f, 0f, -.139362f, .101563f));
-            pl.Vertices.Add(new Vertex(-.8675f, .325f, 0.0f, -1f, 0f, 0f, -.139363f, .003906f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
+        /// <summary>
+        /// Gets a member of the PitchControls enumeration that corresponds to sPitchControl.
+        /// </summary>
+        /// <param name="sPitchControl">String that identifies desired PitchControl.</param>
+        /// <returns></returns>
+        public PitchControls GetPitchControl(string sPitchControl)
+        {
+            string s = sPitchControl.ToLower();
+            switch (s)
+            {
+                case "chordlength":
+                    return PitchControls.ChordLength;
 
-            pl = new Polyline(this, "left_inner", 2);
-            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
-            pl.Vertices.Add(new Vertex(-.7175f, .325f, 0.0f, 1f, 0f, 0f, -.139363f, .003906f));
-            pl.Vertices.Add(new Vertex(-.7175f, .200f, 0.0f, 1f, 0f, 0f, -.139362f, .101563f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
+                case "chorddisplacement":
+                    return PitchControls.ChordDisplacement;
 
-            pl = new Polyline(this, "right_inner", 2); 
-            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
-            pl.Vertices.Add(new Vertex(.7175f, .200f, 0.0f, -1f, 0f, 0f, -.139362f, .101563f));
-            pl.Vertices.Add(new Vertex(.7175f, .325f, 0.0f, -1f, 0f, 0f, -.139363f, .003906f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
-            
-            pl = new Polyline(this, "right_outer", 2); 
-            pl.DeltaTexCoord = new Vector2(.1673372f, 0f);
-            pl.Vertices.Add(new Vertex(.8675f, .325f, 0.0f, 1f, 0f, 0f, -.139363f, .003906f));
-            pl.Vertices.Add(new Vertex(.8675f, .200f, 0.0f, 1f, 0f, 0f, -.139362f, .101563f));
-            lod.Polylines.Add(pl);
-            Accum(pl.Vertices.Count);
-        } // end TrProfile() constructor
+                case "none":
+                default:
+                    return PitchControls.None; ;
+
+            }
+        } // end GetPitchControl
+        #endregion
+
+    } // end class TrProfile
+
+    #endregion
+
+    #region LOD
+
+    public class LOD
+    {
+        public float CutoffRadius; // Distance beyond which LODItem is not seen
+        public ArrayList LODItems = new ArrayList(); // Array of arrays of LODItems
+        public int PrimIndexStart = 0; // Start index of ShapePrimitive block for this LOD
+        public int PrimIndexStop = 0;
+
+        /// <summary>
+        /// LOD class constructor
+        /// </summary>
+        /// <param name="cutoffRadius">Distance beyond which LODItem is not seen</param>
+        public LOD(float cutoffRadius)
+        {
+            CutoffRadius = cutoffRadius;
+        }
+
+        public LOD(RenderProcess renderProcess, STFReader stf)
+        {
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("cutoffradius", ()=>{ CutoffRadius = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                new STFReader.TokenProcessor("loditem", ()=>{
+                    LODItem lodItem = new LODItem(renderProcess, stf);
+                    LODItems.Add(lodItem); // Append to Polylines array
+                    }),
+            });
+            if (CutoffRadius == 0) throw new Exception("missing CutoffRadius");
+        }
+    } // end class LOD
+
+    #endregion
+
+    #region LODItem
+
+    public class LODItem
+    {
+        #region Class Variables
+        public ArrayList Polylines = new ArrayList();  // Array of arrays of vertices 
+        
+        public string Name;                            // e.g., "Rail sides"
+        public string ShaderName;
+        public string LightModelName;
+        public int AlphaTestMode;
+        public string TexAddrModeName;
+        public int ESD_Alternative_Texture; // Equivalent to that of .sd file
+        public float MipMapLevelOfDetailBias;
+
+        public string TexName; // Texture file name
+        
+        public Material LODMaterial; // SceneryMaterial reference
+
+        // NumVertices and NumSegments used for sizing vertex and index buffers
+        public uint NumVertices = 0;                     // Total independent vertices in LOD
+        public uint NumSegments = 0;                     // Total line segment count in LOD
+
+        #endregion
+
+        #region LODItem Constructors
+
+        /// <summary>
+        /// LODITem constructor (used for default and XML-style profiles)
+        /// </summary>
+        public LODItem(string name)
+        {
+            Name = name;
+        } // end LODItem() constructor
+
+        /// <summary>
+        /// LODITem constructor (used for STF-style profile)
+        /// </summary>
+        public LODItem(RenderProcess renderProcess, STFReader stf)
+        {
+            stf.MustMatch("(");
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("name", ()=>{ Name = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("texname", ()=>{ TexName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("shadername", ()=>{ ShaderName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("lightmodelname", ()=>{ LightModelName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("alphatestmode", ()=>{ AlphaTestMode = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("texaddrmodename", ()=>{ TexAddrModeName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("esd_alternative_texture", ()=>{ ESD_Alternative_Texture = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("mipmaplevelofdetailbias", ()=>{ MipMapLevelOfDetailBias = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("polyline", ()=>{
+                    Polyline pl = new Polyline(stf);
+                    Polylines.Add(pl); // Append to Polylines array
+                    //parent.Accum(pl.Vertices.Count); }),
+                    Accum(pl.Vertices.Count); }),
+            });
+
+            // Checks for required member variables:
+            // Name not required.
+            // MipMapLevelOfDetail bias initializes to 0.
+            if (Polylines.Count == 0) throw new Exception("missing Polylines");
+
+            LoadMaterial(renderProcess, this);
+        } // end LODItem() constructor
+
+        #endregion
+
+        #region LODItem Helpers
 
         public void Accum(int count)
         {
@@ -631,94 +874,33 @@ namespace ORTS
             NumSegments += (uint)count - 1;
         } // end Accum
 
-    } // end class TrProfile
-
-    public class LODItem
-    {
-        public ArrayList Polylines = new ArrayList();  // Array of arrays of vertices 
-        
-        public string Name;                            // e.g., "Rail sides"
-        public float CutoffRadius;                     // Distance beyond which LOD is not seen
-        public float MipMapLevelOfDetailBias;
-        public float LightingSpecular;
-        public bool AlphaBlendEnable;
-        public DynatrackTextures Texture;
-
-        /// <summary>
-        /// LODITem constructor (default &amp; XML)
-        /// </summary>
-        public LODItem(string name)
+        public void LoadMaterial(RenderProcess renderProcess, LODItem lod)
         {
-            Name = name;
-        } // end LODItem() constructor
+            string texturePath = Helpers.GetTextureFolder(renderProcess.Viewer, lod.ESD_Alternative_Texture);
+            string textureName = texturePath + @"\" + lod.TexName;
+            int options = Helpers.EncodeMaterialOptions(lod); 
+            lod.LODMaterial = Materials.Load(renderProcess, "SceneryMaterial", textureName, options, lod.MipMapLevelOfDetailBias);
+        }
 
-        /// <summary>
-        /// LODITem constructor (DAT)
-        /// </summary>
-        public LODItem(STFReader stf, TrProfile parent)
-        {
-            stf.MustMatch("(");
-            stf.ParseBlock(new STFReader.TokenProcessor[] {
-                new STFReader.TokenProcessor("name", ()=>{ Name = stf.ReadStringBlock(null); }),
-                new STFReader.TokenProcessor("cutoffradius", ()=>{ CutoffRadius = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
-                new STFReader.TokenProcessor("mipmaplevelofdetailbias", ()=>{ MipMapLevelOfDetailBias = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("alphablendenable", ()=>{ AlphaBlendEnable = stf.ReadBoolBlock(true); }),
-                new STFReader.TokenProcessor("lightingspecular", ()=>{ LightingSpecular = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("texture", ()=> { Texture = parent.LODDefineTexture(stf.ReadStringBlock(null));
-                }),
-                new STFReader.TokenProcessor("polyline", ()=>{
-                    Polyline pl = new Polyline(stf);
-                    Polylines.Add(pl); // Append to Polylines array
-                    parent.Accum(pl.Vertices.Count);
-                }),
-            });
-
-            // Checks for required member variables:
-            // Name not required.
-            if (Texture == DynatrackTextures.none) Texture = parent.LODDefaultTexture();
-            if (CutoffRadius == 0) throw new Exception("missing CutoffRadius");
-            // MipMapLevelOfDetail bias initializes to 0.
-            // AlphaBlendEnable initializes to false.
-            if (Polylines.Count == 0) throw new Exception("missing Polylines");
-            if (Texture == DynatrackTextures.none)
-            {
-                // Texture is not defined in the LOD; use the texture from the last LOD
-                int lastIndex = parent.LODItems.Count - 1;
-                if (lastIndex > 0) Texture = ((LODItem)parent.LODItems[lastIndex]).Texture;
-                else
-                {
-                    // If this is the first LOD in the profile and there is no Texture,
-                    // use Image1 and flag this with a warning message.
-                    Texture = DynatrackTextures.Image1;
-                    Trace.TraceWarning("No Texture specified in initial LOD of track profile; substituting Image1.");
-                }
-            }
-
-        } // end LODItem() constructor
+        #endregion
     } // end class LODItem
+
+    #endregion
+
+    #region Polyline
 
     public class Polyline
     {
+        #region Class Variables
         public ArrayList Vertices = new ArrayList();    // Array of vertices 
  
         public string Name;                             // e.g., "1:1 embankment"
         public Vector2 DeltaTexCoord;                   // Incremental change in (u, v) from one cross section to the next
 
-        /// <summary>
-        /// Bare-bones Polyline constructor (used for XML)
-        /// </summary>
-        public Polyline()
-        {
-        }
- 
-        /// <summary>
-        /// Polyline constructor (default)
-        /// </summary>
-        public Polyline(TrProfile parent, string name, uint num) 
-        {
-            Name = name;
-        } // end Polyline() constructor
+        #endregion
 
+        #region Polyline Constructors
+ 
         /// <summary>
         /// Polyline constructor (DAT)
         /// </summary>
@@ -726,7 +908,7 @@ namespace ORTS
         {
             stf.MustMatch("(");
             stf.ParseBlock(new STFReader.TokenProcessor[] {
-                new STFReader.TokenProcessor("name", ()=>{ stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("name", ()=>{ Name = stf.ReadStringBlock(null); }),
                 new STFReader.TokenProcessor("vertex", ()=>{ Vertices.Add(new Vertex(stf)); }),
                 new STFReader.TokenProcessor("deltatexcoord", ()=>{
                     stf.MustMatch("(");
@@ -740,7 +922,29 @@ namespace ORTS
             if (DeltaTexCoord == Vector2.Zero) throw new Exception("missing DeltaTexCoord");
             if (Vertices.Count == 0) throw new Exception("missing Vertices");
         } // end Polyline() constructor
+
+        /// <summary>
+        /// Bare-bones Polyline constructor (used for XML)
+        /// </summary>
+        public Polyline()
+        {
+        }
+
+        /// <summary>
+        /// Polyline constructor (default)
+        /// </summary>
+        public Polyline(TrProfile parent, string name, uint num)
+        {
+            Name = name;
+        } // end Polyline() constructor
+
+        #endregion
+
     } // end Polyline
+
+    #endregion
+
+    #region Vertex Struct
 
     public struct Vertex
     {
@@ -794,49 +998,38 @@ namespace ORTS
         } // end Vertex() constructor
 
     } // end Vertex
+
     #endregion
 
     #region DynatrackMesh
-    public class DynatrackMesh : RenderPrimitive
+    public class DynatrackMesh : ShapePrimitive //RenderPrimitive
     {
-        VertexDeclaration VertexDeclaration;
-        VertexBuffer VertexBuffer;
-        IndexBuffer IndexBuffer;
+        public ShapePrimitive[] ShapePrimitives; // Array of ShapePrimitives
 
-        VertexPositionNormalTexture[] VertexList; // Array of vertices
-        short[] TriangleListIndices;// Array of indices to vertices for triangles
-        uint VertexIndex = 0;       // Index of current position in VertexList
-        uint IndexIndex = 0;        // Index of current position in TriangleListIndices
-        int VertexStride;           // in bytes
-        int NumVertices;            // Number of vertices in the track profile
-        short NumIndices;           // Number of triangle indices
+		public VertexPositionNormalTexture[] VertexList; // Array of vertices
+		public short[] TriangleListIndices;// Array of indices to vertices for triangles
+        public uint VertexIndex = 0;       // Index of current position in VertexList
+		public uint IndexIndex = 0;        // Index of current position in TriangleListIndices
+        //Provided by ShapePrimitive: int NumVertices;            // Number of vertices in the track profile
+		public short NumIndices;           // Number of triangle indices
 
         // LOD member variables:
-        public int DrawIndex;       // Used by Draw to determine which LOD to draw.
-        public int LastIndex;       // Marks last LOD that is in-range
+        //public int FirstIndex;       // Marks first LOD that is in-range
         public Vector3 XNAEnd;      // Location of termination-of-section (as opposed to root)
         public float ObjectRadius;  // Radius of bounding sphere
         public Vector3 MSTSLODCenter; // Center of bounding sphere
-        public struct GridItem
-        {
-            public uint VertexOrigin;// Start index for first vertex in LOD
-            public uint VertexLength;// Number of vertices in LOD
-            public uint IndexOrigin; // Start index for first triangle in LOD
-            public uint IndexLength; // Number of triangle vertex indicies in LOD
-        }
-        public GridItem[] LODGrid;   // Grid matrix
 
         // Geometry member variables:
-        int NumSections;            // Number of cross sections needed to make up a track section.
-        float SegmentLength;        // meters if straight; radians if circular arc
-        Vector3 DDY;                // Elevation (y) change from one cross section to next
-        Vector3 OldV;               // Deviation from centerline for previous cross section
-        Vector3 OldRadius;          // Radius vector to centerline for previous cross section
+		public int NumSections;            // Number of cross sections needed to make up a track section.
+		public float SegmentLength;        // meters if straight; radians if circular arc
+		public Vector3 DDY;                // Elevation (y) change from one cross section to next
+		public Vector3 OldV;               // Deviation from centerline for previous cross section
+		public Vector3 OldRadius;          // Radius vector to centerline for previous cross section
 
         //TODO: Candidates for re-packaging:
-        Matrix sectionRotation;     // Rotates previous profile into next profile position on curve.
-        Vector3 center;             // Center coordinates of curve radius
-        Vector3 radius;             // Radius vector to cross section on curve centerline
+		public Matrix sectionRotation;     // Rotates previous profile into next profile position on curve.
+		public Vector3 center;             // Center coordinates of curve radius
+		public Vector3 radius;             // Radius vector to cross section on curve centerline
 
         // This structure holds the basic geometric parameters of a DT section.
         public struct DtrackData
@@ -846,11 +1039,18 @@ namespace ORTS
             public float param2;    // Radius for circular arc
             public float deltaY;    // Change in elevation (y) from beginning to end of section
         }
-        DtrackData DTrackData;      // Was: DtrackData[] dtrackData;
+        public DtrackData DTrackData;      // Was: DtrackData[] dtrackData;
 
         public uint UiD; // Used for debugging only
 
         public TrProfile TrProfile;
+
+        /// <summary>
+        /// Default constructor
+        /// </summary>
+		public DynatrackMesh()
+		{
+		}
 
         /// <summary>
         /// Constructor.
@@ -875,123 +1075,134 @@ namespace ORTS
                     "DynatrackMesh Constructor detected a multiple-subsection dynamic track section. " +
                     "(SectionIdx = " + dtrack.SectionIdx + ")");
             }
-            // Initialize a scalar DtrackData object
-            DTrackData = new DtrackData();
+            // Populate member DTrackData (a DtrackData struct)
             DTrackData.IsCurved = (int)dtrack.trackSections[0].isCurved;
             DTrackData.param1 = dtrack.trackSections[0].param1;
             DTrackData.param2 = dtrack.trackSections[0].param2;
             DTrackData.deltaY = dtrack.trackSections[0].deltaY;
+
             XNAEnd = endPosition.XNAMatrix.Translation;
 
             TrProfile = renderProcess.Viewer.Simulator.TRP.TrackProfile;
+            // Count all of the LODItems in all the LODs
+            int count = 0;
+            for (int i = 0; i < TrProfile.LODs.Count; i++)
+            {
+                LOD lod = (LOD)TrProfile.LODs[i];
+                count += lod.LODItems.Count;
+            }
+            // Allocate ShapePrimitives array for the LOD count
+            ShapePrimitives = new ShapePrimitive[count];
 
-            // Build the mesh, filling the vertex and triangle index buffers.
-            BuildMesh(worldPosition); // Build vertexList and triangleListIndices
+            // Build the meshes for all the LODs, filling the vertex and triangle index buffers.
+            int primIndex = 0;
+            for (int iLOD = 0; iLOD < TrProfile.LODs.Count; iLOD++)
+            {
+                LOD lod = (LOD)TrProfile.LODs[iLOD];
+                lod.PrimIndexStart = primIndex; // Store start index for this LOD
+                for (int iLODItem = 0; iLODItem < lod.LODItems.Count; iLODItem++)
+                {
+                    // Build vertexList and triangleListIndices
+                    ShapePrimitives[primIndex] = BuildMesh(renderProcess.Viewer, worldPosition, iLOD, iLODItem);
+                    primIndex++;
+                }
+                lod.PrimIndexStop = primIndex; // 1 above last index for this LOD
+            }
 
             if (DTrackData.IsCurved == 0) ObjectRadius = 0.5f * DTrackData.param1; // half-length
             else ObjectRadius = DTrackData.param2 * (float)Math.Sin(0.5 * Math.Abs(DTrackData.param1)); // half chord length
 
-            VertexDeclaration = null;
-            VertexBuffer = null;
-            IndexBuffer = null;
-            InitializeVertexBuffers(renderProcess.GraphicsDevice);
         } // end DynatrackMesh constructor
-
-        public override void Draw(GraphicsDevice graphicsDevice)
-        {
-            if (DrawIndex < 0 || DrawIndex >= TrProfile.LODItems.Count) return;
-
-            graphicsDevice.VertexDeclaration = VertexDeclaration;
-            graphicsDevice.Vertices[0].SetSource(VertexBuffer, 0, VertexStride);
-            graphicsDevice.Indices = IndexBuffer;
-
-            graphicsDevice.DrawIndexedPrimitives(
-                        PrimitiveType.TriangleList,
-                        0,
-                        (int)LODGrid[DrawIndex].VertexOrigin,
-                        (int)LODGrid[DrawIndex].VertexLength,
-                        (int)LODGrid[DrawIndex].IndexOrigin,
-                        (int)LODGrid[DrawIndex].IndexLength / 3);
-        } // end Draw
 
         #region Vertex and triangle index generators
         /// <summary>
-        /// Builds a section of Dynatrack to TrProfile specifications as one vertex buffer and one index buffer.
-        /// The order the buffers are built in reflects the nesting in the TrProfile.  The nesting order is:
-        /// (LOD items (Polylines (Vertices))).  All vertices and indices are built contiguously for an LOD.
+        /// Builds a Dynatrack LOD to TrProfile specifications as one vertex buffer and one index buffer.
+        /// The order in which the buffers are built reflects the nesting in the TrProfile.  The nesting order is:
+        /// (Polylines (Vertices)).  All vertices and indices are built contiguously for an LOD.
         /// </summary>
-        public void BuildMesh(WorldPosition worldPosition)
+        /// <param name="viewer">Viewer.</param>
+        /// <param name="worldPosition">WorldPosition.</param>
+        /// <param name="iLOD">Index of LOD mesh to be generated from profile.</param>
+        /// <param name="iLODItem">Index of LOD mesh following LODs[iLOD]</param>
+        public ShapePrimitive BuildMesh(Viewer3D viewer, WorldPosition worldPosition, int iLOD, int iLODItem)
         {
-            LODGrid = new GridItem[TrProfile.LODItems.Count];
-
             // Call for track section to initialize itself
-            if (DTrackData.IsCurved == 0) LinearGen(); else CircArcGen();
+            if (DTrackData.IsCurved == 0) LinearGen();
+            else CircArcGen();
+
             // Count vertices and indices
-            NumVertices = (int)(TrProfile.NumVertices * NumSections + TrProfile.NumVertices);
-            NumIndices = (short)(TrProfile.NumSegments * NumSections * 6);
+            LOD lod = (LOD)TrProfile.LODs[iLOD];
+            LODItem lodItem = (LODItem)lod.LODItems[iLODItem];
+            NumVertices = (int)(lodItem.NumVertices * (NumSections + 1));
+            NumIndices = (short)(lodItem.NumSegments * NumSections * 6);
             // (Cells x 2 triangles/cell x 3 indices/triangle)
 
             // Allocate memory for vertices and indices
             VertexList = new VertexPositionNormalTexture[NumVertices]; // numVertices is now aggregate
             TriangleListIndices = new short[NumIndices]; // as is NumIndices
 
-            uint iLOD = 0;
-            foreach (LODItem lod in TrProfile.LODItems) 
+            // Build the mesh for lod
+            VertexIndex = 0;
+            IndexIndex = 0;
+            // Initial load of baseline cross section polylines for this LOD only:
+            foreach (Polyline pl in lodItem.Polylines)
             {
-                LODGrid[iLOD].VertexOrigin = VertexIndex;   // Initial vertex index for this LOD
-                LODGrid[iLOD].IndexOrigin = IndexIndex;     // Initial index index for this LOD
-
-                // Initial load of baseline cross section polylines for this LOD only:
-                foreach (Polyline pl in lod.Polylines)
+                foreach (Vertex v in pl.Vertices)
                 {
+                    VertexList[VertexIndex].Position = v.Position;
+                    VertexList[VertexIndex].Normal = v.Normal;
+                    VertexList[VertexIndex].TextureCoordinate = v.TexCoord;
+                    VertexIndex++;
+                }
+            }
+            // Initial load of base cross section complete
+
+            // Now generate and load subsequent cross sections
+            OldRadius = -center;
+            uint stride = VertexIndex;
+            for (uint i = 0; i < NumSections; i++)
+            {
+                foreach (Polyline pl in lodItem.Polylines)
+                {
+                    uint plv = 0; // Polyline vertex index
                     foreach (Vertex v in pl.Vertices)
                     {
-                        VertexList[VertexIndex].Position = v.Position;
-                        VertexList[VertexIndex].Normal = v.Normal;
-                        VertexList[VertexIndex].TextureCoordinate = v.TexCoord;
-                        VertexIndex++;
-                    }
-                }
-                // Number of vertices and indicies for this LOD only
-                LODGrid[iLOD].VertexLength = VertexIndex - LODGrid[iLOD].VertexOrigin;  
-                LODGrid[iLOD].IndexLength = IndexIndex - LODGrid[iLOD].IndexOrigin;
-                // Initial load of base cross section complete
+                        if (DTrackData.IsCurved == 0) LinearGen(stride, pl); // Generation call
+                        else CircArcGen(stride, pl);
 
-                // Now generate and load subsequent cross sections
-                OldRadius = -center;
-                uint stride = LODGrid[iLOD].VertexLength;
-                for (uint i = 0; i < NumSections; i++)
-                {
-                    foreach (Polyline pl in lod.Polylines)
-                    {
-                        uint plv = 0; // Polyline vertex index
-                        foreach (Vertex v in pl.Vertices)
+                        if (plv > 0)
                         {
-                            if (DTrackData.IsCurved == 0) LinearGen(stride, pl); // Generation call
-                            else CircArcGen(stride, pl);
+                            // Sense for triangles is clockwise
+                            // First triangle:
+                            TriangleListIndices[IndexIndex++] = (short)VertexIndex;
+                            TriangleListIndices[IndexIndex++] = (short)(VertexIndex - 1 - stride);
+                            TriangleListIndices[IndexIndex++] = (short)(VertexIndex - 1);
+                            // Second triangle:
+                            TriangleListIndices[IndexIndex++] = (short)VertexIndex;
+                            TriangleListIndices[IndexIndex++] = (short)(VertexIndex - stride);
+                            TriangleListIndices[IndexIndex++] = (short)(VertexIndex - 1 - stride);
+                        }
+                        VertexIndex++;
+                        plv++;
+                    } // end foreach v  
+                } // end foreach pl
+                OldRadius = radius; // Get ready for next segment
+            } // end for i
 
-                            if (plv > 0)
-                            {
-                                // Sense for triangles is clockwise
-                                // First triangle:
-                                TriangleListIndices[IndexIndex++] = (short)VertexIndex;
-                                TriangleListIndices[IndexIndex++] = (short)(VertexIndex - 1 - stride);
-                                TriangleListIndices[IndexIndex++] = (short)(VertexIndex - 1);
-                                // Second triangle:
-                                TriangleListIndices[IndexIndex++] = (short)VertexIndex;
-                                TriangleListIndices[IndexIndex++] = (short)(VertexIndex - stride);
-                                TriangleListIndices[IndexIndex++] = (short)(VertexIndex - 1 - stride);
-                            }
-                            VertexIndex++;
-                            plv++;
-                        } // end foreach v  
-                    } // end foreach pl
-                    OldRadius = radius; // Get ready for next segment
-                } // end for i
-                LODGrid[iLOD].VertexLength = VertexIndex - LODGrid[iLOD].VertexOrigin;
-                LODGrid[iLOD].IndexLength = IndexIndex - LODGrid[iLOD].IndexOrigin;
-                iLOD++; // Step LOD index
-            } // end foreach lod
+            // Create and populate a new ShapePrimitive
+            ShapePrimitive shapePrimitive = new ShapePrimitive();
+            shapePrimitive.Material = lodItem.LODMaterial;
+            shapePrimitive.Hierarchy = new int[1];
+            shapePrimitive.Hierarchy[0] = -1;
+            shapePrimitive.iHierarchy = 0;
+            shapePrimitive.MinVertex = 0;
+            shapePrimitive.NumVertices = NumVertices;
+            shapePrimitive.IndexCount = NumIndices;
+            shapePrimitive.VertexBufferSet = new SharedShape.VertexBufferSet(VertexList, viewer.GraphicsDevice);
+            shapePrimitive.IndexBuffer = new IndexBuffer(viewer.GraphicsDevice, typeof(short), 
+                                                            NumIndices, BufferUsage.WriteOnly);
+            shapePrimitive.IndexBuffer.SetData(TriangleListIndices);
+            return shapePrimitive;
         } // end BuildMesh
 
         /// <summary>
@@ -1014,11 +1225,35 @@ namespace ORTS
         void CircArcGen()
         {
             // Define the number of track cross sections in addition to the base.
-            // Assume one skewed straight section per degree of curvature
-            NumSections = (int)Math.Abs(MathHelper.ToDegrees(DTrackData.param1));
+            NumSections = (int)(Math.Abs(MathHelper.ToDegrees(DTrackData.param1)) / TrProfile.ChordSpan);
             if (NumSections == 0) NumSections++; // Very small radius track - zero avoidance
-            //numSections = 10; //TESTING
-            // TODO: Generalize count to profile file specification
+
+            // Use pitch control methods
+            switch (TrProfile.PitchControl)
+            {
+                case TrProfile.PitchControls.None:
+                    break; // Good enough
+                case TrProfile.PitchControls.ChordLength:
+                    // Calculate chord length for NumSections
+                    float l = 2.0f * DTrackData.param2 * (float)Math.Sin(0.5f * Math.Abs(DTrackData.param1) / NumSections);
+                    if (l > TrProfile.PitchControlScalar)
+                    {
+                        // Number of sections determined by chord length of PitchControlScalar meters
+                        float chordAngle = 2.0f * (float)Math.Asin(0.5f * TrProfile.PitchControlScalar / DTrackData.param2);
+                        NumSections = (int)Math.Abs((DTrackData.param1 / chordAngle));
+                    }
+                    break;
+                case TrProfile.PitchControls.ChordDisplacement:
+                    // Calculate chord displacement for NumSections
+                    float d = DTrackData.param2 * (float)(1.0f - Math.Cos(0.5f * Math.Abs(DTrackData.param1) / NumSections));
+                    if (d > TrProfile.PitchControlScalar)
+                    {
+                        // Number of sections determined by chord displacement of PitchControlScalar meters
+                        float chordAngle = 2.0f * (float)Math.Acos(1.0f - TrProfile.PitchControlScalar / DTrackData.param2);
+                        NumSections = (int)Math.Abs((DTrackData.param1 / chordAngle));
+                    }
+                    break;
+            }
 
             SegmentLength = DTrackData.param1 / NumSections; // Length of each mesh segment (radians)
             DDY = new Vector3(0, DTrackData.deltaY / NumSections, 0); // Incremental elevation change
@@ -1034,8 +1269,8 @@ namespace ORTS
         /// Generates vertices for a succeeding cross section (straight track).
         /// </summary>
         /// <param name="stride">Index increment between section-to-section vertices.</param>
-        /// <param name="pl"></param>
-        void LinearGen(uint stride, Polyline pl)
+        /// <param name="pl">Polyline.</param>
+        public void LinearGen(uint stride, Polyline pl)
         {
             Vector3 displacement = new Vector3(0, 0, -SegmentLength) + DDY;
             float wrapLength = displacement.Length();
@@ -1054,8 +1289,8 @@ namespace ORTS
         /// /// Generates vertices for a succeeding cross section (circular arc track).
         /// </summary>
         /// <param name="stride">Index increment between section-to-section vertices.</param>
-        /// <param name="pl"></param>
-        void CircArcGen(uint stride, Polyline pl)
+        /// <param name="pl">Polyline.</param>
+        public void CircArcGen(uint stride, Polyline pl)
         {
             // Get the previous vertex about the local coordinate system
             OldV = VertexList[VertexIndex - stride].Position - center - OldRadius;
@@ -1076,28 +1311,8 @@ namespace ORTS
 
         #endregion
 
-        #region Helpers
-
-        /// <summary>
-        /// Initializes the vertex and triangle index list buffers.
-        /// </summary>
-        private void InitializeVertexBuffers(GraphicsDevice graphicsDevice)
-        {
-            if (VertexDeclaration == null)
-            {
-                VertexDeclaration = new VertexDeclaration(graphicsDevice, VertexPositionNormalTexture.VertexElements);
-                VertexStride = VertexPositionNormalTexture.SizeInBytes;
-            }
-            // Initialize the vertex and index buffers, allocating memory for each vertex and index
-            VertexBuffer = new VertexBuffer(graphicsDevice, VertexPositionNormalTexture.SizeInBytes * VertexList.Length, BufferUsage.WriteOnly);
-            VertexBuffer.SetData(VertexList);
-            if (IndexBuffer == null)
-            {
-                IndexBuffer = new IndexBuffer(graphicsDevice, typeof(short), NumIndices, BufferUsage.WriteOnly);
-                IndexBuffer.SetData(TriangleListIndices);
-            }
-        }
-        #endregion
     }
+    #endregion
+
     #endregion
 }

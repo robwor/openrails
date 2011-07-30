@@ -1,12 +1,11 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-
-/// Author: James Ross
-/// 
-/// Train Operations; used to uncouple and put brakes on train cars.
-/// 
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Linq;
@@ -28,7 +27,6 @@ namespace ORTS.Popups
 		public TrainOperationsWindow(WindowManager owner)
 			: base(owner, 600, Window.DecorationSize.Y + CarListHeight + CarListPadding + ControlLayoutScrollbox.ScrollbarSize, "Train Operations")
 		{
-            Align(AlignAt.Middle, AlignAt.Middle);
         }
 
         protected internal override void Initialize()
@@ -55,16 +53,21 @@ namespace ORTS.Popups
 			return hbox;
 		}
 
-		public void UpdateText(ElapsedTime elapsedTime, Train playerTrain)
-		{
-			if ((PlayerTrain != playerTrain) || (playerTrain.Cars.Count != LastPlayerTrainCars))
-			{
-				PlayerTrain = playerTrain;
-				LastPlayerTrainCars = playerTrain.Cars.Count;
-				Layout();
-			}
-			// FIXME
-		}
+        public override void PrepareFrame(ElapsedTime elapsedTime, bool updateFull)
+        {
+            base.PrepareFrame(elapsedTime, updateFull);
+
+            if (updateFull)
+            {
+                if ((PlayerTrain != Owner.Viewer.PlayerTrain) || (Owner.Viewer.PlayerTrain.Cars.Count != LastPlayerTrainCars))
+                {
+                    PlayerTrain = Owner.Viewer.PlayerTrain;
+                    LastPlayerTrainCars = Owner.Viewer.PlayerTrain.Cars.Count;
+                    Layout();
+                }
+                // FIXME
+            }
+        }
 	}
 
 	class TrainOperationsCoupler : Image

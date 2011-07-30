@@ -152,7 +152,7 @@ namespace MSTS
 		public LightTexture(STFReader stf)
 		{
 			stf.MustMatch("(");
-			Name = stf.ReadString();
+			Name = stf.ReadString().ToLowerInvariant();
 			TextureFile = stf.ReadString();
             u0 = stf.ReadFloat(STFReader.UNITS.None, null);
             v0 = stf.ReadFloat(STFReader.UNITS.None, null);
@@ -170,7 +170,7 @@ namespace MSTS
 		public LightTableEntry(STFReader stf)
 		{
 			stf.MustMatch("(");
-			Name = stf.ReadString();
+			Name = stf.ReadString().ToLowerInvariant();
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("colour", ()=>{
 				    stf.MustMatch("(");
@@ -212,7 +212,7 @@ namespace MSTS
             Name = stf.ReadString().ToLowerInvariant();
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("signalfntype", ()=>{ ReadFnType(stf); }),
-                new STFReader.TokenProcessor("signallighttex", ()=>{ LightTextureName = stf.ReadStringBlock(""); }),
+                new STFReader.TokenProcessor("signallighttex", ()=>{ LightTextureName = stf.ReadStringBlock("").ToLowerInvariant(); }),
                 new STFReader.TokenProcessor("signallights", ()=>{ Lights = ReadLights(stf); }),
                 new STFReader.TokenProcessor("signaldrawstates", ()=>{ DrawStates = ReadDrawStates(stf); }),
                 new STFReader.TokenProcessor("signalaspects", ()=>{ Aspects = ReadAspects(stf); }),
@@ -305,7 +305,13 @@ namespace MSTS
                     if (aspects.Count >= aspects.Capacity)
                         STFException.TraceWarning(stf, "Skipped extra SignalAspect");
                     else
-                        aspects.Add(new SignalAspect(stf));
+                    {
+                        var aspect = new SignalAspect(stf);
+                        if (aspects.Any(sa => sa.Aspect == aspect.Aspect))
+                            STFException.TraceWarning(stf, "Skipped SignalAspect with duplicate aspect " + aspect.Aspect);
+                        else
+                            aspects.Add(aspect);
+                    }
                 }),
             });
             return aspects;
@@ -362,12 +368,13 @@ namespace MSTS
 		public readonly string Name;
 		public float X, Y, Z;      // position
 		public float Radius;
+        public bool SemaphoreChange;
 
         public SignalLight(STFReader stf)
         {
             stf.MustMatch("(");
             Index = stf.ReadUInt(STFReader.UNITS.None, null);
-            Name = stf.ReadString();
+            Name = stf.ReadString().ToLowerInvariant();
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("radius", ()=>{ Radius = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
                 new STFReader.TokenProcessor("position", ()=>{
@@ -376,6 +383,15 @@ namespace MSTS
                     Y = stf.ReadFloat(STFReader.UNITS.None, null);
                     Z = stf.ReadFloat(STFReader.UNITS.None, null);
                     stf.SkipRestOfBlock();
+                }),
+                new STFReader.TokenProcessor("signalflags", ()=>{
+                    stf.MustMatch("(");
+                    while (!stf.EndOfBlock())
+                        switch (stf.ReadString().ToLower())
+                        {
+                            case "semaphore_change": SemaphoreChange = true; break;
+                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown SignalLight Flag " + stf.ReadString()); break;
+                        }
                 }),
             });
         }
@@ -391,6 +407,7 @@ namespace MSTS
 		public readonly int Index;
 		public readonly string Name;
 		public IList<SignalDrawLight> DrawLights;
+        public float SemaphorePos;
 
         public SignalDrawState(STFReader stf)
         {
@@ -399,6 +416,7 @@ namespace MSTS
             Name = stf.ReadString().ToLowerInvariant();
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("drawlights", ()=>{ DrawLights = ReadDrawLights(stf); }),
+                new STFReader.TokenProcessor("semaphorepos", ()=>{ SemaphorePos = stf.ReadFloatBlock(STFReader.UNITS.None, 0); }),
             });
         }
 

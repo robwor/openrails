@@ -1,12 +1,12 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Principal Author:
-///    Adam Miles
-/// 
-///     
+﻿// COPYRIGHT 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
+
 using System;
 using System.Diagnostics;
 using Microsoft.Xna.Framework;
@@ -67,6 +67,9 @@ namespace ORTS
 
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
+            emitter.CameraTileXZ.X = Viewer.Camera.TileX;
+            emitter.CameraTileXZ.Y = Viewer.Camera.TileZ;
+
             emitter.Update(Viewer.Simulator.GameTime, elapsedTime);
             //ParticleMaterial.particleEmitterShader.
             
@@ -112,6 +115,8 @@ namespace ORTS
         static int VERTICES_PER_PARTICLE = 4;
         static int PRIMITIVES_PER_PARTICLE = 2;
         static int INDICES_PER_PARTICLE = 6;
+
+        public Vector2 CameraTileXZ = Vector2.Zero;
 
         public ParticleEmitterData EmitterData;
         int maxParticles;
@@ -344,22 +349,31 @@ namespace ORTS
                 if (firstActiveParticle < firstFreeParticle)
                 {
                     int numParticles = firstFreeParticle - firstActiveParticle;
-                    graphicsDevice.DrawIndexedPrimitives(   PrimitiveType.TriangleList, 
-                                                            0,
-                                                            0,
-                                                            numParticles * VERTICES_PER_PARTICLE,
-                                                            firstActiveParticle * INDICES_PER_PARTICLE,
-                                                            numParticles * PRIMITIVES_PER_PARTICLE);//, 0, maxParticles * VERTICES_PER_PARTICLE, 0, maxParticles * PRIMITIVES_PER_PARTICLE);
+                    graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList, 
+                                                         0,
+                                                         firstActiveParticle * VERTICES_PER_PARTICLE,
+                                                         numParticles * VERTICES_PER_PARTICLE,
+                                                         firstActiveParticle * INDICES_PER_PARTICLE,
+                                                         numParticles * PRIMITIVES_PER_PARTICLE);
                 }
                 else
                 {
                     int numParticlesAtEnd = maxParticles - firstActiveParticle;
                     graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList,
-                                                            0, 0, numParticlesAtEnd * VERTICES_PER_PARTICLE, firstActiveParticle * INDICES_PER_PARTICLE, numParticlesAtEnd * PRIMITIVES_PER_PARTICLE);
+                                                         0,
+                                                         firstActiveParticle * VERTICES_PER_PARTICLE,
+                                                         numParticlesAtEnd * VERTICES_PER_PARTICLE,
+                                                         firstActiveParticle * INDICES_PER_PARTICLE,
+                                                         numParticlesAtEnd * PRIMITIVES_PER_PARTICLE);
 
                     if (firstFreeParticle > 0)
                     {
-                        graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, firstFreeParticle * VERTICES_PER_PARTICLE, 0, firstFreeParticle * PRIMITIVES_PER_PARTICLE);
+                        graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList,
+                                                             0,
+                                                             0,
+                                                             firstFreeParticle * VERTICES_PER_PARTICLE,
+                                                             0,
+                                                             firstFreeParticle * PRIMITIVES_PER_PARTICLE);
                     }
                 }
             }

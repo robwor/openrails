@@ -1,16 +1,15 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-
-/// Author: James Ross
-/// 
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using MSTS;
@@ -29,7 +28,6 @@ namespace ORTS.Popups
 		public SwitchWindow(WindowManager owner)
 			: base(owner, Window.DecorationSize.X + 2 * SwitchImageSize, Window.DecorationSize.Y + 2 * SwitchImageSize, "Switch")
 		{
-            Align(AlignAt.Start, AlignAt.Middle);
         }
 
         protected internal override void Initialize()
@@ -62,11 +60,17 @@ namespace ORTS.Popups
 			Owner.Viewer.Simulator.SwitchTrackBehind(Owner.Viewer.PlayerTrain);
 		}
 
-		public void UpdateText(ElapsedTime elapsedTime, Train train)
-		{
-			UpdateSwitch(SwitchForwards, train, true);
-            UpdateSwitch(SwitchBackwards, train, false);
-		}
+        public override void PrepareFrame(ElapsedTime elapsedTime, bool updateFull)
+        {
+            base.PrepareFrame(elapsedTime, updateFull);
+
+            if (updateFull)
+            {
+                var train = Owner.Viewer.PlayerTrain;
+                UpdateSwitch(SwitchForwards, train, true);
+                UpdateSwitch(SwitchBackwards, train, false);
+            }
+        }
 
 		void UpdateSwitch(Image image, Train train, bool front)
 		{

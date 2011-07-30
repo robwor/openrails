@@ -1,7 +1,11 @@
-﻿///
-/// Background process prepares the next frame for rendering.
-/// Handles keyboard and mouse input
-/// 
+﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections.Generic;
@@ -133,17 +137,22 @@ namespace ORTS
 
         RenderFrame CurrentFrame;
         double TotalRealSeconds;
-        double LastTotalRealSeconds;
+        double LastTotalRealSeconds = -1;
 
         [ThreadName("Updater")]
         public void Update()
         {
             Profiler.Start();
 
+            // The first time we update, the TotalRealSeconds will be ~time
+            // taken to load everything. We'd rather not skip that far through
+            // the simulation so the first time we deliberately have an
+            // elapsed real and clock time of 0.0s.
+            if (LastTotalRealSeconds == -1)
+                LastTotalRealSeconds = TotalRealSeconds;
+
             Viewer.RealTime = TotalRealSeconds;
-            var elapsedTime = new ElapsedTime();
-            elapsedTime.RealSeconds = (float)(TotalRealSeconds - LastTotalRealSeconds);
-            elapsedTime.ClockSeconds = Viewer.Simulator.GetElapsedClockSeconds(elapsedTime.RealSeconds);
+            var elapsedTime = new ElapsedTime(Viewer.Simulator.GetElapsedClockSeconds((float)(TotalRealSeconds - LastTotalRealSeconds)), (float)(TotalRealSeconds - LastTotalRealSeconds));
             LastTotalRealSeconds = TotalRealSeconds;
 
             try

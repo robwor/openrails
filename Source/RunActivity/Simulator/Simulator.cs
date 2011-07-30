@@ -21,6 +21,10 @@
 /// is prohibited without specific written permission from admin@openrails.org.
 /// </summary>
 /// 
+
+// Uncommenting the following will enable the experimental route-editing sandbox:
+//#define RE_ENABLED //WaltN
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -636,6 +640,11 @@ namespace ORTS
 
 			Train train = new Train(this);
 
+//WaltN: Temporary facility for track-laying experiments
+#if RE_ENABLED
+            train.EditTrain = new TrackLayer(TDB, TSectionDat); // Creates a TrackLayer for the player train
+#endif
+
 			// This is the position of the back end of the train in the database.
 			PATTraveller patTraveller = new PATTraveller(patFileName);
 			train.RearTDBTraveller = new TDBTraveller(patTraveller.TileX, patTraveller.TileZ, patTraveller.X, patTraveller.Z, 0, TDB, TSectionDat);
@@ -664,6 +673,7 @@ namespace ORTS
 					TrainCar car = RollingStock.Load(this, wagonFilePath, previousCar);
 					car.Flipped = wagon.Flip;
 					car.UiD = wagon.UiD;
+					car.CarID = "0 - " + car.UiD; //player's train is always named train 0.
 					train.Cars.Add(car);
 					car.Train = train;
 					previousCar = car;
@@ -727,6 +737,7 @@ namespace ORTS
 							TrainCar car = RollingStock.Load(this, wagonFilePath, previousCar);
 							car.Flipped = !wagon.Flip;
 							car.UiD = wagon.UiD;
+							car.CarID = activityObject.ID + " - " + car.UiD;
 							train.Cars.Add(car);
 							car.Train = train;
 							previousCar = car;

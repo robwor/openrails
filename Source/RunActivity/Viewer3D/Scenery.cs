@@ -1,3 +1,12 @@
+// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
+
 /* SCENERY
  * 
  * Scenery objects are specified in WFiles located in the WORLD folder of the route.
@@ -22,17 +31,6 @@
  * mesh files and textures wherever possible.
  * 
  */
-/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Principal Author:
-///    Wayne Campbell
-/// Contributors:
-///    Rick Grout
-///    Walt Niehoff
-///     
 
 using System;
 using System.Collections.Generic;
@@ -203,6 +201,8 @@ namespace ORTS
         public List<DynatrackDrawer> dTrackList = new List<DynatrackDrawer>();
         public List<ForestDrawer> forestList = new List<ForestDrawer>();
 		public List<CarSpawner> carSpawners = new List<CarSpawner>();
+		public List<SidingLabel> sidings = new List<SidingLabel>();
+        public List<PlatformLabel> platforms = new List<PlatformLabel>();
 
         /// <summary>
         /// Open the specified WFile and load all the scenery objects into the viewer.
@@ -261,17 +261,29 @@ namespace ORTS
                         // switch tracks need a link to the simulator engine so they can animate the points
                         TrJunctionNode TRJ = viewer.Simulator.TDB.GetTrJunctionNode(TileX, TileZ, (int)trackObj.UID);
                         SceneryObjects.Add(new SwitchTrackShape(viewer, shapeFilePath, worldMatrix, TRJ));
-
+						if (Program.Simulator.Settings.Wire == true && Program.Simulator.TRK.Tr_RouteFile.Electrified == true)
+						{
+							Wire.DecomposeStaticWire(viewer, dTrackList, trackObj, worldMatrix);
+						}
                     }
                     else // it's some type of track other than a switch track
                     {
                         SceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
+						if (Program.Simulator.Settings.Wire == true && Program.Simulator.TRK.Tr_RouteFile.Electrified == true)
+						{
+							Wire.DecomposeStaticWire(viewer, dTrackList, trackObj, worldMatrix);
+						}
                     }
                 }
                 else if (worldObject.GetType() == typeof(MSTS.DyntrackObj))
                 {
-                    // Add DyntrackDrawers for individual subsections
+					if (Program.Simulator.Settings.Wire == true && Program.Simulator.TRK.Tr_RouteFile.Electrified == true)
+					{
+						Wire.DecomposeDynamicWire(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
+					}
+					// Add DyntrackDrawers for individual subsections
                     Dynatrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
+
                 } // end else if DyntrackObj
                 else if (worldObject.GetType() == typeof(MSTS.ForestObj))
                 {
@@ -289,12 +301,18 @@ namespace ORTS
 				}
 				else if (worldObject.GetType() == typeof(MSTS.CarSpawnerObj))
 				{
-                    if (viewer.Simulator.RDB != null && viewer.Simulator.CarSpawnerFile != null)
-                        carSpawners.Add(new CarSpawner((CarSpawnerObj)worldObject, worldMatrix));
-                    else
-                        Trace.TraceWarning("Ignored car spawner {1} in {0} because route has no RDB or carspawn.dat.", WFileName, worldObject.UID);
-                }
-				else // It's some other type of object - not one of the above.
+					if (viewer.Simulator.RDB != null && viewer.Simulator.CarSpawnerFile != null)
+						carSpawners.Add(new CarSpawner((CarSpawnerObj)worldObject, worldMatrix));
+					else
+						Trace.TraceWarning("Ignored car spawner {1} in {0} because route has no RDB or carspawn.dat.", WFileName, worldObject.UID);
+				}
+				else if (worldObject.GetType() == typeof(MSTS.SidingObj)) {
+					sidings.Add(new SidingLabel(viewer, worldMatrix, (SidingObj)worldObject));
+				} 
+                else if (worldObject.GetType() == typeof(MSTS.PlatformObj)) {
+                    platforms.Add(new PlatformLabel(viewer, worldMatrix, (PlatformObj)worldObject));
+                } 
+                else // It's some other type of object - not one of the above.
 				{
 					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
 					SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));

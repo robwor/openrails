@@ -1,4 +1,13 @@
-﻿/* RoadCars
+﻿// COPYRIGHT 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
+
+/* RoadCars
  * 
  * Contains code to represent a train as a list of RoadCarCars and to handle the physics of moving
  * the car through the RDB Database.
@@ -11,11 +20,6 @@
  * 
  * RoadCarDrawer: holds the list of cars currently on the road and update them. This is necessary since a spawner may be
  *             unloaded but cars on the road may not
- * 
-/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
  */
 
 using System;
@@ -108,10 +112,19 @@ namespace ORTS
 
 			//test the road, 1. direction should be 1; 2. dist to the end
 			direction = 1;
-			RDBTraveller CarRDBTraveller = new RDBTraveller(TileX, TileZ, X, Z, direction, Program.Simulator.RDB, Program.Simulator.TSectionDat);
-			if (CarRDBTraveller.MoveTo(TileX2, TileZ2, X2, Y2, Z2) != true) //cannot reach the end, so the direction is wrong
+			RDBTraveller CarRDBTraveller;
+			try
 			{
-				direction = 0;
+				CarRDBTraveller = new RDBTraveller(TileX, TileZ, X, Z, direction, Program.Simulator.RDB, Program.Simulator.TSectionDat);
+				if (CarRDBTraveller.MoveTo(TileX2, TileZ2, X2, Y2, Z2) != true) //cannot reach the end, so the direction is wrong
+				{
+					direction = 0;
+				}
+			}
+			catch (Exception e)
+			{
+				silent = true;
+				return;
 			}
 
 			//dist to the end, need to reset the RDB traveller
@@ -533,13 +546,13 @@ namespace ORTS
 				if (distToCar < 20)
 				{
 					//front is faster, so will increase speed, otherwise, slow a bit
-					if (SpeedMpS < previous.SpeedMpS) SpeedMpS -= (SpeedMpS - previous.SpeedMpS) * elapsedClockSeconds / 2.0f;
+					if (previous != null && SpeedMpS < previous.SpeedMpS) SpeedMpS -= (SpeedMpS - previous.SpeedMpS) * elapsedClockSeconds / 2.0f;
 					else SpeedMpS = desiredSpeed * (0.2f - 0.1f * (20.0f - distToCar) / 20.0f);
 				}
 				else if (distToCar < 40)
 				{
 					//front is faster, so will increase speed, otherwise, slow a bit
-					if (SpeedMpS < previous.SpeedMpS) SpeedMpS -= (SpeedMpS - previous.SpeedMpS) * elapsedClockSeconds / 2.0f;
+					if (previous != null && SpeedMpS < previous.SpeedMpS) SpeedMpS -= (SpeedMpS - previous.SpeedMpS) * elapsedClockSeconds / 2.0f;
 					else SpeedMpS = desiredSpeed * (1.0f - (45.0f - distToCar) / 50.0f);
 				}
 				else

@@ -209,6 +209,40 @@ namespace MSTS
             stf.SkipRestOfBlock();
         }
         public uint ShapeIndex;
+
+		public double angle = -1;
+		public bool AngleComputed = false; //the angle has been set through section file
+
+		public double GetAngle(TSectionDatFile TSectionDat) //get the angle from sections
+		{
+			if (AngleComputed == false)
+			{
+				AngleComputed = true;
+				try //so many things can be in conflict for trackshapes, tracksections etc.
+				{
+					SectionIdx[] SectionIdxs = TSectionDat.TrackShapes.Get(ShapeIndex).SectionIdxs;
+
+					foreach (SectionIdx id in SectionIdxs)
+					{
+						uint[] sections = id.TrackSections;
+
+						for (int i = 0; i < sections.Length; i++)
+						{
+							uint sid = id.TrackSections[i];
+							TrackSection section = TSectionDat.TrackSections[sid];
+
+							if (section.SectionCurve != null)
+							{
+								angle = Math.Abs(section.SectionCurve.Angle);
+								break;
+							}
+						}
+					}
+				}
+				catch (Exception e) { } 
+			}
+			return angle;
+		}
     }
 
     public class TrVectorNode
@@ -295,6 +329,7 @@ namespace MSTS
 
     public class TrItem
     {
+        public string ItemName;   // Used for the label shown by F6
         public enum trItemType
         {
             trEMPTY,
@@ -319,10 +354,7 @@ namespace MSTS
         public float PX, PZ;   
         public float SData1;
         public string SData2;
-        //public TrItem()
-        //{
-
-        //}
+        
         protected void TrItemID(STFReader stf, int idx)
         {
             stf.MustMatch("(");
@@ -358,7 +390,7 @@ namespace MSTS
             SData2 = stf.ReadString();
             stf.SkipRestOfBlock();
         }
-    }
+    } // TrItem
 
     public class CrossoverItem : TrItem
     {
@@ -475,37 +507,6 @@ namespace MSTS
         }
     }
 
-    public class PlatformItem : TrItem
-    {
-        public string PlatformName, Station;
-        public string Flags1;
-        public uint PlatformMinWaitingTime, PlatformNumPassengersWaiting;
-        public uint LinkedPlatformItemId;
-
-        public PlatformItem(STFReader stf, int idx)
-        {
-            ItemType = trItemType.trPLATFORM;
-            stf.MustMatch("(");
-            stf.ParseBlock(new STFReader.TokenProcessor[] {
-                new STFReader.TokenProcessor("tritemid", ()=>{ TrItemID(stf, idx); }),
-                new STFReader.TokenProcessor("tritemrdata", ()=>{ TrItemRData(stf); }),
-                new STFReader.TokenProcessor("tritemsdata", ()=>{ TrItemSData(stf); }),
-                new STFReader.TokenProcessor("tritempdata", ()=>{ TrItemPData(stf); }),
-
-                new STFReader.TokenProcessor("platformname", ()=>{ PlatformName = stf.ReadStringBlock(""); }),
-                new STFReader.TokenProcessor("station", ()=>{ Station = stf.ReadStringBlock(""); }),
-                new STFReader.TokenProcessor("platformminwaitingtime", ()=>{ PlatformMinWaitingTime = stf.ReadUIntBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("platformnumpassengerswaiting", ()=>{ PlatformNumPassengersWaiting = stf.ReadUIntBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("platformtritemdata", ()=>{
-                    stf.MustMatch("(");
-                    Flags1 = stf.ReadString();
-                    LinkedPlatformItemId = stf.ReadUInt(STFReader.UNITS.None, null);
-                    stf.SkipRestOfBlock();
-                }),
-            });
-        }
-    }
-
     public class SoundRegionItem : TrItem
     {
         public uint SRData1, SRData2;
@@ -568,7 +569,6 @@ namespace MSTS
 
     public class SidingItem : TrItem
     {
-        public string SidingName;
         public string Flags1;
         public uint Flags2;
 
@@ -582,11 +582,40 @@ namespace MSTS
                 new STFReader.TokenProcessor("tritemsdata", ()=>{ TrItemSData(stf); }),
                 new STFReader.TokenProcessor("tritempdata", ()=>{ TrItemPData(stf); }),
 
-                new STFReader.TokenProcessor("sidingname", ()=>{ SidingName = stf.ReadStringBlock(""); }),
+                new STFReader.TokenProcessor("sidingname", ()=>{ ItemName = stf.ReadStringBlock(""); }),
                 new STFReader.TokenProcessor("sidingtritemdata", ()=> {
                     stf.MustMatch("(");
                     Flags1 = stf.ReadString();
                     Flags2 = stf.ReadUInt(STFReader.UNITS.None, null);
+                    stf.SkipRestOfBlock();
+                }),
+            });
+        }
+    }
+    
+    public class PlatformItem : TrItem {
+        public string Station;
+        public string Flags1;
+        public uint PlatformMinWaitingTime, PlatformNumPassengersWaiting;
+        public uint LinkedPlatformItemId;
+
+        public PlatformItem(STFReader stf, int idx) {
+        ItemType = trItemType.trPLATFORM;
+        stf.MustMatch("(");
+        stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("tritemid", ()=>{ TrItemID(stf, idx); }),
+                new STFReader.TokenProcessor("tritemrdata", ()=>{ TrItemRData(stf); }),
+                new STFReader.TokenProcessor("tritemsdata", ()=>{ TrItemSData(stf); }),
+                new STFReader.TokenProcessor("tritempdata", ()=>{ TrItemPData(stf); }),
+
+                new STFReader.TokenProcessor("platformname", ()=>{ ItemName = stf.ReadStringBlock(""); }),
+                new STFReader.TokenProcessor("station", ()=>{ Station = stf.ReadStringBlock(""); }),
+                new STFReader.TokenProcessor("platformminwaitingtime", ()=>{ PlatformMinWaitingTime = stf.ReadUIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("platformnumpassengerswaiting", ()=>{ PlatformNumPassengersWaiting = stf.ReadUIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("platformtritemdata", ()=>{
+                    stf.MustMatch("(");
+                    Flags1 = stf.ReadString();
+                    LinkedPlatformItemId = stf.ReadUInt(STFReader.UNITS.None, null);
                     stf.SkipRestOfBlock();
                 }),
             });

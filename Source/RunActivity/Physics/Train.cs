@@ -71,6 +71,7 @@ namespace ORTS
 		public TrackMonitorSignalAspect TMaspect = TrackMonitorSignalAspect.None;
 		private bool spad = false;      // Signal Passed At Danger
 		public SignalHead.SIGASP CABAspect = SignalHead.SIGASP.UNKNOWN; // By GeorgeS
+        public TrackLayer EditTrain = null; //WaltN: Temporary facility for track-laying experiments
 
 		/// <summary>
 		/// Reference to the Simulator object.
@@ -287,13 +288,24 @@ namespace ORTS
 			//End-of-route detection
 			if (IsEndOfRoute(MUDirection))// FrontTDBTraveller.Direction))
 			{
-				Stop();
+                if (EditTrain == null) //WaltN: !RE_ENABLED This is the normal path
+                {
+                    Stop();
 
-				// TODO - Collision detection: If a train hits an object, there should be a
-				//        realistic response.  This includes a train impacting a bumper/buffer.
-				//        It's possible that collision detection will occur BEFORE end-of-
-				//        route detection and will obsolete this test in this location.
-				//        However, the case of an unterminated section should be kept in mind.
+                    // TODO - Collision detection: If a train hits an object, there should be a
+                    //        realistic response.  This includes a train impacting a bumper/buffer.
+                    //        It's possible that collision detection will occur BEFORE end-of-
+                    //        route detection and will obsolete this test in this location.
+                    //        However, the case of an unterminated section should be kept in mind.
+                }
+                else //WaltN: RE_ENABLED This is the track-laying path
+                {
+                    Stop();
+                    // Using FrontTDBTraveller if moving forward or RearTDBTraveller if moving backwards
+                    TDBTraveller t = (MUDirection == Direction.Forward) ? FrontTDBTraveller : RearTDBTraveller;
+                    // Initiate a route edit
+                    EditTrain.LaySection(t);
+                }
 			}
 
 			if (!spad) UpdateSignalState();
@@ -313,7 +325,7 @@ namespace ORTS
 				if (nextSignal.GetAspect() == SignalHead.SIGASP.STOP && nextSignal.HasPermissionToProceed() == Signal.PERMISSION.DENIED)
 				{
 					spad = true;
-					Stop();             // Signal Passed At Danger so Stop train!
+					//Stop();             // Signal Passed At Danger so Stop train!
 					return;
 				}
 				nextSignal.NextSignal();
@@ -958,9 +970,9 @@ namespace ORTS
 		{
 			for (int i = 0; i < Cars.Count; i++)
 				if (Cars[i].SpeedMpS > 0)
-					Cars[i].TotalForceN -= Cars[i].FrictionForceN;
+					Cars[i].TotalForceN -= (Cars[i].FrictionForceN  + Cars[i].BrakeForceN);
 				else if (Cars[i].SpeedMpS < 0)
-					Cars[i].TotalForceN += Cars[i].FrictionForceN;
+					Cars[i].TotalForceN += Cars[i].FrictionForceN + Cars[i].BrakeForceN;
 			if (Cars.Count < 2)
 				return;
 			SetupCouplerForceEquations();
@@ -1036,14 +1048,14 @@ namespace ORTS
 			for (int i = 0; i < Cars.Count; i++)
 			{
 				TrainCar car = Cars[i];
-				if (car.SpeedMpS != 0 || car.TotalForceN <= car.FrictionForceN)
+				if (car.SpeedMpS != 0 || car.TotalForceN <= (car.FrictionForceN + car.BrakeForceN))
 					continue;
 				int j = i;
 				float f = 0;
 				float m = 0;
 				for (; ; )
 				{
-					f += car.TotalForceN - car.FrictionForceN;
+					f += car.TotalForceN - (car.FrictionForceN + car.BrakeForceN);
 					m += car.MassKG;
 					if (j == Cars.Count - 1 || car.CouplerSlackM < car.GetMaximumCouplerSlack2M())
 						break;
@@ -1063,14 +1075,14 @@ namespace ORTS
 			for (int i = Cars.Count - 1; i >= 0; i--)
 			{
 				TrainCar car = Cars[i];
-				if (car.SpeedMpS != 0 || car.TotalForceN > -car.FrictionForceN)
+				if (car.SpeedMpS != 0 || car.TotalForceN > (-1.0f*(car.FrictionForceN + car.BrakeForceN)))
 					continue;
 				int j = i;
 				float f = 0;
 				float m = 0;
 				for (; ; )
 				{
-					f += car.TotalForceN + car.FrictionForceN;
+					f += car.TotalForceN + car.FrictionForceN + car.BrakeForceN;
 					m += car.MassKG;
 					if (j == 0 || car.CouplerSlackM > -car.GetMaximumCouplerSlack2M())
 						break;

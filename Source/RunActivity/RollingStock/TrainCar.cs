@@ -23,6 +23,7 @@ namespace ORTS
 
         // some properties of this car
         public float Length = 40;       // derived classes must overwrite these defaults
+		public float Height = 4; //derived classes must overwrite these defaults
         public float MassKG = 10000;
         public bool IsDriveable = false;
         //public bool HasCabView = false;
@@ -37,6 +38,7 @@ namespace ORTS
         public Train Train = null;  // the car is connected to this train
         public bool Flipped = false; // the car is reversed in the consist
 		public int UiD;
+		public string CarID = "AI"; //CarID = "0 - UID" if player train, "ActivityID - UID" if loose consist, "AI" if AI train
 
         // status of the traincar - set by the train physics after it call calls TrainCar.Update()
         public WorldPosition WorldPosition = new WorldPosition();  // current position of the car
@@ -59,6 +61,7 @@ namespace ORTS
         public float MotiveForceN = 0.0f;   // ie motor power in Newtons  - signed relative to direction of car - 
         public float GravityForceN = 0.0f;   // Newtons  - signed relative to direction of car - 
         public float FrictionForceN = 0.0f; // in Newtons ( kg.m/s^2 ) unsigned, includes effects of curvature
+        public float BrakeForceN = 0.0f;    //brake force in Newtons
         public float TotalForceN; // sum of all the forces active on car relative train direction
 
         // temporary values used to compute coupler forces
@@ -113,7 +116,8 @@ namespace ORTS
         {
             outf.Write(Flipped);
 			outf.Write(UiD);
-            BrakeSystem.Save(outf);
+			outf.Write(CarID);
+			BrakeSystem.Save(outf);
             outf.Write(MotiveForceN);
             outf.Write(FrictionForceN);
             outf.Write(SpeedMpS);
@@ -125,7 +129,8 @@ namespace ORTS
         {
             Flipped = inf.ReadBoolean();
 			UiD = inf.ReadInt32();
-            BrakeSystem.Restore(inf);
+			CarID = inf.ReadString();
+			BrakeSystem.Restore(inf);
             MotiveForceN = inf.ReadSingle();
             FrictionForceN = inf.ReadSingle();
             SpeedMpS = inf.ReadSingle();

@@ -1,4 +1,13 @@
-﻿using System;
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -97,14 +106,44 @@ namespace ORTS
         {
 			ProcessState.SetThreadName("Sound Process");
 
-			while (true)
+            while (Viewer.RealTime == 0)
             {
-                // Sleeping a while
-                Thread.Sleep(200);
+                Thread.Sleep(100);
+            }
 
+            lock (_SoundSources)
+            {
+                foreach (List<SoundSource> src in _SoundSources.Values)
+                {
+                    foreach (SoundSource ss in src)
+                    {
+                        ss.InitInitials();
+                    }
+                }
+            }
+
+            while (true)
+            {
 				Profiler.Start();
 
-				// Update all sound in our list
+                // Update activity sounds
+                {
+                    Activity act = Viewer.Simulator.ActivityRun;
+                    if (act != null)
+                    {
+                        ActivityTask at = act.Current;
+                        if (at != null)
+                        {
+                            if (at.SoundNotify != -1)
+                            {
+                                if (Viewer.IngameSounds != null) Viewer.IngameSounds.HandleEvent(at.SoundNotify);
+                                at.SoundNotify = -1;
+                            }
+                        }
+                    }
+                }
+
+                // Update all sound in our list
                 lock (_SoundSources)
                 {
                     foreach (List<SoundSource> src in _SoundSources.Values)
@@ -117,7 +156,15 @@ namespace ORTS
                 }
 
 				Profiler.Stop();
-			}
+
+                // Sleeping a while
+                Thread.Sleep(200);
+            }
+        }
+
+        internal void RemoveAllSources()
+        {
+            // TODO: Clear all and exit
         }
     }
 }

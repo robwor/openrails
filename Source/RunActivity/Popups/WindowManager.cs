@@ -1,7 +1,11 @@
 ﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
-// This code is provided to enable you to contribute improvements to the open rails program.  
-// Use of the code for any other purpose or distribution of the code to anyone else
-// is prohibited without specific written permission from admin@openrails.org.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 // Add DEBUG_WINDOW_ZORDER to project defines to record window visibility and z-order changes.
 
@@ -16,21 +20,34 @@ using Microsoft.Xna.Framework.Input;
 
 namespace ORTS.Popups
 {
-	public class WindowManager
+	public class WindowManager : RenderPrimitive
 	{
-		public const SpriteBlendMode BeginSpriteBlendMode = SpriteBlendMode.AlphaBlend;
-		public const SpriteSortMode BeginSpriteSortMode = SpriteSortMode.Immediate;
-		public const SaveStateMode BeginSaveStateMode = SaveStateMode.None;
-
 		public static Texture2D WhiteTexture;
 		public static Texture2D ScrollbarTexture;
 		public static Texture2D LabelShadowTexture;
+        public static Texture2D PauseTexture;
+
+        // This is all a bit of a hack, since SpriteBatch does not expose its own internal Flush() method. What we do
+        // is draw with a different texture to anything else; the change of texture triggers an internal flush. The
+        // texture is initialised to transparent black so although we draw it in a visible area, it will not actually
+        // be visible on screen.
+        static Texture2D FlushTexture;
+        public static void Flush(SpriteBatch spriteBatch)
+        {
+            spriteBatch.Draw(FlushTexture, Vector2.Zero, Color.Black);
+        }
 
 		public readonly Viewer3D Viewer;
+        public readonly WindowTextManager TextManager;
+        public readonly WindowTextFont TextFontDefault;
+        public readonly WindowTextFont TextFontDefaultOutlined;
+
+        readonly Material WindowManagerMaterial = new BasicBlendedMaterial("WindowManager");
         readonly List<Window> Windows = new List<Window>();
-        List<Window> WindowsZOrder = new List<Window>();
+        Window[] WindowsZOrder = new Window[0];
         SpriteBatch SpriteBatch;
-		Matrix XNAView = Matrix.Identity;
+        Matrix Identity = Matrix.Identity;
+        Matrix XNAView = Matrix.Identity;
 		Matrix XNAProjection = Matrix.Identity;
         internal Point ScreenSize = new Point(10000, 10000); // Arbitrary but necessary.
 		ResolveTexture2D Screen;
@@ -38,6 +55,9 @@ namespace ORTS.Popups
 		public WindowManager(Viewer3D viewer)
 		{
 			Viewer = viewer;
+            TextManager = new WindowTextManager();
+            TextFontDefault = TextManager.Get("Arial", 9, System.Drawing.FontStyle.Regular);
+            TextFontDefaultOutlined = TextManager.Get("Arial", 9, System.Drawing.FontStyle.Regular, 1);
         }
 
         public void Initialize()
@@ -49,10 +69,48 @@ namespace ORTS.Popups
                 WhiteTexture = new Texture2D(Viewer.GraphicsDevice, 1, 1, 1, TextureUsage.None, SurfaceFormat.Color);
                 WhiteTexture.SetData(new[] { Color.White });
             }
+            if (FlushTexture == null)
+            {
+                FlushTexture = new Texture2D(Viewer.GraphicsDevice, 1, 1, 1, TextureUsage.None, SurfaceFormat.Color);
+                FlushTexture.SetData(new[] { Color.TransparentBlack });
+            }
             if (ScrollbarTexture == null)
                 ScrollbarTexture = Viewer.RenderProcess.Content.Load<Texture2D>("WindowScrollbar");
             if (LabelShadowTexture == null)
                 LabelShadowTexture = Viewer.RenderProcess.Content.Load<Texture2D>("WindowLabelShadow");
+            if (PauseTexture == null)
+            {
+                var size = 256;
+                var background = new Color(Color.Black, 0.5f);
+                var borderRadius = size / 7;
+                var data = new Color[size * size * 2];
+                // Rounded corner background.
+                for (var y = 0; y < size; y++)
+                    for (var x = 0; x < size; x++)
+                        if ((x > borderRadius && x < size - borderRadius) || (y > borderRadius && y < size - borderRadius)
+                            || (Math.Sqrt((x - borderRadius) * (x - borderRadius) + (y - borderRadius) * (y - borderRadius)) < borderRadius)
+                            || (Math.Sqrt((x - size + borderRadius) * (x - size + borderRadius) + (y - borderRadius) * (y - borderRadius)) < borderRadius)
+                            || (Math.Sqrt((x - borderRadius) * (x - borderRadius) + (y - size + borderRadius) * (y - size + borderRadius)) < borderRadius)
+                            || (Math.Sqrt((x - size + borderRadius) * (x - size + borderRadius) + (y - size + borderRadius) * (y - size + borderRadius)) < borderRadius))
+                            data[y * size + x] = background;
+                Array.Copy(data, 0, data, size * size, size * size);
+                // Play ">" symbol.
+                for (var y = size / 7; y < size - size / 7; y++)
+                {
+                    for (var x = size / 7; x < size - size / 7 - 2 * Math.Abs(y - size / 2); x++)
+                        data[y * size + x] = Color.White;
+                }
+                // Pause "||" symbol.
+                for (var y = size + size / 7; y < 2 * size - size / 7; y++)
+                {
+                    for (var x = size * 2 / 7; x < size * 3 / 7; x++)
+                        data[y * size + x] = Color.White;
+                    for (var x = size * 4 / 7; x < size * 5 / 7; x++)
+                        data[y * size + x] = Color.White;
+                }
+                PauseTexture = new Texture2D(Viewer.GraphicsDevice, size, size * 2, 1, TextureUsage.None, SurfaceFormat.Color);
+                PauseTexture.SetData(data);
+            }
 
             ScreenChanged();
             UpdateTopMost();
@@ -64,12 +122,14 @@ namespace ORTS.Popups
             }
         }
 
+        [CallOnThread("Updater")]
         public void Save(BinaryWriter outf)
         {
             foreach (var window in Windows)
                 window.Save(outf);
         }
 
+        [CallOnThread("Updater")]
         public void Restore(BinaryReader inf)
         {
             foreach (var window in Windows)
@@ -91,15 +151,36 @@ namespace ORTS.Popups
 			}
 
 			// Reposition all the windows.
-			foreach (var window in Windows)
-				window.MoveTo((ScreenSize.X - window.Location.Width) * window.Location.X / (oldScreenSize.X - window.Location.Width), (ScreenSize.Y - window.Location.Height) * window.Location.Y / (oldScreenSize.Y - window.Location.Height));
+            foreach (var window in Windows)
+            {
+                if (oldScreenSize.X - window.Location.Width > 0 && oldScreenSize.Y - window.Location.Height > 0)
+                    window.MoveTo((ScreenSize.X - window.Location.Width) * window.Location.X / (oldScreenSize.X - window.Location.Width), (ScreenSize.Y - window.Location.Height) * window.Location.Y / (oldScreenSize.Y - window.Location.Height));
+                window.ScreenChanged();
+            }
 		}
 
-		[CallOnThread("Render")]
-		public void Draw(GraphicsDevice graphicsDevice)
+        double LastPrepareRealTime;
+        [CallOnThread("Updater")]
+        public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
+        {
+            var updateFull = false;
+            if (Viewer.RealTime - LastPrepareRealTime >= 0.25)
+            {
+                updateFull = true;
+                LastPrepareRealTime = Viewer.RealTime;
+            }
+
+            foreach (var window in VisibleWindows)
+                window.PrepareFrame(frame, elapsedTime, updateFull);
+
+            frame.AddPrimitive(WindowManagerMaterial, this, RenderPrimitiveGroup.Overlay, ref Identity);
+        }
+
+        [CallOnThread("Render")]
+		public override void Draw(GraphicsDevice graphicsDevice)
 		{
 			// Nothing visible? Nothing more to do!
-			if (Windows.All(w => !w.Visible))
+			if (!VisibleWindows.Any())
 				return;
 
 			// Construct a view where (0, 0) is the top-left and (width, height) is
@@ -122,7 +203,7 @@ namespace ORTS.Popups
 				material.Render(graphicsDevice, window, ref xnaWorld, ref XNAView, ref XNAProjection);
 				material.ResetState(graphicsDevice);
 
-				SpriteBatch.Begin(BeginSpriteBlendMode, BeginSpriteSortMode, BeginSaveStateMode);
+                SpriteBatch.Begin(SpriteBlendMode.AlphaBlend, SpriteSortMode.Immediate, SaveStateMode.None);
 				window.Draw(SpriteBatch);
 				SpriteBatch.End();
 			}
@@ -137,7 +218,7 @@ namespace ORTS.Popups
 		internal void Add(Window window)
 		{
 			Windows.Add(window);
-            WindowsZOrder.Add(window);
+            WindowsZOrder = Windows.Concat(new[] { window }).ToArray();
         }
 
 		public bool HasVisiblePopupWindows()
@@ -163,16 +244,15 @@ namespace ORTS.Popups
 
 		double LastUpdateRealTime;
 		[CallOnThread("Updater")]
-		public void HandleUserInput()
-		{
+        public void HandleUserInput(ElapsedTime elapsedTime)
+        {
 			if (UserInput.IsMouseLeftButtonPressed())
 			{
 				mouseDownPosition = new Point(UserInput.MouseState.X, UserInput.MouseState.Y);
                 mouseActiveWindow = VisibleWindows.LastOrDefault(w => w.Interactive && w.Location.Contains(mouseDownPosition));
                 if ((mouseActiveWindow != null) && (mouseActiveWindow != WindowsZOrder.Last()))
 				{
-                    WindowsZOrder.Remove(mouseActiveWindow);
-                    WindowsZOrder.Add(mouseActiveWindow);
+                    WindowsZOrder = WindowsZOrder.Where(w => w != mouseActiveWindow).Concat(new[] { mouseActiveWindow }).ToArray();
                     UpdateTopMost();
                     WriteWindowZOrder();
 				}
@@ -202,7 +282,7 @@ namespace ORTS.Popups
         void UpdateTopMost()
         {
             // Make sure all top-most windows sit above all normal windows.
-            WindowsZOrder = WindowsZOrder.Where(w => !w.TopMost).Concat(WindowsZOrder.Where(w => w.TopMost)).ToList();
+            WindowsZOrder = WindowsZOrder.Where(w => !w.TopMost).Concat(WindowsZOrder.Where(w => w.TopMost)).ToArray();
         }
 
         [Conditional("DEBUG_WINDOW_ZORDER")]

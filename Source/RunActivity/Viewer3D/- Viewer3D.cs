@@ -1,4 +1,13 @@
-﻿/* 3D Viewer
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
+
+/* 3D Viewer
 
     /// This a 3D viewer.  It connects to a simulator engine, rendering the route content and
     /// rolling stock.
@@ -17,10 +26,6 @@
  * 
  * 
  */
-/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
 
 using System;
 using System.Collections.Generic;
@@ -29,7 +34,6 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.CompilerServices;
-using IrrKlang;
 using Microsoft.Win32;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -61,23 +65,24 @@ namespace ORTS
 		public double RealTime = 0;
 		InfoDisplay InfoDisplay;
 		public WindowManager WindowManager = null;
-		public MessagesWindow MessagesWindow; // Game message window (special, always visible)
+        public SignallingDebugWindow SignallingDebugWindow; // Control-Alt-F11 window
+        public MessagesWindow MessagesWindow; // Game message window (special, always visible)
+        public PauseWindow PauseWindow; // Game paused window (special)
 		public HelpWindow HelpWindow; // F1 window
-		public TrackMonitorWindow TrackMonitorWindow; // F4 window
-		public SwitchWindow SwitchWindow; // F8 window
+        public TrackMonitorWindow TrackMonitorWindow; // F4 window
+        public SwitchWindow SwitchWindow; // F8 window
 		public TrainOperationsWindow TrainOperationsWindow; // F9 window
 		public NextStationWindow NextStationWindow; // F10 window
-		public DriverAidWindow DriverAidWindow; // F11 window
+        public DriverAidWindow DriverAidWindow; // Alt-F11 window
 		public CompassWindow CompassWindow; // 0 window
 		public SkyDrawer SkyDrawer;
 		public PrecipDrawer PrecipDrawer = null;
-		public WireDrawer WireDrawer = null;
+		//public WireDrawer WireDrawer = null; //commented out as new implementation is in
 		public WeatherControl weatherControl;
 		TerrainDrawer TerrainDrawer;
 		public SceneryDrawer SceneryDrawer;
 		public TrainDrawer TrainDrawer;
 		public RoadCarHandler RoadCarHandler;
-		public ISoundEngine SoundEngine = null;  // IrrKlang Sound Device
 		public SoundSource IngameSounds = null;  // By GeorgeS
 		public WorldSounds WorldSounds = null;   // By GeorgeS
 		// Route Information
@@ -126,14 +131,16 @@ namespace ORTS
 			WindowSize.Y = Convert.ToInt32(windowSizeParts[1]);
 
             WindowManager = new WindowManager(this);
+            SignallingDebugWindow = new SignallingDebugWindow(WindowManager);
             MessagesWindow = new MessagesWindow(WindowManager);
+            PauseWindow = new PauseWindow(WindowManager);
             HelpWindow = new HelpWindow(WindowManager);
             TrackMonitorWindow = new TrackMonitorWindow(WindowManager);
             SwitchWindow = new SwitchWindow(WindowManager);
             TrainOperationsWindow = new TrainOperationsWindow(WindowManager);
             NextStationWindow = new NextStationWindow(WindowManager);
-            CompassWindow = new CompassWindow(WindowManager);
             DriverAidWindow = new DriverAidWindow(WindowManager);
+            CompassWindow = new CompassWindow(WindowManager);
 
             WellKnownCameras = new List<Camera>();
             WellKnownCameras.Add(CabCamera = new CabCamera(this));
@@ -191,11 +198,8 @@ namespace ORTS
 			Materials.ViewingDistance = Settings.ViewingDistance = (int)Math.Min(Simulator.TRK.ORTRKData.MaxViewingDistance, Settings.ViewingDistance);
 			if (Settings.SoundDetailLevel > 0)
 			{
-				SoundEngine = new ISoundEngine();
-				SoundEngine.SetListenerPosition(new IrrKlang.Vector3D(0, 0, 0), new IrrKlang.Vector3D(0, 0, 1));
-				SoundEngine.SoundVolume = 0;  // while loading
+                ALSoundSource.MuteAll();  // while loading
 				// Swap out original file factory to support loops - by GeorgeS
-				SoundEngine.AddFileFactory(new WAVIrrKlangFileFactory());
 				// By GeorgeS
 				WorldSounds = new WorldSounds(this);
 				IngameSounds = new SoundSource(this, Simulator.RoutePath + "\\Sound\\ingame.sms");
@@ -210,12 +214,11 @@ namespace ORTS
             Trace.Write(" TTYPE");
             TTypeDatFile = new TTypeDatFile(Simulator.RoutePath + @"\TTYPE.DAT");
 
-            Trace.Write(" TRP");
-            TRPFile.CreateTrackProfile(Simulator.RoutePath, out Simulator.TRP);
-
             Tiles = new Tiles(Simulator.RoutePath + @"\TILES\");
 			MilepostUnitsMetric = Simulator.TRK.Tr_RouteFile.MilepostUnitsMetric;
 			SetupBackgroundProcesses();
+
+
 		}
 
 		[ThreadName("Render")]
@@ -285,13 +288,6 @@ namespace ORTS
 
 			PlayerLocomotive = Simulator.InitialPlayerLocomotive();
 
-			if (Settings.SoundDetailLevel > 0)
-			{
-				ISound ambientSound = SoundEngine.Play2D(Simulator.BasePath + @"\SOUND\gen_urb1.wav", true);  // TODO temp code
-				if (ambientSound != null)
-					ambientSound.Volume = 0.2f;
-			}
-
 			InfoDisplay = new InfoDisplay(this);
 			UserInput.Initialize();
 
@@ -301,7 +297,7 @@ namespace ORTS
 			TerrainDrawer = new TerrainDrawer(this);
 			SceneryDrawer = new SceneryDrawer(this);
 			if (Settings.Precipitation) PrecipDrawer = new PrecipDrawer(this);
-			if (Settings.Wire) WireDrawer = new WireDrawer(this);
+			//if (Settings.Wire) WireDrawer = new WireDrawer(this); //commented out as new implementation is in
 			TrainDrawer = new TrainDrawer(this);
 			weatherControl = new WeatherControl(this);
 			RoadCarHandler = new RoadCarHandler(this);
@@ -329,7 +325,7 @@ namespace ORTS
 			TerrainDrawer.LoadPrep();
 			SceneryDrawer.LoadPrep();
 			TrainDrawer.LoadPrep();
-			if (WireDrawer != null) WireDrawer.LoadPrep();
+			//if (WireDrawer != null) WireDrawer.LoadPrep(); //commented out as new implementation is in
 		}
 
 		/// <summary>
@@ -346,7 +342,7 @@ namespace ORTS
 			TerrainDrawer.Load(renderProcess);
 			SceneryDrawer.Load(renderProcess);
 			TrainDrawer.Load(renderProcess);
-			if (WireDrawer != null) WireDrawer.Load(renderProcess);
+			//if (WireDrawer != null) WireDrawer.Load(renderProcess);//commented out as new implementation is in
 		}
 
 		string adapterDescription;
@@ -388,35 +384,33 @@ namespace ORTS
 				PlayerLocomotiveViewer.HandleUserInput(elapsedTime);
 
 			InfoDisplay.HandleUserInput(elapsedTime);
-			WindowManager.HandleUserInput();
+			WindowManager.HandleUserInput(elapsedTime);
 
 			// Check for game control keys
 			if (UserInput.IsPressed(UserCommands.GameQuit)) { Stop(); return; }
 			if (UserInput.IsPressed(UserCommands.GameFullscreen)) { ToggleFullscreen(); }
 			if (UserInput.IsPressed(UserCommands.GamePause)) Simulator.Paused = !Simulator.Paused;
-			if (UserInput.IsPressed(UserCommands.GameSpeedUp)) Simulator.GameSpeed *= 1.5f;
-			if (UserInput.IsPressed(UserCommands.GameSpeedDown)) Simulator.GameSpeed /= 1.5f;
-			if (UserInput.IsPressed(UserCommands.GameSpeedReset)) Simulator.GameSpeed = 1;
+			if (UserInput.IsPressed(UserCommands.DebugSpeedUp)) Simulator.GameSpeed *= 1.5f;
+			if (UserInput.IsPressed(UserCommands.DebugSpeedDown)) Simulator.GameSpeed /= 1.5f;
+			if (UserInput.IsPressed(UserCommands.DebugSpeedReset)) Simulator.GameSpeed = 1;
 			if (UserInput.IsPressed(UserCommands.GameSave)) { Program.Save(); }
-            if (UserInput.IsPressed(UserCommands.WindowHelp)) if (UserInput.IsDown(UserCommands.WindowTab)) HelpWindow.TabAction(); else HelpWindow.Visible = !HelpWindow.Visible;
-            if (UserInput.IsPressed(UserCommands.WindowTrackMonitor)) if (UserInput.IsDown(UserCommands.WindowTab)) TrackMonitorWindow.TabAction(); else TrackMonitorWindow.Visible = !TrackMonitorWindow.Visible;
-            if (UserInput.IsPressed(UserCommands.WindowSwitch)) if (UserInput.IsDown(UserCommands.WindowTab)) SwitchWindow.TabAction(); else SwitchWindow.Visible = !SwitchWindow.Visible;
-            if (UserInput.IsPressed(UserCommands.WindowTrainOperations)) if (UserInput.IsDown(UserCommands.WindowTab)) TrainOperationsWindow.TabAction(); else TrainOperationsWindow.Visible = !TrainOperationsWindow.Visible;
-            if (UserInput.IsPressed(UserCommands.WindowNextStation)) if (UserInput.IsDown(UserCommands.WindowTab)) NextStationWindow.TabAction(); else NextStationWindow.Visible = !NextStationWindow.Visible;
-            if (UserInput.IsPressed(UserCommands.WindowCompass)) if (UserInput.IsDown(UserCommands.WindowTab)) CompassWindow.TabAction(); else CompassWindow.Visible = !CompassWindow.Visible;
-            if (UserInput.IsPressed(UserCommands.GameDebugSignalling)) if (UserInput.IsDown(UserCommands.WindowTab)) DriverAidWindow.TabAction(); else DriverAidWindow.Visible = !DriverAidWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DisplayHelpWindow)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) HelpWindow.TabAction(); else HelpWindow.Visible = !HelpWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DisplayTrackMonitorWindow)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) TrackMonitorWindow.TabAction(); else TrackMonitorWindow.Visible = !TrackMonitorWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DisplaySwitchWindow)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) SwitchWindow.TabAction(); else SwitchWindow.Visible = !SwitchWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DisplayTrainOperationsWindow)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) TrainOperationsWindow.TabAction(); else TrainOperationsWindow.Visible = !TrainOperationsWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DisplayNextStationWindow)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) NextStationWindow.TabAction(); else NextStationWindow.Visible = !NextStationWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DisplayCompassWindow)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) CompassWindow.TabAction(); else CompassWindow.Visible = !CompassWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DebugDriverAid)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) DriverAidWindow.TabAction(); else DriverAidWindow.Visible = !DriverAidWindow.Visible;
+            if (UserInput.IsPressed(UserCommands.DebugSignalling)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) SignallingDebugWindow.TabAction(); else SignallingDebugWindow.Visible = !SignallingDebugWindow.Visible;
 
-			if (UserInput.IsPressed(UserCommands.LocomotiveSwitch))
+			if (UserInput.IsPressed(UserCommands.GameLocomotiveSwitch))
 			{
 				Simulator.PlayerLocomotive.Train.LeadNextLocomotive();
 				Simulator.PlayerLocomotive = Simulator.PlayerLocomotive.Train.LeadLocomotive;
 				Simulator.PlayerLocomotive.Train.CalculatePositionOfCars(0);  // fix the front traveller
 				Simulator.PlayerLocomotive.Train.RepositionRearTraveller();    // fix the rear traveller
                 PlayerLocomotiveViewer = TrainDrawer.GetViewer(Simulator.PlayerLocomotive);
-                if (!Camera.IsAvailable)
-                    FrontCamera.Activate();
-                else
-                    Camera.Activate();
+                ReactivateCamera();
 			}
 
             if (UserInput.IsPressed(UserCommands.CameraCab) && CabCamera.IsAvailable) CabCamera.Activate();
@@ -429,11 +423,11 @@ namespace ORTS
             if (UserInput.IsPressed(UserCommands.CameraHeadOutForward) && HeadOutForwardCamera.IsAvailable) HeadOutForwardCamera.Activate();
             if (UserInput.IsPressed(UserCommands.CameraHeadOutBackward) && HeadOutBackCamera.IsAvailable) HeadOutBackCamera.Activate();
 
-			if (UserInput.IsPressed(UserCommands.SwitchAhead)) Simulator.SwitchTrackAhead(PlayerTrain);
-			if (UserInput.IsPressed(UserCommands.SwitchBehind)) Simulator.SwitchTrackBehind(PlayerTrain);
-			if (UserInput.IsPressed(UserCommands.LocomotiveFlip)) { Simulator.PlayerLocomotive.Flipped = !Simulator.PlayerLocomotive.Flipped; Simulator.PlayerLocomotive.SpeedMpS *= -1; }
-			if (UserInput.IsPressed(UserCommands.ResetSignal)) PlayerTrain.ResetSignal(true);
-			if (!Simulator.Paused && UserInput.IsDown(UserCommands.SwitchWithMouse))
+			if (UserInput.IsPressed(UserCommands.GameSwitchAhead)) Simulator.SwitchTrackAhead(PlayerTrain);
+			if (UserInput.IsPressed(UserCommands.GameSwitchBehind)) Simulator.SwitchTrackBehind(PlayerTrain);
+			if (UserInput.IsPressed(UserCommands.DebugLocomotiveFlip)) { Simulator.PlayerLocomotive.Flipped = !Simulator.PlayerLocomotive.Flipped; Simulator.PlayerLocomotive.SpeedMpS *= -1; }
+			if (UserInput.IsPressed(UserCommands.DebugResetSignal)) PlayerTrain.ResetSignal(true);
+			if (!Simulator.Paused && UserInput.IsDown(UserCommands.GameSwitchWithMouse))
 			{
 				isMouseShouldVisible = true;
 				if (UserInput.MouseState.LeftButton == ButtonState.Pressed && UserInput.Changed)
@@ -442,7 +436,7 @@ namespace ORTS
 					UserInput.Handled();
 				}
 			}
-			else if (!Simulator.Paused && UserInput.IsDown(UserCommands.UncoupleWithMouse))
+			else if (!Simulator.Paused && UserInput.IsDown(UserCommands.GameUncoupleWithMouse))
 			{
 				isMouseShouldVisible = true;
 				if (UserInput.MouseState.LeftButton == ButtonState.Pressed && UserInput.Changed)
@@ -453,7 +447,7 @@ namespace ORTS
 			}
 			else
 			{
-				isMouseShouldVisible = WindowManager.HasVisiblePopupWindows();
+                isMouseShouldVisible = false;
 			}
 
 			RenderProcess.IsMouseVisible = isMouseShouldVisible || isMouseTimerVisible;
@@ -461,6 +455,14 @@ namespace ORTS
 			if (UserInput.RDState != null)
 				UserInput.RDState.Handled();
 		}
+
+        void ReactivateCamera()
+        {
+            if (!Camera.IsAvailable)
+                FrontCamera.Activate();
+            else
+                Camera.Activate();
+        }
 
 
 		//
@@ -500,58 +502,51 @@ namespace ORTS
 		public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
 		{
 			// Mute sound when paused
-			if (SoundEngine != null)
-			{
-				if (Simulator.Paused)
-					SoundEngine.SoundVolume = 0;
-				else
-					SoundEngine.SoundVolume = 1;
-			}
+            if (Simulator.Paused)
+                ALSoundSource.MuteAll();
+            else
+                ALSoundSource.UnMuteAll();
 
-			if (ScreenHasChanged())
-			{
-				Camera.ScreenChanged();
-				RenderProcess.InitializeShadowMapLocations(RenderProcess.Viewer);
-			}
+            if (ScreenHasChanged())
+            {
+                Camera.ScreenChanged();
+                RenderProcess.InitializeShadowMapLocations(RenderProcess.Viewer);
+            }
 
-			// Update camera first...
-			Camera.Update(elapsedTime);
-			// No above camera means we're allowed to auto-switch to cab view.
-			if ((AboveGroundCamera == null) && Camera.IsUnderground)
-			{
-				AboveGroundCamera = Camera;
-				CabCamera.Activate();
-			}
-			else if (AboveGroundCamera != null)
-			{
-				// Make sure to keep the old camera updated...
-				AboveGroundCamera.Update(elapsedTime);
-				// ...so we can tell when to come back to it.
-				if (!AboveGroundCamera.IsUnderground)
-				{
-					// But only if the user hasn't selected another camera!
-					if (Camera == CabCamera)
-						AboveGroundCamera.Activate();
-					AboveGroundCamera = null;
-				}
-			}
-			// We're now ready to prepare frame for the camera.
-			Camera.PrepareFrame(frame, elapsedTime);
+            // Update camera first...
+            Camera.Update(elapsedTime);
+            // No above camera means we're allowed to auto-switch to cab view.
+            if ((AboveGroundCamera == null) && Camera.IsUnderground)
+            {
+                AboveGroundCamera = Camera;
+                CabCamera.Activate();
+            }
+            else if (AboveGroundCamera != null)
+            {
+                // Make sure to keep the old camera updated...
+                AboveGroundCamera.Update(elapsedTime);
+                // ...so we can tell when to come back to it.
+                if (!AboveGroundCamera.IsUnderground)
+                {
+                    // But only if the user hasn't selected another camera!
+                    if (Camera == CabCamera)
+                        AboveGroundCamera.Activate();
+                    AboveGroundCamera = null;
+                }
+            }
+            // We're now ready to prepare frame for the camera.
+            Camera.PrepareFrame(frame, elapsedTime);
 
-			frame.PrepareFrame(elapsedTime);
-			SkyDrawer.PrepareFrame(frame, elapsedTime);
-			TerrainDrawer.PrepareFrame(frame, elapsedTime);
-			SceneryDrawer.PrepareFrame(frame, elapsedTime);
-			TrainDrawer.PrepareFrame(frame, elapsedTime);
-			RoadCarHandler.PrepareFrame(frame, elapsedTime);
-			// By GeorgeS
-			//if (WorldSounds != null) WorldSounds.Update(elapsedTime);
-			if (PrecipDrawer != null) PrecipDrawer.PrepareFrame(frame, elapsedTime);
-			if (WireDrawer != null) WireDrawer.PrepareFrame(frame, elapsedTime);
-			InfoDisplay.PrepareFrame(frame, elapsedTime);
-			// By GeorgeS
-			//if (IngameSounds != null) IngameSounds.Update(elapsedTime);
-		}
+            frame.PrepareFrame(elapsedTime);
+            SkyDrawer.PrepareFrame(frame, elapsedTime);
+            TerrainDrawer.PrepareFrame(frame, elapsedTime);
+            SceneryDrawer.PrepareFrame(frame, elapsedTime);
+            TrainDrawer.PrepareFrame(frame, elapsedTime);
+            RoadCarHandler.PrepareFrame(frame, elapsedTime);
+            if (PrecipDrawer != null) PrecipDrawer.PrepareFrame(frame, elapsedTime);
+            InfoDisplay.PrepareFrame(frame, elapsedTime);
+            WindowManager.PrepareFrame(frame, elapsedTime);
+        }
 
 
 		/// <summary>
@@ -560,8 +555,7 @@ namespace ORTS
 		[CallOnThread("Render")]
 		public void Unload(RenderProcess renderProcess)
 		{
-			if (SoundEngine != null)
-				SoundEngine.StopAllSounds();
+            SoundProcess.RemoveAllSources();
 		}
 
 		public void Stop()
@@ -653,7 +647,8 @@ namespace ORTS
 				if (null != pickRay.Intersects(boundingSphere))
 				{
 					Simulator.UncoupleBehind(car);
-					break;
+                    ReactivateCamera();
+                    break;
 				}
 				traveller.Move(d);
 			}

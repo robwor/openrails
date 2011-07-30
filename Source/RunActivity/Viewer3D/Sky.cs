@@ -1,13 +1,11 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Principal Author:
-///    Rick Grout
-/// Contributors:
-///    Wayne Campbell
-///     
+﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections.Generic;
@@ -153,16 +151,16 @@ namespace ORTS
             // The ( + ) key speeds the time forward, the ( - ) key reverses the time.
             // When the Ctrl key is also pressed, the + and - keys control the amount of overcast.
 
-			if (UserInput.IsDown(UserCommands.GameOvercastIncrease))
+			if (UserInput.IsDown(UserCommands.DebugOvercastIncrease))
 				overcast = MathHelper.Clamp(overcast + 0.005f, 0, 1);
-			if (UserInput.IsDown(UserCommands.GameOvercastDecrease))
+			if (UserInput.IsDown(UserCommands.DebugOvercastDecrease))
 				overcast = MathHelper.Clamp(overcast - 0.005f, 0, 1);
-			if (UserInput.IsDown(UserCommands.GameClockForwards))
+			if (UserInput.IsDown(UserCommands.DebugClockForwards))
 			{
 				Viewer.Simulator.ClockTime += 120; // Two-minute (120 second) increments
 				if (Viewer.PrecipDrawer != null) Viewer.PrecipDrawer.Reset();
 			}
-			if (UserInput.IsDown(UserCommands.GameClockBackwards))
+			if (UserInput.IsDown(UserCommands.DebugClockBackwards))
 			{
 				Viewer.Simulator.ClockTime -= 120;
 				if (Viewer.PrecipDrawer != null) Viewer.PrecipDrawer.Reset();

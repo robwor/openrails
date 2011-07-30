@@ -1,13 +1,16 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-
-/// Author: James Ross
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -22,6 +25,7 @@ namespace ORTS.Popups
 		bool visible = false;
         Rectangle location;
 		readonly string Caption;
+        readonly PropertyInfo SettingsProperty;
 		ControlLayout WindowLayout;
 		VertexBuffer WindowVertexBuffer;
 		IndexBuffer WindowIndexBuffer;
@@ -30,6 +34,18 @@ namespace ORTS.Popups
 		{
 			Owner = owner;
 			location = new Rectangle(0, 0, width, height);
+
+            SettingsProperty = Owner.Viewer.Settings.GetType().GetProperty("WindowPosition_" + GetType().Name.Replace("Window", ""));
+            if (SettingsProperty != null)
+            {
+                var value = SettingsProperty.GetValue(Owner.Viewer.Settings, null) as int[];
+                if ((value != null) && (value.Length >= 2))
+                {
+                    location.X = (int)Math.Round((float)value[0] * (Owner.ScreenSize.X - location.Width) / 100);
+                    location.Y = (int)Math.Round((float)value[1] * (Owner.ScreenSize.Y - location.Height) / 100);
+                }
+            }
+
 			Caption = caption;
 			Owner.Add(this);
 		}
@@ -58,11 +74,19 @@ namespace ORTS.Popups
         protected virtual void VisibilityChanged()
 		{
             Owner.WriteWindowZOrder();
-		}
+            if (Visible && (WindowLayout != null))
+                PrepareFrame(ElapsedTime.Zero, true);
+        }
 
 		protected virtual void LocationChanged()
 		{
-			XNAWorld = Matrix.CreateWorld(new Vector3(location.X, location.Y, 0), -Vector3.UnitZ, Vector3.UnitY);
+            if (SettingsProperty != null)
+            {
+                SettingsProperty.SetValue(Owner.Viewer.Settings, new[] { (int)Math.Round(100f * location.X / (Owner.ScreenSize.X - location.Width)), (int)Math.Round(100f * location.Y / (Owner.ScreenSize.Y - location.Height)) }, null);
+                Owner.Viewer.Settings.Save(SettingsProperty.Name);
+            }
+
+            XNAWorld = Matrix.CreateWorld(new Vector3(location.X, location.Y, 0), -Vector3.UnitZ, Vector3.UnitY);
 		}
 
 		protected virtual void SizeChanged()
@@ -74,6 +98,10 @@ namespace ORTS.Popups
 		internal virtual void ActiveChanged()
 		{
 		}
+
+        internal virtual void ScreenChanged()
+        {
+        }
 
         public bool Visible
 		{
@@ -148,24 +176,12 @@ namespace ORTS.Popups
 			}
 		}
 
-		public enum AlignAt
-		{
-			Start,
-			Middle,
-			End,
-		};
-
-		public void Align(AlignAt horizontal, AlignAt vertical)
-		{
-            MoveTo(horizontal == AlignAt.Start ? 0 : horizontal == AlignAt.Middle ? (Owner.ScreenSize.X - location.Width) / 2 : Owner.ScreenSize.X - location.Width,
-				vertical == AlignAt.Start ? 0 : vertical == AlignAt.Middle ? (Owner.ScreenSize.Y - location.Height) / 2 : Owner.ScreenSize.Y - location.Height);
-		}
-
 		protected internal void Layout()
 		{
 			var windowLayout = new WindowControlLayout(this, location.Width, location.Height);
             if (Owner.ScreenSize != Point.Zero)
                 Layout(windowLayout);
+            windowLayout.Initialize(Owner);
             WindowLayout = windowLayout;
 		}
 
@@ -178,7 +194,14 @@ namespace ORTS.Popups
 			return content;
 		}
 
-		public override void Draw(GraphicsDevice graphicsDevice)
+        [CallOnThread("Updater")]
+        public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime, bool updateFull)
+        {
+            if (Visible)
+                PrepareFrame(elapsedTime, updateFull);
+        }
+
+        public override void Draw(GraphicsDevice graphicsDevice)
 		{
 			if (WindowVertexBuffer == null)
 			{
@@ -225,7 +248,13 @@ namespace ORTS.Popups
 			graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleStrip, 0, 0, 16, 0, 20);
 		}
 
-		public void Draw(SpriteBatch spriteBatch)
+        [CallOnThread("Updater")]
+        public virtual void PrepareFrame(ElapsedTime elapsedTime, bool updateFull)
+        {
+        }
+
+        [CallOnThread("Render")]
+		public virtual void Draw(SpriteBatch spriteBatch)
 		{
 			WindowLayout.Draw(spriteBatch, Location.Location);
 		}

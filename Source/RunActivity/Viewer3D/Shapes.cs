@@ -1,13 +1,11 @@
-/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Principal Author:
-///    Wayne Campbell
-/// Contributors:
-///    Rick Grout
-/// 
+// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections.Generic;
@@ -826,11 +824,23 @@ namespace ORTS
             public VertexDeclaration Declaration;
             public int VertexCount;        // the number of vertices in the vertex buffer for each set
 
+            // Constructor added for Dynatrack ...WaltN
+            public VertexBufferSet( VertexPositionNormalTexture[] vertexData, GraphicsDevice graphicsDevice )
+            {
+                VertexCount = vertexData.Length;
+                Declaration = new VertexDeclaration(graphicsDevice, VertexPositionNormalTexture.VertexElements);
+                Buffer = new VertexBuffer(  graphicsDevice, 
+                                            VertexPositionNormalTexture.SizeInBytes * VertexCount,
+                                            BufferUsage.WriteOnly);
+                Buffer.SetData(vertexData);
+            }
+
+
             public VertexBufferSet( vertex_set vertex_set, SFile sFile, sub_object sub_object, GraphicsDevice graphicsDevice )
             {
                 VertexCount = vertex_set.VtxCount;
                 VertexPositionNormalTexture[] vertexData = new VertexPositionNormalTexture[VertexCount];
-                        // TODO - deal with vertex sets that have various numbers of texture coordinates - ie 0, 1, 2 etc
+                // TODO - deal with vertex sets that have various numbers of texture coordinates - ie 0, 1, 2 etc
                 for (int i = 0; i < VertexCount; ++i)
                 {
                     MSTS.vertex MSTSvertex = sub_object.vertices[i + vertex_set.StartVtxIdx];
@@ -927,44 +937,47 @@ namespace ORTS
         public void PrepareFrame(RenderFrame frame, WorldPosition location, Matrix[] animatedXNAMatrices, ShapeFlags flags)
         {
             // Locate relative to the camera
-			var dTileX = location.TileX - Viewer.Camera.TileX;
-			var dTileZ = location.TileZ - Viewer.Camera.TileZ;
-			var mstsLocation = location.Location;
-			mstsLocation.X += dTileX * 2048;
-			mstsLocation.Z += dTileZ * 2048;
-			var xnaDTileTranslation = location.XNAMatrix;
-			xnaDTileTranslation.M41 += dTileX * 2048;
-			xnaDTileTranslation.M43 -= dTileZ * 2048;
+            var dTileX = location.TileX - Viewer.Camera.TileX;
+            var dTileZ = location.TileZ - Viewer.Camera.TileZ;
+            var mstsLocation = location.Location;
+            mstsLocation.X += dTileX * 2048;
+            mstsLocation.Z += dTileZ * 2048;
+            var xnaDTileTranslation = location.XNAMatrix;
+            xnaDTileTranslation.M41 += dTileX * 2048;
+            xnaDTileTranslation.M43 -= dTileZ * 2048;
 
-			foreach (var lodControl in LodControls)
-			{
-				// Start with the furthest away distance, then look for a nearer one in range of the camera.
-				var chosenDistanceLevelIndex = lodControl.DistanceLevels.Length - 1;
-				while ((chosenDistanceLevelIndex > 0) && Viewer.Camera.InRange(mstsLocation, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewSphereRadius, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewingDistance))
-					chosenDistanceLevelIndex--;
-				var chosenDistanceLevel = lodControl.DistanceLevels[chosenDistanceLevelIndex];
-				foreach (var subObject in chosenDistanceLevel.SubObjects)
-				{
-					foreach (var shapePrimitive in subObject.ShapePrimitives)
-					{
-						var xnaMatrix = Matrix.Identity;
-						var iNode = shapePrimitive.iHierarchy;
-						while (iNode != -1)
-						{
-							if (shapePrimitive.Hierarchy[iNode] != -1) // MSTS ignores root matrix,  ('floating objects problem' )
-								Matrix.Multiply(ref xnaMatrix, ref animatedXNAMatrices[iNode], out xnaMatrix);
-							iNode = shapePrimitive.Hierarchy[iNode];
-						}
-						Matrix.Multiply(ref xnaMatrix, ref xnaDTileTranslation, out xnaMatrix);
+            foreach (var lodControl in LodControls)
+            {
+                // Start with the furthest away distance, then look for a nearer one in range of the camera.
+                var chosenDistanceLevelIndex = lodControl.DistanceLevels.Length - 1;
+                // If this LOD group is not in the FOV, skip the whole LOD group.
+                if (!Viewer.Camera.InFOV(mstsLocation, lodControl.DistanceLevels[chosenDistanceLevelIndex].ViewSphereRadius))
+                    continue;
+                while ((chosenDistanceLevelIndex > 0) && Viewer.Camera.InRange(mstsLocation, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewSphereRadius, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewingDistance))
+                    chosenDistanceLevelIndex--;
+                var chosenDistanceLevel = lodControl.DistanceLevels[chosenDistanceLevelIndex];
+                foreach (var subObject in chosenDistanceLevel.SubObjects)
+                {
+                    foreach (var shapePrimitive in subObject.ShapePrimitives)
+                    {
+                        var xnaMatrix = Matrix.Identity;
+                        var iNode = shapePrimitive.iHierarchy;
+                        while (iNode != -1)
+                        {
+                            if (shapePrimitive.Hierarchy[iNode] != -1) // MSTS ignores root matrix,  ('floating objects problem' )
+                                Matrix.Multiply(ref xnaMatrix, ref animatedXNAMatrices[iNode], out xnaMatrix);
+                            iNode = shapePrimitive.Hierarchy[iNode];
+                        }
+                        Matrix.Multiply(ref xnaMatrix, ref xnaDTileTranslation, out xnaMatrix);
 
-						// TODO make shadows depend on shape overrides
+                        // TODO make shadows depend on shape overrides
 
-						frame.AddAutoPrimitive(mstsLocation, chosenDistanceLevel.ViewSphereRadius, chosenDistanceLevel.ViewingDistance, 
+                        frame.AddAutoPrimitive(mstsLocation, chosenDistanceLevel.ViewSphereRadius, chosenDistanceLevel.ViewingDistance,
                             shapePrimitive.Material, shapePrimitive, RenderPrimitiveGroup.World, ref xnaMatrix, flags);
-					}
-				}
-			}
-		}// PrepareFrame()
+                    }
+                }
+            }
+        }
 
         public Matrix GetMatrixProduct(int iNode)
         {
@@ -983,4 +996,74 @@ namespace ORTS
         }
 
     }// class SharedShape
+
+	public class Siding
+	{
+		public readonly Viewer3D Viewer;
+		public readonly WorldPosition Location;
+		public readonly string SidingName;
+
+		/// <summary>
+		/// Construct and initialize the class
+		/// This constructor is for Sidings in TDB and W Files
+		/// </summary>
+		public Siding(Viewer3D viewer, WorldPosition position, SidingObj sidingObj)
+		{
+			Viewer = viewer;
+			Location = position;
+			int i = 0, trID = 0;
+			while (true) {
+				trID = sidingObj.getTrItemID(i);
+				if (trID < 0) break;
+				SidingItem sidingItem = (SidingItem)Viewer.Simulator.TDB.TrackDB.TrItemTable[trID];
+				if (sidingItem == null) continue;
+				SidingName = sidingItem.ItemName;
+				i++; //Siding has two trItems, now only needs the sidingname, S/P data are not used yet
+			}
+		}
+	} // class StaticShape
+
+    public class TrItemLabel {
+        public readonly Viewer3D Viewer;
+        public readonly WorldPosition Location;
+        public readonly string ItemName;
+
+        /// <summary>
+        /// Construct and initialize the class.
+        /// This constructor is for the labels of track items in TDB and W Files such as sidings and platforms.
+        /// </summary>
+        public TrItemLabel(Viewer3D viewer, WorldPosition position, TrObject trObj) {
+        Viewer = viewer;
+        Location = position;
+        int i = 0, trID = 0;
+        while (true) {
+        trID = trObj.getTrItemID(i);
+        if (trID < 0) break;
+        TrItem trItem = (TrItem)Viewer.Simulator.TDB.TrackDB.TrItemTable[trID];
+        if (trItem == null) continue;
+        ItemName = trItem.ItemName;
+        i++;
+        }
+        }
+    } //TrItemLabel
+
+    /// <summary>
+    /// Construct and initialize the class.
+    /// This constructor is for the labels of sidings.
+    /// </summary>
+    public class SidingLabel : TrItemLabel {
+        public SidingLabel(Viewer3D viewer, WorldPosition position, SidingObj sidingObj)
+            : base(viewer, position, sidingObj) {
+        }
+    } //SidingLabel
+
+    /// <summary>
+    /// Construct and initialize the class
+    /// This constructor is for the labels of platforms.
+    /// </summary>
+    public class PlatformLabel : TrItemLabel {
+        public PlatformLabel(Viewer3D viewer, WorldPosition position, PlatformObj platformObj)
+            : base(viewer, position, platformObj) {
+        }
+    } //PlatformLabel
 }

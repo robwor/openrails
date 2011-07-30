@@ -1,19 +1,19 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-
-/// Author: James Ross
-/// 
-/// Help; used to display the keyboard shortcuts and other help.
-/// 
+﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
+// This code is provided to help you understand what Open Rails does and does
+// not do. Suggestions and contributions to improve Open Rails are always
+// welcome. Use of the code for any other purpose or distribution of the code
+// to anyone else is prohibited without specific written permission from
+// admin@openrails.org.
+//
+// This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using System.IO;
 
 namespace ORTS.Popups
 {
@@ -27,11 +27,22 @@ namespace ORTS.Popups
 		public HelpWindow(WindowManager owner)
 			: base(owner, 600, 450, "Help")
 		{
-            Align(AlignAt.Middle, AlignAt.Middle);
-
             Tabs.Add(new TabData(Tab.KeyboardShortcuts, "Key Commands", (cl) =>
             {
                 var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
+                var keyWidth = scrollbox.RemainingWidth / UserInput.KeyboardLayout[0].Length;
+                var keyHeight = 3 * keyWidth;
+                UserInput.DrawKeyboardMap((rowBox) =>
+                {
+                }, (keyBox, keyScanCode, keyName) =>
+                {
+                    var color = UserInput.GetScanCodeColor(keyScanCode);
+                    if (color == Color.TransparentBlack)
+                        color = Color.Black;
+
+                    UserInput.Scale(ref keyBox, keyWidth, keyHeight);
+                    scrollbox.Add(new Key(keyBox.Left - scrollbox.CurrentLeft, keyBox.Top - scrollbox.CurrentTop, keyBox.Width - 1, keyBox.Height - 1, keyName, color));
+                });
                 foreach (UserCommands command in Enum.GetValues(typeof(UserCommands)))
                 {
                     var line = scrollbox.AddLayoutHorizontal(TextHeight);
@@ -55,42 +66,159 @@ namespace ORTS.Popups
                 }));
                 Tabs.Add(new TabData(Tab.ActivityTimetable, "Timetable", (cl) =>
                 {
-                    var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
-                    if (owner.Viewer.Simulator.ActivityRun != null &&
-                        owner.Viewer.Simulator.ActivityRun.Tasks.Count > 0)
+                    var colWidth = (cl.RemainingWidth - ControlLayoutScrollbox.ScrollbarSize) / 7;
                     {
-                        var colWidth = scrollbox.RemainingWidth / 7;
-                        {
-                            var hbox = scrollbox.AddLayoutHorizontal(TextHeight);
-                            hbox.Add(new Label(colWidth * 3, hbox.RemainingHeight, "Station"));
-                            hbox.Add(new Label(colWidth, hbox.RemainingHeight, "Arrive", LabelAlignment.Center));
-                            hbox.Add(new Label(colWidth, hbox.RemainingHeight, "Actual", LabelAlignment.Center));
-                            hbox.Add(new Label(colWidth, hbox.RemainingHeight, "Depart", LabelAlignment.Center));
-                            hbox.Add(new Label(colWidth, hbox.RemainingHeight, "Actual", LabelAlignment.Center));
-                        }
-                        scrollbox.AddHorizontalSeparator();
+                        var line = cl.AddLayoutHorizontal(TextHeight);
+                        line.Add(new Label(colWidth * 3, line.RemainingHeight, "Station"));
+                        line.Add(new Label(colWidth, line.RemainingHeight, "Arrive", LabelAlignment.Center));
+                        line.Add(new Label(colWidth, line.RemainingHeight, "Actual", LabelAlignment.Center));
+                        line.Add(new Label(colWidth, line.RemainingHeight, "Depart", LabelAlignment.Center));
+                        line.Add(new Label(colWidth, line.RemainingHeight, "Actual", LabelAlignment.Center));
+                    }
+                    cl.AddHorizontalSeparator();
+                    var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
+                    if (owner.Viewer.Simulator.ActivityRun != null)
+                    {
                         foreach (var task in owner.Viewer.Simulator.ActivityRun.Tasks)
                         {
                             var stopAt = task as ActivityTaskPassengerStopAt;
                             if (stopAt != null)
                             {
                                 Label arrive, depart;
-                                var hbox = scrollbox.AddLayoutHorizontal(TextHeight);
-                                hbox.Add(new Label(colWidth * 3, hbox.RemainingHeight, stopAt.PlatformEnd1.Station));
-                                hbox.Add(new Label(colWidth, hbox.RemainingHeight, stopAt.SchArrive.ToString("HH:mm:ss"), LabelAlignment.Center));
-                                hbox.Add(arrive = new Label(colWidth, hbox.RemainingHeight, stopAt.ActArrive.HasValue ? stopAt.ActArrive.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue && task.NextTask != null ? "(missed)" : "", LabelAlignment.Center));
-                                hbox.Add(new Label(colWidth, hbox.RemainingHeight, stopAt.SchDepart.ToString("HH:mm:ss"), LabelAlignment.Center));
-                                hbox.Add(depart = new Label(colWidth, hbox.RemainingHeight, stopAt.ActDepart.HasValue ? stopAt.ActDepart.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue && task.NextTask != null ? "(missed)" : "", LabelAlignment.Center));
+                                var line = scrollbox.AddLayoutHorizontal(TextHeight);
+                                line.Add(new Label(colWidth * 3, line.RemainingHeight, stopAt.PlatformEnd1.Station));
+                                line.Add(new Label(colWidth, line.RemainingHeight, stopAt.SchArrive.ToString("HH:mm:ss"), LabelAlignment.Center));
+                                line.Add(arrive = new Label(colWidth, line.RemainingHeight, stopAt.ActArrive.HasValue ? stopAt.ActArrive.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue && task.NextTask != null ? "(missed)" : "", LabelAlignment.Center));
+                                line.Add(new Label(colWidth, line.RemainingHeight, stopAt.SchDepart.ToString("HH:mm:ss"), LabelAlignment.Center));
+                                line.Add(depart = new Label(colWidth, line.RemainingHeight, stopAt.ActDepart.HasValue ? stopAt.ActDepart.Value.ToString("HH:mm:ss") : stopAt.IsCompleted.HasValue && task.NextTask != null ? "(missed)" : "", LabelAlignment.Center));
                                 arrive.Color = NextStationWindow.GetArrivalColor(stopAt.SchArrive, stopAt.ActArrive);
                                 depart.Color = NextStationWindow.GetDepartColor(stopAt.SchDepart, stopAt.ActDepart);
                             }
                         }
                     }
                 }));
-                //Tabs.Add(new TabData(Tab.ActivityWorkOrders, "Work Orders", (cl) =>
-                //{
-                //    var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
-                //}));
+                Tabs.Add(new TabData(Tab.ActivityWorkOrders, "Work Orders", (cl) =>
+                {
+                    var colWidth = (cl.RemainingWidth - ControlLayoutScrollbox.ScrollbarSize) / 20;
+                    {
+                        var line = cl.AddLayoutHorizontal(TextHeight);
+                        line.Add(new Label(colWidth * 4, line.RemainingHeight, "Task"));
+                        line.Add(new Label(colWidth * 9, line.RemainingHeight, "Car(s)"));
+                        line.Add(new Label(colWidth * 6, line.RemainingHeight, "Location"));
+                        // Status will be added once events are being processed.
+                        //line.Add(new Label(colWidth, line.RemainingHeight, "Status"));
+                    }
+                    cl.AddHorizontalSeparator();
+                    var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
+                    var separatorShown = false;
+                    foreach (var @event in owner.Viewer.Simulator.Activity.Tr_Activity.Tr_Activity_File.Events)
+                    {
+                        var eventAction = @event as MSTS.EventCategoryAction;
+                        if (eventAction != null)
+                        {
+                            if (separatorShown)
+                                scrollbox.AddHorizontalSeparator();
+                            var line = scrollbox.AddLayoutHorizontal(TextHeight);
+                            // Task column
+                            switch (eventAction.EventType)
+                            {
+                                case MSTS.EventType.AssembleTrain:
+                                case MSTS.EventType.AssembleTrainAtLocation:
+                                    line.Add(new Label(colWidth * 4, line.RemainingHeight, "Assemble Train"));
+                                    if (eventAction.EventType == MSTS.EventType.AssembleTrainAtLocation)
+                                    {
+                                        line = scrollbox.AddLayoutHorizontal(TextHeight);
+                                        line.Add(new Label(colWidth * 4, line.RemainingHeight, "At Location"));
+                                    }
+                                    break;
+                                case MSTS.EventType.DropOffWagonsAtLocation:
+                                    line.Add(new Label(colWidth * 4, line.RemainingHeight, "Drop Off"));
+                                    break;
+                                case MSTS.EventType.MakeAPickup:
+                                case MSTS.EventType.PickUpWagons:
+                                    line.Add(new Label(colWidth * 4, line.RemainingHeight, "Pick Up"));
+                                    break;
+                            }
+                            if (eventAction.WagonList != null)
+                            {
+                                var location = "";
+                                var locationShown = false;
+                                foreach (MSTS.WorkOrderWagon wagonItem in eventAction.WagonList.Wagons)
+                                {
+                                    if (locationShown)
+                                    {
+                                        line = scrollbox.AddLayoutHorizontal(TextHeight);
+                                        line.AddSpace(colWidth * 4, 0);
+                                    }
+
+                                    // Car(s) column
+                                    // Wagon.UiD contains train and wagon indexes packed into single 32-bit value, e.g. 32678 - 0
+                                    var trainIndex = wagonItem.UID >> 16;         // Extract upper 16 bits
+                                    var wagonIndex = wagonItem.UID & 0x0000FFFF;  // Extract lower 16 bits
+                                    var wagonName = trainIndex.ToString() + " - " + wagonIndex.ToString();
+                                    var wagonType = "";
+                                    var wagonFound = false;
+                                    foreach (MSTS.ActivityObject activityObject in owner.Viewer.Simulator.Activity.Tr_Activity.Tr_Activity_File.ActivityObjects)
+                                    {
+                                        if (activityObject.ID == trainIndex)
+                                        {
+                                            foreach (MSTS.Wagon trainWagon in activityObject.Train_Config.TrainCfg.Wagons)
+                                            {
+                                                if (trainWagon.UiD == wagonIndex)
+                                                {
+                                                    wagonType = trainWagon.Name;
+                                                    wagonFound = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (wagonFound)
+                                            break;
+                                    }
+                                    if (!wagonFound)
+                                    {
+                                        foreach (var car in owner.Viewer.PlayerTrain.Cars)
+                                        {
+                                            if (car.UiD == wagonItem.UID)
+                                            {
+                                                wagonType = Path.GetFileNameWithoutExtension(car.WagFilePath);
+                                                wagonFound = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    line.Add(new Label(colWidth * 3, line.RemainingHeight, wagonName));
+                                    line.Add(new Label(colWidth * 6, line.RemainingHeight, wagonType));
+
+                                    // Location column
+                                    if (locationShown)
+                                    {
+                                        line.AddSpace(colWidth * 6, 0);
+                                    }
+                                    else
+                                    {
+                                        var sidingId = eventAction.EventType == MSTS.EventType.AssembleTrainAtLocation || eventAction.EventType == MSTS.EventType.DropOffWagonsAtLocation ? (uint)eventAction.SidingId : wagonItem.SidingItem;
+                                        foreach (var item in owner.Viewer.Simulator.TDB.TrackDB.TrItemTable)
+                                        {
+                                            var siding = item as MSTS.SidingItem;
+                                            if (siding != null && siding.TrItemId == sidingId)
+                                            {
+                                                location = siding.ItemName;
+                                                break;
+                                            }
+                                        }
+                                        line.Add(new Label(colWidth * 6, line.RemainingHeight, location));
+                                        locationShown = true;
+                                    }
+
+                                    // Status column
+                                    line.Add(new Label(colWidth, line.RemainingHeight, ""));
+                                }
+                            }
+                            separatorShown = true;
+                        }
+                    }
+                }));
             }
             Tabs.Add(new TabData(Tab.LocomotiveProcedures, "Procedures", (cl) =>
             {
@@ -165,13 +293,13 @@ namespace ORTS.Popups
         ActivityTask LastActivityTask;
         bool StoppedAt;
 
-        public void UpdateText(ElapsedTime elapsedTime)
+        public override void PrepareFrame(ElapsedTime elapsedTime, bool updateFull)
         {
-            if (Tabs[ActiveTab].Tab == Tab.ActivityTimetable &&
-                Owner.Viewer.Simulator.ActivityRun != null)
+            base.PrepareFrame(elapsedTime, updateFull);
+
+            if (updateFull && Tabs[ActiveTab].Tab == Tab.ActivityTimetable && Owner.Viewer.Simulator.ActivityRun != null)
             {
-                if (LastActivityTask != Owner.Viewer.Simulator.ActivityRun.Current ||
-                    StoppedAt != GetStoppedAt(LastActivityTask))
+                if (LastActivityTask != Owner.Viewer.Simulator.ActivityRun.Current || StoppedAt != GetStoppedAt(LastActivityTask))
                 {
                     LastActivityTask = Owner.Viewer.Simulator.ActivityRun.Current;
                     StoppedAt = GetStoppedAt(LastActivityTask);
@@ -185,6 +313,24 @@ namespace ORTS.Popups
             if (task is ActivityTaskPassengerStopAt)
                 return ((ActivityTaskPassengerStopAt)task).ActArrive != null;
             return false;
+        }
+    }
+
+    class Key : Label
+    {
+        public Color KeyColor;
+
+        public Key(int x, int y, int width, int height, string text, Color keyColor)
+            : base(x, y, width, height, text, LabelAlignment.Center)
+        {
+            KeyColor = keyColor;
+        }
+
+        internal override void Draw(SpriteBatch spriteBatch, Point offset)
+        {
+            spriteBatch.Draw(WindowManager.WhiteTexture, new Rectangle(offset.X + Position.Left, offset.Y + Position.Top, Position.Width, Position.Height), Color.White);
+            spriteBatch.Draw(WindowManager.WhiteTexture, new Rectangle(offset.X + Position.Left + 1, offset.Y + Position.Top + 1, Position.Width - 2, Position.Height - 2), KeyColor);
+            base.Draw(spriteBatch, offset);
         }
     }
 }

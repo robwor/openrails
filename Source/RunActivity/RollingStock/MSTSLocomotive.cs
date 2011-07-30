@@ -37,6 +37,7 @@ using Microsoft.Xna.Framework.Input;
 using MSTS;
 using System.Xml;
 using Microsoft.Xna.Framework.Content;
+using System.Text;
 
 
 
@@ -108,11 +109,26 @@ namespace ORTS
         public MSTSBrakeController  EngineBrakeController;
         public AirSinglePipe.ValveState EngineBrakeState = AirSinglePipe.ValveState.Lap;
         public MSTSNotchController  DynamicBrakeController;
+        
+        public Axle LocomotiveAxle;
+        public IIRFilter CurrentFilter;
+        public IIRFilter AdhesionFilter;
+        
+        public float FilteredMotiveForceN = 0.0f;
 
         public MSTSLocomotive(Simulator simulator, string wagPath, TrainCar previousCar)
             : base(simulator, wagPath, previousCar)
         {
 			BrakePipeChargingRatePSIpS = simulator.Settings.BrakePipeChargingRate;
+
+            LocomotiveAxle = new Axle();
+            LocomotiveAxle.DriveType = AxleDriveType.ForceDriven;
+            LocomotiveAxle.DampingNs = 5000.0f;
+            LocomotiveAxle.AdhesionK = 0.7f;
+            CurrentFilter = new IIRFilter(IIRFilter.FilterTypes.Butterworth, 1, IIRFilter.HzToRad(1.0f),0.001f);
+            AdhesionFilter = new IIRFilter(IIRFilter.FilterTypes.Butterworth, 1, IIRFilter.HzToRad(0.1f), 0.001f);
+            UseAdvancedAdhesion = true;
+            //LocomotiveAxle.AxleWeightN;
             //Console.WriteLine("loco {0} {1} {2}", MaxPowerW, MaxForceN, MaxSpeedMpS);
         }
 
@@ -318,6 +334,7 @@ namespace ORTS
             outf.Write(MainResPressurePSI);
             outf.Write(CompressorOn);
             outf.Write(AverageForceN);
+            outf.Write(LocomotiveAxle.AxleSpeedMpS);
             ControllerFactory.Save(ThrottleController, outf);
             ControllerFactory.Save(TrainBrakeController, outf);
             ControllerFactory.Save(EngineBrakeController, outf);
@@ -337,10 +354,13 @@ namespace ORTS
             MainResPressurePSI = inf.ReadSingle();
             CompressorOn = inf.ReadBoolean();
             AverageForceN = inf.ReadSingle();
+            LocomotiveAxle.Reset(inf.ReadSingle());
             ThrottleController = (MSTSNotchController)ControllerFactory.Restore(Simulator, inf);
             TrainBrakeController = (MSTSBrakeController)ControllerFactory.Restore(Simulator, inf);
             EngineBrakeController = (MSTSBrakeController)ControllerFactory.Restore(Simulator, inf);
             DynamicBrakeController = (MSTSNotchController)ControllerFactory.Restore(Simulator, inf);
+            AdhesionFilter.Reset(0.5f);
+            
             base.Restore(inf);
         }
 
@@ -419,6 +439,7 @@ namespace ORTS
             // Variable1 is wheel rotation in m/sec for steam locomotives
             //Variable2 = Math.Abs(MotiveForceN) / MaxForceN;   // force generated
             Variable1 = ThrottlePercent / 100f;   // throttle setting
+            //Variable2 = Math.Abs(WheelSpeedMpS);
 
             if (DynamicBrakePercent > 0 && DynamicBrakeForceCurves != null)
             {
@@ -426,7 +447,10 @@ namespace ORTS
                 if (f > 0)
                     MotiveForceN -= (SpeedMpS > 0 ? 1 : -1) * f;
             }
-            LimitMotiveForce();
+            LimitMotiveForce(elapsedClockSeconds);
+
+            //Force to display
+            FilteredMotiveForceN = CurrentFilter.Filter(MotiveForceN, elapsedClockSeconds);
 
             if (MainResPressurePSI < CompressorRestartPressurePSI && !CompressorOn)
                 SignalEvent(EventID.CompressorOn);
@@ -440,28 +464,143 @@ namespace ORTS
 
         /// <summary>
         /// Adjusts the MotiveForce to account for adhesion limits
-        /// The basic force limits are calculated the same way MSTS calculates them, but
-        /// the weather handleing is different
+        /// If UseAdvancedAdhesion is true, dynamic adhesion model is computed
+        /// If UseAdvancedAdhesion is false, the basic force limits are calculated the same way MSTS calculates them, but
+        /// the weather handleing is different and Curtius-Kniffler curves are considered as a static limit
         /// </summary>
+        public void LimitMotiveForce(float elapsedClockSeconds)
+        {
+            if (NumWheels <= 0)
+                return;
+            //float max0 = MassKG * 9.8f * Adhesion3 / NumWheels;   //Not used
+
+            //Curtius-Kniffler computation for the basic model
+            float currentSpeedMpS = Math.Abs(SpeedMpS);
+            float uMax = (7.5f / (currentSpeedMpS * 3.6f + 44.0f) + 0.161f); // Curtius - Kniffler equation
+            float adhesionUtil = 0.95f;   //Adhesion utilization
+
+            float max0 = MassKG * 9.81f * adhesionUtil * uMax;  //Ahesion limit in [N]
+            float max1;
+
+            if ((UseAdvancedAdhesion)&&(!Simulator.Paused))
+            {
+                //Set the weather coeff
+                if (Program.Simulator.Weather == WeatherType.Rain || Program.Simulator.Weather == WeatherType.Snow)
+                {
+                    if (Train.SlipperySpotDistanceM < 0)
+                    {
+                        Train.SlipperySpotLengthM = 10 + 40 * (float)Program.Random.NextDouble();
+                        Train.SlipperySpotDistanceM = Train.SlipperySpotLengthM + 2000 * (float)Program.Random.NextDouble();
+                    }
+                    if (Train.SlipperySpotDistanceM < Train.SlipperySpotLengthM)
+                        max0 = .8f;
+                    if (Program.Simulator.Weather == WeatherType.Rain)
+                        max0 = .6f;
+                    else
+                        max0 = .5f;
+                }
+                else
+                    max0 = 1.0f;
+                //add sander
+                if (Sander)
+                    max0 *= 1.5f;
+                //Set adhesion coeff to the model
+                    //Pure condition
+                    //LocomotiveAxle.AdhesionConditions = max0;
+                    //Filtered condition
+                    //LocomotiveAxle.AdhesionConditions = AdhesionFilter.Filter(max0, elapsedClockSeconds);
+                //Filtered random condition
+                LocomotiveAxle.AdhesionConditions = AdhesionFilter.Filter(max0 + (float)(0.2*Program.Random.NextDouble()),elapsedClockSeconds);
+                //LocomotiveAxle.AdhesionConditions = max0;
+                //Set axle inertia (this should be placed within the ENG parser)
+                // but make sure the value is sufficietn
+                if (MaxPowerW < 2000000.0f)
+                {
+                    if (NumWheels > 4.0f)
+                        LocomotiveAxle.InertiaKgm2 = 2.0f * NumWheels * 4000.0f;
+                    else
+                        LocomotiveAxle.InertiaKgm2 = 32000.0f;
+                }
+                else
+                {
+                    if (NumWheels > 4.0f)
+                        LocomotiveAxle.InertiaKgm2 = 2.0f * NumWheels * MaxPowerW / 500.0f;
+                    else
+                        LocomotiveAxle.InertiaKgm2 = 32000.0f;
+                }
+
+                //Set axle model parameters
+                
+                //LocomotiveAxle.BrakeForceN = FrictionForceN;
+                LocomotiveAxle.BrakeForceN = BrakeForceN;
+                LocomotiveAxle.AxleWeightN = 9.81f * MassKG;        //will be computed each time considering the tilting
+                LocomotiveAxle.DriveForceN = MotiveForceN;           //Developed force
+                
+                LocomotiveAxle.TrainSpeedMpS = SpeedMpS;            //Set the train speed of the axle model
+                MotiveForceN = LocomotiveAxle.AxleForceN;           //Get the Axle force and use it for the motion
+                WheelSlip = LocomotiveAxle.IsWheelSlip;             //Get the wheelslip indicator
+                WheelSpeedMpS = LocomotiveAxle.AxleSpeedMpS;
+
+                LocomotiveAxle.Update(elapsedClockSeconds);         //Main updater of the axle model
+            }
+            else
+            {
+                if (Program.Simulator.Weather == WeatherType.Rain || Program.Simulator.Weather == WeatherType.Snow)
+                {
+                    if (Train.SlipperySpotDistanceM < 0)
+                    {
+                        Train.SlipperySpotLengthM = 10 + 40 * (float)Program.Random.NextDouble();
+                        Train.SlipperySpotDistanceM = Train.SlipperySpotLengthM + 2000 * (float)Program.Random.NextDouble();
+                    }
+                    if (Train.SlipperySpotDistanceM < Train.SlipperySpotLengthM)
+                        max0 *= .8f;
+                    if (Program.Simulator.Weather == WeatherType.Rain)
+                        max0 *= .8f;
+                    else
+                        max0 *= .7f;
+                }
+                //float max1 = (Sander ? .95f : Adhesion2) * max0;  //Not used this way
+                max1 = (Sander ? 1.5f : 1.0f) * max0; //Increase adhesion when sander is on
+                WheelSlip = false;
+
+                if (MotiveForceN > max1)
+                {
+                    WheelSlip = true;
+                    if (AntiSlip)
+                        MotiveForceN = max1;
+                    else
+                        MotiveForceN = Adhesion1 * max0;        //Lowers the adhesion limit to 20% of its full
+                }
+                else if (MotiveForceN < -max1)
+                {
+                    WheelSlip = true;
+                    if (AntiSlip)
+                        MotiveForceN = -max1;
+                    else
+                        MotiveForceN = -Adhesion1 * max0;       //Lowers the adhesion limit to 20% of its full
+                }
+            }
+        }
         public void LimitMotiveForce()
         {
             if (NumWheels <= 0)
                 return;
-
             //float max0 = MassKG * 9.8f * Adhesion3 / NumWheels;   //Not used
-            
+
             //Curtius-Kniffler computation
             float currentSpeedMpS = Math.Abs(SpeedMpS);
             float uMax = (7.5f / (currentSpeedMpS * 3.6f + 44.0f) + 0.161f); // Curtius - Kniffler equation
             float adhesionUtil = 0.95f;   //Adhesion utilization
-            
+
             float max0 = MassKG * 9.81f * adhesionUtil * uMax;  //Ahesion limit in [N]
+            float max1;
+
             if (Program.Simulator.Weather == WeatherType.Rain || Program.Simulator.Weather == WeatherType.Snow)
             {
                 if (Train.SlipperySpotDistanceM < 0)
                 {
                     Train.SlipperySpotLengthM = 10 + 40 * (float)Program.Random.NextDouble();
-                    Train.SlipperySpotDistanceM = Train.SlipperySpotLengthM + 2000 * (float) Program.Random.NextDouble();
+                    Train.SlipperySpotDistanceM = Train.SlipperySpotLengthM + 2000 * (float)Program.Random.NextDouble();
                 }
                 if (Train.SlipperySpotDistanceM < Train.SlipperySpotLengthM)
                     max0 *= .8f;
@@ -471,8 +610,9 @@ namespace ORTS
                     max0 *= .7f;
             }
             //float max1 = (Sander ? .95f : Adhesion2) * max0;  //Not used this way
-            float max1 = (Sander ? 1.5f : 1.0f) * max0; //Increase adhesion when sander is on
+            max1 = (Sander ? 1.5f : 1.0f) * max0; //Increase adhesion when sander is on
             WheelSlip = false;
+
             if (MotiveForceN > max1)
             {
                 WheelSlip = true;
@@ -490,6 +630,7 @@ namespace ORTS
                     MotiveForceN = -Adhesion1 * max0;       //Lowers the adhesion limit to 20% of its full
             }
         }
+
         public override bool GetSanderOn()
         {
             return Sander;
@@ -607,19 +748,20 @@ namespace ORTS
             TrainBrakeController.SetEmergency();
             SignalEvent(EventID.TrainBrakeEmergency);
         }
+
         public override string GetTrainBrakeStatus()
         {            
             string s = TrainBrakeController.GetStatus();
             if (BrakeSystem.GetType() == typeof(AirSinglePipe))
-                s += string.Format(" EQ {0:F0} PSI", Train.BrakeLine1PressurePSI);
+                s += string.Format(" EQ {0:F0} psi", Train.BrakeLine1PressurePSI);
             else
-                s += string.Format(" BP {0:F0} PSI", Train.BrakeLine1PressurePSI);
-            s += " (cars: " + BrakeSystem.GetStatus(1);
+                s += string.Format(" BP {0:F0} psi", Train.BrakeLine1PressurePSI);
+            s += " (cars: " + BrakeSystem.GetFullStatus();
             TrainCar lastCar = Train.Cars[Train.Cars.Count - 1];
             if (lastCar == this)
                 lastCar = Train.Cars[0];
             if (lastCar != this)
-                s += " to " + lastCar.BrakeSystem.GetStatus(0);
+                s += " to " + lastCar.BrakeSystem.GetStatus();
 			s += ")";
             return s;
         }
@@ -762,8 +904,8 @@ namespace ORTS
                 if (eventID == EventID.HeadlightOn) {  Headlight = 2; break; }
                 if (eventID == EventID.CompressorOn) { CompressorOn = true; break; }
                 if (eventID == EventID.CompressorOff) { CompressorOn = false; break; }
-                if (eventID == EventID.LightSwitchToggle) { break; }
-            } while (false);
+				if (eventID == EventID.LightSwitchToggle) { break; }
+			} while (false);
 
             base.SignalEvent(eventID );
         }
@@ -781,17 +923,26 @@ namespace ORTS
             {
                 case CABViewControlTypes.SPEEDOMETER:
                     {
-                        data = SpeedMpS;
+                        //data = SpeedMpS;
+                        data = WheelSpeedMpS;
                         if (cvc.Units == CABViewControlUnits.KM_PER_HOUR)
                             data *= 3.6f;
                         else
                             data *= 2.2369f;
-
+                        //data = Math.Abs(data);
                         break;
                     }
                 case CABViewControlTypes.AMMETER:
                 case CABViewControlTypes.LOAD_METER:
                     {
+                        if (LocomotiveAxle != null)
+                        {
+                            if (FilteredMotiveForceN != 0)
+                                data = this.FilteredMotiveForceN / MaxForceN * (float)cvc.MaxValue;
+                            else
+                                data = this.LocomotiveAxle.AxleForceN / MaxForceN * (float)cvc.MaxValue;
+                            break;
+                        }
                         data = this.MotiveForceN / MaxForceN * (float)cvc.MaxValue;
                         break;
                     }
@@ -885,6 +1036,12 @@ namespace ORTS
                         data = Headlight;
                         break;
                     }
+                //case CABViewControlTypes.WHEELSLIP:
+                //    {
+                //        data = WheelSlip ? 1 : 0;
+                //        break;
+                //    }
+    
                 case CABViewControlTypes.DIRECTION:
                 case CABViewControlTypes.DIRECTION_DISPLAY:
                     {
@@ -1140,9 +1297,9 @@ namespace ORTS
                 if (EventID.IsMSTSBin)
                     Locomotive.SignalEvent(EventID.LightSwitchToggle);
             }
-			if (UserInput.IsPressed(UserCommands.ControlDispatcherExtend))
+			if (UserInput.IsPressed(UserCommands.DebugDispatcherExtend))
                 Program.Simulator.AI.Dispatcher.ExtendPlayerAuthorization();
-			if (UserInput.IsPressed(UserCommands.ControlDispatcherRelease))
+			if (UserInput.IsPressed(UserCommands.DebugDispatcherRelease))
                 Program.Simulator.AI.Dispatcher.ReleasePlayerAuthorization();
 
             // By GeorgeS
@@ -1542,7 +1699,6 @@ namespace ORTS
 
     public class CabRenderer : RenderPrimitive
     {
-        private SpriteBatchMaterial _Sprite2DCabView;
         private Rectangle _CabRect = new Rectangle();
         private Matrix _Scale = Matrix.Identity;
         private Texture2D _CabTexture;
@@ -1561,7 +1717,6 @@ namespace ORTS
         public CabRenderer(Viewer3D viewer, MSTSLocomotive car)
         {
 			//Sequence = RenderPrimitiveSequence.CabView;
-            _Sprite2DCabView = new SpriteBatchMaterial(viewer.RenderProcess);
             _Viewer = viewer;
             _Locomotive = car;
 
@@ -1667,7 +1822,7 @@ namespace ORTS
                     _Locomotive.ExCVF.Light2.TranslatedPosition(_Viewer.DisplaySize));
             }
 
-            frame.AddPrimitive(_Sprite2DCabView, this, RenderPrimitiveGroup.Cab, ref _Scale);
+            frame.AddPrimitive(Materials.SpriteBatchMaterial, this, RenderPrimitiveGroup.Cab, ref _Scale);
 
             if (_Location == 0)
             {
@@ -1690,7 +1845,7 @@ namespace ORTS
                 _Shader.CurrentTechnique.Passes[0].Begin();
             }
 
-            _Sprite2DCabView.SpriteBatch.Draw(_CabTexture, _CabRect, Color.White);
+            Materials.SpriteBatchMaterial.SpriteBatch.Draw(_CabTexture, _CabRect, Color.White);
 
             if (_Location == 0 && _Shader != null)
             {
@@ -1706,7 +1861,6 @@ namespace ORTS
     public class CabViewControlRenderer : RenderPrimitive
     {
         protected CabViewControl _CabViewControl;
-        protected SpriteBatchMaterial _Sprite2DCtlView;
         protected Matrix _Matrix = Matrix.Identity;
         protected Texture2D _Texture;
         protected Viewer3D _Viewer;
@@ -1720,7 +1874,6 @@ namespace ORTS
         public CabViewControlRenderer(CabViewControl cvc, Viewer3D viewer, MSTSLocomotive car, CabShader shader)
         {
             _CabViewControl = cvc;
-            _Sprite2DCtlView = new SpriteBatchMaterial(viewer.RenderProcess);
             _Shader = shader;
 
             CABTextureManager.LoadTextures(viewer, _CabViewControl.ACEFile);
@@ -1749,7 +1902,7 @@ namespace ORTS
 
         public virtual void PrepareFrame(RenderFrame frame)
         {
-            frame.AddPrimitive(_Sprite2DCtlView, this, RenderPrimitiveGroup.Cab, ref _Matrix);
+            frame.AddPrimitive(Materials.SpriteBatchMaterial, this, RenderPrimitiveGroup.Cab, ref _Matrix);
         }
 
         public override void Draw(GraphicsDevice graphicsDevice)
@@ -1827,7 +1980,7 @@ namespace ORTS
                 _Shader.Begin();
                 _Shader.CurrentTechnique.Passes[0].Begin();
             }
-            _Sprite2DCtlView.SpriteBatch.Draw(_Texture, _Position, null, Color.White, _Rotation, _Origin, _ScaleToScreen, SpriteEffects.None, 0);
+            Materials.SpriteBatchMaterial.SpriteBatch.Draw(_Texture, _Position, null, Color.White, _Rotation, _Origin, _ScaleToScreen, SpriteEffects.None, 0);
             if (_Shader != null)
             {
                 _Shader.CurrentTechnique.Passes[0].End();
@@ -1923,7 +2076,7 @@ namespace ORTS
                 _Shader.Begin();
                 _Shader.CurrentTechnique.Passes[0].Begin();
             }
-            _Sprite2DCtlView.SpriteBatch.Draw(_Texture, _DestRectangle, _SourceRectangle, Color.White);
+            Materials.SpriteBatchMaterial.SpriteBatch.Draw(_Texture, _DestRectangle, _SourceRectangle, Color.White);
             if (_Shader != null)
             {
                 _Shader.CurrentTechnique.Passes[0].End();
@@ -1985,7 +2138,7 @@ namespace ORTS
                 _Shader.Begin();
                 _Shader.CurrentTechnique.Passes[0].Begin();
             }
-            _Sprite2DCtlView.SpriteBatch.Draw(_Texture, _DestRectangle, _SourceRectangle, Color.White);
+            Materials.SpriteBatchMaterial.SpriteBatch.Draw(_Texture, _DestRectangle, _SourceRectangle, Color.White);
             if (_Shader != null)
             {
                 _Shader.CurrentTechnique.Passes[0].End();
@@ -2064,11 +2217,11 @@ namespace ORTS
     /// <summary>
     /// Digital Cab Control renderer
     /// Uses fonts instead of graphic
-    /// Do not supports Justification
+    /// Does not support Justification
     /// </summary>
     public class CabViewDigitalRenderer : CabViewControlRenderer
     {
-        private string _Text;
+        private float _Num;
         SpriteFont _Font;
         private float _ScaleToScreen = 1f;
         private int _Digits = 1;
@@ -2078,6 +2231,7 @@ namespace ORTS
         {
             _Font = _Viewer.RenderProcess.Content.Load<SpriteFont>("Arial");
             _Digits = (int)Math.Log10(_CabViewControl.MaxValue) + 1;
+            
         }
 
         public override void PrepareFrame(RenderFrame frame)
@@ -2092,13 +2246,81 @@ namespace ORTS
 
 			_ScaleToScreen = (float)_Viewer.DisplaySize.Y / 480 * (fontratio);
 
-            float num = _Locomotive.GetDataOf(_CabViewControl);
-            _Text = num.ToString("00");
+            _Num = _Locomotive.GetDataOf(_CabViewControl);
         }
 
+        //Modified by Dionis 26/05/2011 in order to display colors and number formats
         public override void Draw(GraphicsDevice graphicsDevice)
         {
-            _Sprite2DCtlView.SpriteBatch.DrawString(_Font, _Text, _Position, Color.White, 0f, new Vector2(), _ScaleToScreen, SpriteEffects.None, 0);
+            StringBuilder sbAccuracy = new StringBuilder();
+            StringBuilder sbLeadingZeros = new StringBuilder();
+            string displayedText = "";
+            Color textColor;
+            try
+            {
+                if (((CVCDigital)_CabViewControl).OldValue != 0 && ((CVCDigital)_CabViewControl).OldValue > _Num && ((CVCDigital)_CabViewControl).DecreaseColor.A != 0)
+                {
+                    for (int i = 0; i < (int)((CVCDigital)_CabViewControl).Accuracy; i++)
+                    {
+                        sbAccuracy.Append("0");
+                    }
+                    for (int i = 0; i < (int)((CVCDigital)_CabViewControl).LeadingZeros; i++)
+                    {
+                        sbLeadingZeros.Append("0");
+                    }
+                    displayedText = String.Format("{0:0" + sbLeadingZeros.ToString() + (((CVCDigital)_CabViewControl).Accuracy > 0 ? "." + sbAccuracy.ToString() : "") + "}", Math.Abs(_Num));
+                    textColor = new Color { A = (byte)((CVCDigital)_CabViewControl).DecreaseColor.A, B = (byte)((CVCDigital)_CabViewControl).DecreaseColor.B, G = (byte)((CVCDigital)_CabViewControl).DecreaseColor.G, R = (byte)((CVCDigital)_CabViewControl).DecreaseColor.R };
+
+                }
+                else if (_Num < 0 && ((CVCDigital)_CabViewControl).NegativeColor.A != 0)
+                {
+                    for (int i = 0; i < (int)((CVCDigital)_CabViewControl).Accuracy; i++)
+                    {
+                        sbAccuracy.Append("0");
+                    }
+                    for (int i = 0; i < (int)((CVCDigital)_CabViewControl).LeadingZeros; i++)
+                    {
+                        sbLeadingZeros.Append("0");
+                    }
+                    displayedText = String.Format("{0:0" + sbLeadingZeros.ToString() + (((CVCDigital)_CabViewControl).Accuracy > 0 ? "." + sbAccuracy.ToString() : "") + "}", Math.Abs(_Num));
+                    textColor = new Color { A = (byte)((CVCDigital)_CabViewControl).NegativeColor.A, B = (byte)((CVCDigital)_CabViewControl).NegativeColor.B, G = (byte)((CVCDigital)_CabViewControl).NegativeColor.G, R = (byte)((CVCDigital)_CabViewControl).NegativeColor.R };
+
+                }
+                else
+                {
+                    for (int i = 0; i < (int)((CVCDigital)_CabViewControl).Accuracy; i++)
+                    {
+                        sbAccuracy.Append("0");
+                    }
+                    for (int i = 0; i < (int)((CVCDigital)_CabViewControl).LeadingZeros; i++)
+                    {
+                        sbLeadingZeros.Append("0");
+                    }
+                    if (((CVCDigital)_CabViewControl).PositiveColor.A != 0)
+                    {
+                        displayedText = String.Format("{0:0" + sbLeadingZeros.ToString() + (((CVCDigital)_CabViewControl).Accuracy > 0 ? "." + sbAccuracy.ToString() : "") + "}", _Num);
+                        textColor = new Color { A = (byte)((CVCDigital)_CabViewControl).PositiveColor.A, B = (byte)((CVCDigital)_CabViewControl).PositiveColor.B, G = (byte)((CVCDigital)_CabViewControl).PositiveColor.G, R = (byte)((CVCDigital)_CabViewControl).PositiveColor.R };
+
+                    }
+                    else
+                    {
+                        displayedText = String.Format("{0:0" + sbLeadingZeros.ToString() + (((CVCDigital)_CabViewControl).Accuracy > 0 ? "." + sbAccuracy.ToString() : "") + "}", _Num);
+                        textColor = Color.White;
+
+                    }
+                }
+                Materials.SpriteBatchMaterial.SpriteBatch.DrawString(_Font, displayedText, _Position, textColor, 0f, new Vector2(), _ScaleToScreen, SpriteEffects.None, 0);
+                ((CVCDigital)_CabViewControl).OldValue = _Num;
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine(ex);
+            }
+            finally
+            {
+                sbAccuracy = null;
+                sbLeadingZeros = null;
+            }
         }
     }
 }
