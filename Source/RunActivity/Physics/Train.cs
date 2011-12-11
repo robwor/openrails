@@ -14,13 +14,14 @@
  *      
  *  Individual TrainCars provide information on friction and motive force they are generating.
  *  This is consolidated by the train class into overall movement for the train.
- * 
+ */
+
 /// COPYRIGHT 2010 by the Open Rails project.
 /// This code is provided to enable you to contribute improvements to the open rails program.  
 /// Use of the code for any other purpose or distribution of the code to anyone else
 /// is prohibited without specific written permission from admin@openrails.org.
- */
 
+ 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -55,8 +56,8 @@ namespace ORTS
 		public float SlipperySpotLengthM = 0;
 
 		// These signals pass through to all cars and locomotives on the train
-		public Direction MUDirection = Direction.Forward; //set by player locomotive to control MU'd locomotives
-		public float MUThrottlePercent = 0;  // set by player locomotive to control MU'd locomotives
+        public Direction MUDirection = Direction.N; //set by player locomotive to control MU'd locomotives
+        public float MUThrottlePercent = 0;  // set by player locomotive to control MU'd locomotives
 		public float MUReverserPercent = 100;  // steam engine direction/cutoff control for MU'd locomotives
 		public float MUDynamicBrakePercent = -1;  // dynamic brake control for MU'd locomotives, <0 for off
 		public float BrakeLine1PressurePSI = 90;     // set by player locomotive to control entire train brakes
@@ -1055,7 +1056,10 @@ namespace ORTS
 				float m = 0;
 				for (; ; )
 				{
-					f += car.TotalForceN - (car.FrictionForceN + car.BrakeForceN);
+                    if(car.IsDriveable)
+                        f += car.TotalForceN - (car.FrictionForceN);
+                    else
+					    f += car.TotalForceN - (car.FrictionForceN + car.BrakeForceN);
 					m += car.MassKG;
 					if (j == Cars.Count - 1 || car.CouplerSlackM < car.GetMaximumCouplerSlack2M())
 						break;
@@ -1082,7 +1086,10 @@ namespace ORTS
 				float m = 0;
 				for (; ; )
 				{
-					f += car.TotalForceN + car.FrictionForceN + car.BrakeForceN;
+                    if(car.IsDriveable)
+					    f += car.TotalForceN + car.FrictionForceN;
+                    else
+                        f += car.TotalForceN + car.FrictionForceN + car.BrakeForceN;
 					m += car.MassKG;
 					if (j == 0 || car.CouplerSlackM > -car.GetMaximumCouplerSlack2M())
 						break;

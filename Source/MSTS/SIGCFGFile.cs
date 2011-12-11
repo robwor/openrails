@@ -35,6 +35,20 @@ namespace MSTS
                     new STFReader.TokenProcessor("signalshapes", ()=>{ SignalShapes = ReadSignalShapes(stf); }),
                     new STFReader.TokenProcessor("scriptfiles", ()=>{ ScriptFiles = ReadScriptFiles(stf); }),
                 });
+            Initialize<Dictionary<string, LightTexture>, IDictionary<string, LightTexture>>(ref LightTextures, "LightTextures", filenamewithpath);
+            Initialize<Dictionary<string, LightTableEntry>, IDictionary<string, LightTableEntry>>(ref LightsTable, "LightsTab", filenamewithpath);
+            Initialize<Dictionary<string, SignalType>, IDictionary<string, SignalType>>(ref SignalTypes, "SignalTypes", filenamewithpath);
+            Initialize<Dictionary<string, SignalShape>, IDictionary<string, SignalShape>>(ref SignalShapes, "SignalShapes", filenamewithpath);
+            Initialize<List<string>, IList<string>>(ref ScriptFiles, "ScriptFiles", filenamewithpath);
+        }
+
+        static void Initialize<T, U>(ref U field, string name, string file) where T : U, new()
+        {
+            if (field == null)
+            {
+                field = new T();
+                Trace.TraceWarning("No {1} found in {0}", file, name);
+            }
         }
 
         static IDictionary<string, LightTexture> ReadLightTextures(STFReader stf)
@@ -232,7 +246,7 @@ namespace MSTS
                             case "abs": Abs = true; break;
                             case "no_gantry": NoGantry = true; break;
                             case "semaphore": Semaphore = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceError(stf, "Unknown Signal Type Flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown SignalType flag " + stf.ReadString()); break;
                         }
                 }),
             });
@@ -267,7 +281,7 @@ namespace MSTS
             lights.Sort(SignalLight.Comparer);
             for (var i = 0; i < lights.Count; i++)
                 if (lights[i].Index != i)
-                    STFException.TraceError(stf, "SignalLight index out of range: " + lights[i].Index);
+                    STFException.TraceWarning(stf, "SignalLight index out of range: " + lights[i].Index);
             return lights;
 		}
 
@@ -390,7 +404,7 @@ namespace MSTS
                         switch (stf.ReadString().ToLower())
                         {
                             case "semaphore_change": SemaphoreChange = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown SignalLight Flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown SignalLight flag " + stf.ReadString()); break;
                         }
                 }),
             });
@@ -458,7 +472,7 @@ namespace MSTS
                         switch (stf.ReadString().ToLower())
                         {
                             case "flashing": Flashing = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown DrawLight Flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown DrawLight flag " + stf.ReadString()); break;
                         }
                 }),
             });
@@ -483,7 +497,7 @@ namespace MSTS
             }
             catch (ArgumentException)
             {
-                STFException.TraceError(stf, "Unknown Aspect " + aspectName);
+                STFException.TraceWarning(stf, "Unknown aspect " + aspectName);
                 Aspect = SignalHead.SIGASP.UNKNOWN;
             }
             DrawStateName = stf.ReadString().ToLowerInvariant();
@@ -496,7 +510,7 @@ namespace MSTS
                         switch (stf.ReadString().ToLower())
                         {
                             case "asap": Asap = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown DrawLight Flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Unknown DrawLight flag " + stf.ReadString()); break;
                         }
                 }),
             });

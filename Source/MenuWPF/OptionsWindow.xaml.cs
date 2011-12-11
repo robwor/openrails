@@ -56,6 +56,7 @@ namespace MenuWPF
                 this.sliderWOD.Value = (int)RK.GetValue("WorldObjectDensity", (int)sliderWOD.Value);
                 this.sliderSound.Value = (int)RK.GetValue("SoundDetailLevel", (int)sliderSound.Value);
                 this.cboResolution.Text = (string)RK.GetValue("WindowSize", (string)cboResolution.Text);
+                this.chkAlerter.IsChecked = (1 == (int)RK.GetValue("Alerter", 0));
                 this.chkTrainLights.IsChecked = (1 == (int)RK.GetValue("TrainLights", 0));
                 this.chkPrecipitation.IsChecked = (1 == (int)RK.GetValue("Precipitation", 0));
                 this.chkOverheadWire.IsChecked = (1 == (int)RK.GetValue("Wire", 0));
@@ -65,7 +66,7 @@ namespace MenuWPF
                 this.chkUseGlass.IsChecked = (1 == (int)RK.GetValue("WindowGlass", 0));
                 this.chkUseMSTSbin.IsChecked = (1 == (int)RK.GetValue("MSTSBINSound", 0));
                 this.chkFullScreen.IsChecked = (int)RK.GetValue("Fullscreen", 0) == 1 ? true : false;
-                this.chkWarningLog.IsChecked = (int)RK.GetValue("Warnings", 1) == 1 ? true : false;
+                this.chkWarningLog.IsChecked = (int)RK.GetValue("Logging", 1) == 1 ? true : false;
                 this.txtBgImage.Text = RK.GetValue("BackgroundImage", txtBgImage.Text).ToString();
             }
             if (System.IO.File.Exists(txtBgImage.Text))
@@ -120,6 +121,7 @@ namespace MenuWPF
                     RK.SetValue("WorldObjectDensity", (int)this.sliderWOD.Value);
                     RK.SetValue("SoundDetailLevel", (int)this.sliderSound.Value);
                     RK.SetValue("WindowSize", (string)this.cboResolution.Text);
+                    RK.SetValue("Alerter", this.chkAlerter.IsChecked.Value ? 1 : 0);
                     RK.SetValue("TrainLights", this.chkTrainLights.IsChecked.Value ? 1 : 0);
                     RK.SetValue("Precipitation", this.chkPrecipitation.IsChecked.Value ? 1 : 0);
                     RK.SetValue("Wire", this.chkOverheadWire.IsChecked.Value ? 1 : 0);
@@ -129,7 +131,7 @@ namespace MenuWPF
                     RK.SetValue("WindowGlass", this.chkUseGlass.IsChecked.Value ? 1 : 0);
                     RK.SetValue("MSTSBINSound", this.chkUseMSTSbin.IsChecked.Value ? 1 : 0);
                     RK.SetValue("Fullscreen", this.chkFullScreen.IsChecked.Value ? 1 : 0);
-                    RK.SetValue("Warnings", this.chkWarningLog.IsChecked.Value ? 1 : 0);
+                    RK.SetValue("Logging", this.chkWarningLog.IsChecked.Value ? 1 : 0);
                     RK.SetValue("BackgroundImage", this.txtBgImage.Text);
                 }
                 SaveFolders();

@@ -37,9 +37,18 @@ namespace ORTS
     public class MSTSElectricLocomotive: MSTSLocomotive
     {
 
+        public bool PantographFirstUp = false;
+        public bool PantographSecondUp = false;
+        public float PantographFirstDelay = 0.0f;
+        public float PantographSecondDelay = 0.0f;
+
+        public IIRFilter VoltageFilter;
+        public float VoltageV = 0.0f;
+
 		public MSTSElectricLocomotive(Simulator simulator, string wagFile, TrainCar previousCar)
 			: base(simulator, wagFile, previousCar)
         {
+            VoltageFilter = new IIRFilter(IIRFilter.FilterTypes.Butterworth, 1, IIRFilter.HzToRad(0.7f), 0.001f);
         }
 
         /// <summary>
@@ -67,6 +76,14 @@ namespace ORTS
             // for example
             //CabSoundFileName = locoCopy.CabSoundFileName;
             //CVFFileName = locoCopy.CVFFileName;
+            MSTSElectricLocomotive locoCopy = (MSTSElectricLocomotive) copy;
+            PantographFirstUp = locoCopy.PantographFirstUp;
+            PantographSecondUp = locoCopy.PantographSecondUp;
+            PantographFirstDelay = locoCopy.PantographFirstDelay;
+            PantographSecondDelay = locoCopy.PantographSecondDelay;
+
+            VoltageFilter = locoCopy.VoltageFilter;
+            VoltageV = locoCopy.VoltageV;
 
             base.InitializeFromCopy(copy);  // each derived level initializes its own variables
         }
@@ -106,8 +123,36 @@ namespace ORTS
         /// and FrictionForceN values based on throttle settings
         /// etc for the locomotive.
         /// </summary>
+
         public override void Update(float elapsedClockSeconds)
         {
+            if (!(PantographFirstUp || PantographSecondUp))
+                PowerOn = false;
+            else
+            {
+                if (PantographFirstUp)
+                {
+                    if ((PantographFirstDelay -= elapsedClockSeconds) < 0.0f)
+                    {
+                        PowerOn = true;
+                        PantographFirstDelay = 0.0f;
+                    }
+                }
+
+                if (PantographSecondUp)
+                {
+                    if ((PantographSecondDelay -= elapsedClockSeconds) < 0.0f)
+                    {
+                        PowerOn = true;
+                        PantographSecondDelay = 0.0f;
+                    }
+                }
+            }
+            if (PowerOn)
+                VoltageV = VoltageFilter.Filter((float)Program.Simulator.TRK.Tr_RouteFile.MaxLineVoltage, elapsedClockSeconds);
+            else
+                VoltageV = VoltageFilter.Filter(0.0f, elapsedClockSeconds);
+
             base.Update(elapsedClockSeconds);
             Variable2 = Variable1;
         }
@@ -120,6 +165,20 @@ namespace ORTS
             base.SignalEvent(eventID);
         }
 
+        public void SetPantographFirst( bool up)
+        {
+            if (PantographFirstUp != up)
+                PantographFirstDelay += 3.0f;
+            PantographFirstUp = up;
+        }
+
+        public void SetPantographSecond( bool up)
+        {
+            if (PantographSecondUp != up)
+                PantographSecondDelay += 3.0f;
+            PantographSecondUp = up;
+        }
+
         public override float GetDataOf(CabViewControl cvc)
         {
             float data;
@@ -130,7 +189,8 @@ namespace ORTS
                     {
                         if (Pan)
                         {
-                            data = (float)Program.Simulator.TRK.Tr_RouteFile.MaxLineVoltage;
+                            //data = (float)Program.Simulator.TRK.Tr_RouteFile.MaxLineVoltage;
+                            data = VoltageV;
                             if (cvc.Units == CABViewControlUnits.KILOVOLTS)
                                 data /= 1000;
                         }
@@ -154,6 +214,15 @@ namespace ORTS
             return data;
         }
 
+        public override string GetStatus()
+        {
+            var result = new StringBuilder();
+            result.AppendFormat("Pantographs = {0}{1}\n", PantographFirstUp ? "1st up " : "", PantographSecondUp ? "2nd up " : "");
+            result.AppendFormat("Electric power = {0}", PowerOn ? "On" : "Off");
+            return result.ToString();
+        }
+
+
     } // class ElectricLocomotive
 
     ///////////////////////////////////////////////////
@@ -166,6 +235,7 @@ namespace ORTS
     /// </summary>
     public class MSTSElectricLocomotiveViewer : MSTSLocomotiveViewer
     {
+
         MSTSElectricLocomotive ElectricLocomotive;
 
         public MSTSElectricLocomotiveViewer(Viewer3D viewer, MSTSElectricLocomotive car)
@@ -180,10 +250,29 @@ namespace ORTS
         /// </summary>
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
+            if (UserInput.IsPressed(UserCommands.ControlPantographFirst))
+            {
+                // Raise or lower the first pantograph on all locomotives in the train
+                bool newState = !ElectricLocomotive.PantographFirstUp;
+                foreach (TrainCar traincar in ElectricLocomotive.Train.Cars)
+                {
+                    if (traincar.GetType() == typeof(MSTSElectricLocomotive))
+                        ((MSTSElectricLocomotive)traincar).SetPantographFirst(newState);
+                }
+            }
+            if (UserInput.IsPressed(UserCommands.ControlPantographSecond))
+            {
+                // Raise or lower the second pantograph on all locomotives in the train
+                bool newState = !ElectricLocomotive.PantographSecondUp;
+                foreach (TrainCar traincar in ElectricLocomotive.Train.Cars)
+                {
+                    if (traincar.GetType() == typeof(MSTSElectricLocomotive))
+                        ((MSTSElectricLocomotive)traincar).SetPantographSecond(newState);
+                }
+            }
 
-            base.HandleUserInput( elapsedTime);
+            base.HandleUserInput(elapsedTime);
         }
-
 
         /// <summary>
         /// We are about to display a video frame.  Calculate positions for 

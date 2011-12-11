@@ -19,7 +19,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Windows.Forms;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -263,7 +265,9 @@ namespace ORTS
         Matrix[] ShadowMapLightView;
         Matrix[] ShadowMapLightProj;
         Matrix[] ShadowMapLightViewProjShadowProj;
-        BoundingFrustum[] ShadowMapBound;
+        Vector3 ShadowMapX;
+        Vector3 ShadowMapY;
+        Vector3[] ShadowMapCenter;
 
         static readonly Material DummyBlendedMaterial = new EmptyMaterial();
 
@@ -297,7 +301,7 @@ namespace ORTS
                 ShadowMapLightView = new Matrix[RenderProcess.ShadowMapCount];
                 ShadowMapLightProj = new Matrix[RenderProcess.ShadowMapCount];
                 ShadowMapLightViewProjShadowProj = new Matrix[RenderProcess.ShadowMapCount];
-                ShadowMapBound = new BoundingFrustum[RenderProcess.ShadowMapCount];
+                ShadowMapCenter= new Vector3[RenderProcess.ShadowMapCount];
 
                 RenderShadowItems = new RenderItemCollection[RenderProcess.ShadowMapCount];
                 for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
@@ -322,6 +326,7 @@ namespace ORTS
         }
 
         static bool LockShadows;
+        [CallOnThread("Updater")]
         public void PrepareFrame(ElapsedTime elapsedTime)
         {
             if (UserInput.IsPressed(UserCommands.DebugLockShadows))
@@ -345,6 +350,8 @@ namespace ORTS
                 var shadowMapAlignAxisY = Vector3.Cross(shadowMapAlignAxisX, SteppedSolarDirection);
                 shadowMapAlignAxisX.Normalize();
                 shadowMapAlignAxisY.Normalize();
+                ShadowMapX = shadowMapAlignAxisX;
+                ShadowMapY = shadowMapAlignAxisY;
 
                 for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
                 {
@@ -368,7 +375,7 @@ namespace ORTS
                     ShadowMapLightView[shadowMapIndex] = Matrix.CreateLookAt(shadowMapLocation + (viewingDistance + shadowMapDiameter / 2) * SteppedSolarDirection, shadowMapLocation, Vector3.Up);
                     ShadowMapLightProj[shadowMapIndex] = Matrix.CreateOrthographic(shadowMapDiameter, shadowMapDiameter, viewingDistance, viewingDistance + shadowMapDiameter);
                     ShadowMapLightViewProjShadowProj[shadowMapIndex] = ShadowMapLightView[shadowMapIndex] * ShadowMapLightProj[shadowMapIndex] * new Matrix(0.5f, 0, 0, 0, 0, -0.5f, 0, 0, 0, 0, 1, 0, 0.5f + 0.5f / ShadowMapStencilBuffer.Width, 0.5f + 0.5f / ShadowMapStencilBuffer.Height, 0, 1);
-                    ShadowMapBound[shadowMapIndex] = new BoundingFrustum(ShadowMapLightView[shadowMapIndex] * ShadowMapLightProj[shadowMapIndex]);
+                    ShadowMapCenter[shadowMapIndex] = shadowMapLocation;
                 }
             }
         }
@@ -414,7 +421,7 @@ namespace ORTS
         /// </summary>
         public void AddPrimitive(Material material, RenderPrimitive primitive, RenderPrimitiveGroup group, ref Matrix xnaMatrix, ShapeFlags flags)
         {
-            var blended = material.GetBlending(primitive);
+            var blended = material.GetBlending();
             // TODO: Alpha sorting code
             var sortingMaterial = blended ? DummyBlendedMaterial : material;
             //var sortingMaterial = material;
@@ -475,7 +482,31 @@ namespace ORTS
                 return false;
 
             mstsLocation.Z *= -1;
-            return ShadowMapBound[shadowMapIndex].Intersects(new BoundingSphere(mstsLocation, objectRadius));
+            mstsLocation.X -= ShadowMapCenter[shadowMapIndex].X;
+            mstsLocation.Y -= ShadowMapCenter[shadowMapIndex].Y;
+            mstsLocation.Z -= ShadowMapCenter[shadowMapIndex].Z;
+            objectRadius += RenderProcess.ShadowMapDiameter[shadowMapIndex] / 2;
+
+            // Check if object is inside the sphere.
+            var distanceSquared = mstsLocation.X * mstsLocation.X + mstsLocation.Y * mstsLocation.Y + mstsLocation.Z * mstsLocation.Z;
+            if (distanceSquared <= objectRadius * objectRadius)
+                return true;
+
+            // Check if object is inside cylinder.
+            var dotX = Math.Abs(mstsLocation.X * ShadowMapX.X + mstsLocation.Y * ShadowMapX.Y + mstsLocation.Z * ShadowMapX.Z);
+            if (dotX > objectRadius)
+                return false;
+
+            var dotY = Math.Abs(mstsLocation.X * ShadowMapY.X + mstsLocation.Y * ShadowMapY.Y + mstsLocation.Z * ShadowMapY.Z);
+            if (dotY > objectRadius)
+                return false;
+
+            // Check if object is on correct side of center.
+            var dotZ = Math.Abs(mstsLocation.X + SteppedSolarDirection.X + mstsLocation.Y + SteppedSolarDirection.Y + mstsLocation.Z + SteppedSolarDirection.Z);
+            if (dotZ < -objectRadius)
+                return false;
+
+            return true;
         }
 
         static RenderPrimitiveSequence GetRenderSequence(RenderPrimitiveGroup group, bool blended)
@@ -517,6 +548,19 @@ namespace ORTS
             {
                 Console.WriteLine("}");
                 Console.WriteLine();
+            }
+
+            if (UserInput.IsPressed(UserCommands.GameScreenshot))
+            {
+                using (var screenshot = new ResolveTexture2D(graphicsDevice, graphicsDevice.PresentationParameters.BackBufferWidth, graphicsDevice.PresentationParameters.BackBufferHeight, 1, SurfaceFormat.Color))
+                {
+                    graphicsDevice.ResolveBackBuffer(screenshot);
+                    if (!Directory.Exists(RenderProcess.Viewer.Settings.ScreenshotPath))
+                        Directory.CreateDirectory(RenderProcess.Viewer.Settings.ScreenshotPath);
+                    var fileName = Path.Combine(RenderProcess.Viewer.Settings.ScreenshotPath, Application.ProductName + " " + DateTime.Now.ToString("yyyy-MM-dd hh-mm-ss") + ".png");
+                    screenshot.Save(fileName, ImageFileFormat.Png);
+                    RenderProcess.Viewer.MessagesWindow.AddMessage(String.Format("Screenshot saved to '{0}'.", fileName), 10);
+                }
             }
         }
 

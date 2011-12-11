@@ -6,8 +6,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace ORTS
@@ -29,17 +31,20 @@ namespace ORTS
 		// Please put all user settings in here as auto-properties. Public properties
 		// of type 'string', 'int' and 'bool' are automatically loaded/saved.
 
+        public bool Alerter { get; set; }
 		public int BrakePipeChargingRate { get; set; }
 		public bool DataLogger { get; set; }
 		public bool DynamicShadows { get; set; }
 		public bool FullScreen { get; set; }
 		public bool GraduatedRelease { get; set; }
+        public bool Logging { get; set; }
         public string LoggingFilename { get; set; }
         public string LoggingPath { get; set; }
         public bool MSTSBINSound { get; set; }
 		public bool Precipitation { get; set; }
 		public bool Profiling { get; set; }
         public int ProfilingFrameCount { get; set; }
+        public string ScreenshotPath { get; set; }
         public int ShaderModel { get; set; }
 		public bool ShadowAllShapes { get; set; }
 		public bool ShadowMapBlur { get; set; }
@@ -49,8 +54,10 @@ namespace ORTS
         public bool ShowErrorDialogs { get; set; }
 		public int SoundDetailLevel { get; set; }
 		public bool TrainLights { get; set; }
+        public bool UseAdvancedAdhesion { get; set; }
 		public bool VerticalSync { get; set; }
 		public int ViewingDistance { get; set; }
+        public int ViewingFOV { get; set; }
 		public bool WindowGlass { get; set; }
 		public string WindowSize { get; set; }
 		public bool Wire { get; set; }
@@ -63,6 +70,7 @@ namespace ORTS
         public int[] WindowPosition_Switch { get; set; }
         public int[] WindowPosition_TrackMonitor { get; set; }
         public int[] WindowPosition_TrainOperations { get; set; }
+        public int[] WindowPosition_Activity { get; set; }
 
 		#endregion
 
@@ -77,15 +85,19 @@ namespace ORTS
         {
             // Initialize defaults for all user settings here.
             BrakePipeChargingRate = 21;
+            Logging = true;
             LoggingPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             LoggingFilename = "OpenRailsLog.txt";
             ProfilingFrameCount = 1000;
+            ScreenshotPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), Application.ProductName);
             ShadowMapBlur = true;
             ShadowMapCount = 4;
             ShadowMapResolution = 1024;
             ShowErrorDialogs = true;
             SoundDetailLevel = 5;
+            UseAdvancedAdhesion = true;
             ViewingDistance = 2000;
+            ViewingFOV = 45; // MSTS uses 60 FOV horizontally, on 4:3 displays this is 45 FOV vertically (what OR uses).
             WindowSize = "1024x768";
             WorldObjectDensity = 10;
 
@@ -96,6 +108,7 @@ namespace ORTS
             WindowPosition_Switch = new[] { 0, 50 };
             WindowPosition_TrackMonitor = new[] { 100, 0 };
             WindowPosition_TrainOperations = new[] { 50, 50 };
+            WindowPosition_Activity = new[] { 50, 50 };
         }
 
         void LoadUserSettings(IEnumerable<string> options)

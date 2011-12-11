@@ -244,13 +244,12 @@ namespace ORTS
             if (MaxFiringRateKGpS == 0)
                 MaxFiringRateKGpS = 180 * MaxBoilerOutputLBpH / 775 / 3600 / 2.2046f;
             //Trace.WriteLine(string.Format("burn rate 2 {0} {1} {2}", BurnRate[1] * (1 - .82f) / .35f / .82f, baseTempK, BurnRate[1]));
-            UseAdvancedAdhesion = true;
         }
         public bool ZeroError(float v, string name, string wagFile)
         {
             if (v > 0)
                 return false;
-            Trace.TraceError("Error in " + wagFile + "\r\n   Steam engine value "+name+" must be defined and greater than zero.");
+            Trace.TraceWarning("Steam engine value {1} must be defined and greater than zero in {0}", wagFile, name);
             return true;
         }
 
@@ -407,6 +406,8 @@ namespace ORTS
         /// </summary>
         public override void Update(float elapsedClockSeconds)
         {
+            PowerOn = true;
+
             if (this.IsLeadLocomotive())
             {
                 Train.MUReverserPercent = CutoffController.Update(elapsedClockSeconds) * 100.0f;
@@ -423,6 +424,7 @@ namespace ORTS
             DamperController.Update(elapsedClockSeconds);
             FiringRateController.Update(elapsedClockSeconds);
 
+            
             base.Update(elapsedClockSeconds);
 
             Variable1 = Math.Abs(SpeedMpS);   // Steam loco's seem to need this.
@@ -523,21 +525,21 @@ namespace ORTS
 
         public override string GetStatus()
         {
-			float evap = EvaporationLBpS * 3600;
-			float usage = (SteamUsageLBpS + BlowerSteamUsageLBpS + BasicSteamUsageLBpS) * 3600;
+            var evap = EvaporationLBpS * 3600;
+            var usage = (SteamUsageLBpS + BlowerSteamUsageLBpS + BasicSteamUsageLBpS) * 3600;
             if (SafetyOn)
                 usage += SafetyValveUsageLBpS * 3600;
-			StringBuilder result = new StringBuilder();
-            result.AppendFormat("Boiler Pressure = {0:F1} PSI\nSteam Generation = {1:F0} lb/h\nSteam Usage = {2:F0} lb/h", BoilerPressurePSI, evap, usage);
+			var result = new StringBuilder();
+            result.AppendFormat("Boiler pressure = {0:F1} PSI\nSteam generation = {1:F0} lb/h\nSteam usage = {2:F0} lb/h", BoilerPressurePSI, evap, usage);
             //BoilerHeatBTU,BoilerMassLB,WaterFraction.ToString("F2"));
-            //result.AppendFormat("\nFlue Temp = {0:F0} F", 1.8f * (FlueTempK-255.37f));
+            //result.AppendFormat("\nFlue temp = {0:F0} F", 1.8f * (FlueTempK-255.37f));
             if (ManualFiring)
             {
-                result.AppendFormat("\nWater Level = {0:F0} %", WaterFraction * 100);
+                result.AppendFormat("\nWater level = {0:F0} %", WaterFraction * 100);
                 if (IdealFireMassKG > 0)
-                    result.AppendFormat("\nFire Mass = {0:F0} %", FireMassKG / IdealFireMassKG * 100);
+                    result.AppendFormat("\nFire mass = {0:F0} %", FireMassKG / IdealFireMassKG * 100);
                 else
-                    result.AppendFormat("\nFire Ratio = {0:F0} %", FireRatio * 100);
+                    result.AppendFormat("\nFire ratio = {0:F0} %", FireRatio * 100);
                 result.Append("\nInjectors =");
                 if (Injector1On)
                     result.AppendFormat(" {0:F0} %", Injector1Controller.CurrentValue*100);
@@ -549,7 +551,7 @@ namespace ORTS
                     result.Append(" Off");
                 result.AppendFormat("\nBlower = {0:F0} %", BlowerController.CurrentValue * 100);
                 //result.AppendFormat("\nDamper = {0:F0} %", DamperController.CurrentValue * 100);
-                result.AppendFormat("\nFiring Rate = {0:F0} %", FiringRateController.CurrentValue * 100);
+                result.AppendFormat("\nFiring rate = {0:F0} %", FiringRateController.CurrentValue * 100);
             }
             return result.ToString();
         }

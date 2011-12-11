@@ -11,6 +11,7 @@ namespace ORTS
         public static int SanderOn = 4, SanderOff = 5,
         WiperOn = 6, WiperOff = 7,
         HornOn = 8, HornOff = 9,
+        AlerterSndOn = 56, AlerterSndOff = 57,
         BellOn = 10, BellOff = 11,
         CompressorOn = 12, CompressorOff = 13, TrainBrakeRelease = 14,
         Forward = 15, Reverse = 16, TrainBrakeSet = 17, EngineBrakeSet = 18,
@@ -21,7 +22,8 @@ namespace ORTS
         Uncouple = 61, UncoupleB = 62, UncoupleC = 63,
             // why do these headlight values overlap brake sounds?
             //HeadlightOn = 12, HeadlightDim = 13, HeadlightOff = 14,
-        HeadlightOn = 112, HeadlightDim = 113, HeadlightOff = 114;
+        HeadlightOn = 112, HeadlightDim = 113, HeadlightOff = 114,
+        ResetWheelSlip = 127, ToggleAdvancedAdhesion = 128;
 
         public static bool IsMSTSBin = false;
         private static bool _isInitialized = false;

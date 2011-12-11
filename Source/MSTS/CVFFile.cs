@@ -59,6 +59,7 @@ namespace MSTS
         THROTTLE,
         PANTOGRAPH,
         TRAIN_BRAKE,
+        FRICTION_BRAKE,
         ENGINE_BRAKE,
         DYNAMIC_BRAKE,
         DYNAMIC_BRAKE_DISPLAY,
@@ -149,7 +150,8 @@ namespace MSTS
         LITRES,
         GALLONS,
         INCHES_OF_MERCURY,
-        MILI_AMPS
+        MILI_AMPS,
+        RPM
     }
 
     public class CabViewControls : List<CabViewControl>
@@ -160,7 +162,7 @@ namespace MSTS
             int count = stf.ReadInt(STFReader.UNITS.None, null);
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("dial", ()=>{ Add(new CVCDial(stf, basepath)); }),
-                new STFReader.TokenProcessor("guage", ()=>{ Add(new CVCGauge(stf, basepath)); }),
+                new STFReader.TokenProcessor("gauge", ()=>{ Add(new CVCGauge(stf, basepath)); }),
                 new STFReader.TokenProcessor("lever", ()=>{ Add(new CVCDiscrete(stf, basepath)); }),
                 new STFReader.TokenProcessor("twostate", ()=>{ Add(new CVCDiscrete(stf, basepath)); }),
                 new STFReader.TokenProcessor("tristate", ()=>{ Add(new CVCDiscrete(stf, basepath)); }),
@@ -205,7 +207,7 @@ namespace MSTS
             catch(ArgumentException)
             {
                 stf.StepBackOneItem();
-                STFException.TraceWarning(stf, "Unknown ControlType " + stf.ReadString());
+                STFException.TraceInformation(stf, "Unknown ControlType " + stf.ReadString());
                 ControlType = CABViewControlTypes.NONE;
             }
             //stf.ReadItem(); // Skip repeated Class Type 
@@ -560,8 +562,7 @@ namespace MSTS
                     {
                         // Give up, it won't work
                         // Because later we won't know how to display frames from that
-                        Trace.TraceError(string.Format("Invalid Frames information given for ACE {0} in file {1}.", ACEFile, stf.FileName));
-
+                        Trace.TraceWarning("Invalid Frames information given for ACE {0} in {1}", ACEFile, stf.FileName);
                         ACEFile = "";
                         return;
                     }

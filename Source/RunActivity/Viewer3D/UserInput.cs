@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -84,19 +85,20 @@ namespace ORTS
         public static void Initialize()
         {
             Commands[(int)UserCommands.GameQuit] = new UserCommandKeyInput(0x01);
-            Commands[(int)UserCommands.GamePause] = new UserCommandKeyInput(0x11D);
             Commands[(int)UserCommands.GameSave] = new UserCommandKeyInput(0x3C);
+            Commands[(int)UserCommands.GamePause] = new UserCommandKeyInput(Keys.Pause);
+            Commands[(int)UserCommands.GameScreenshot] = new UserCommandKeyInput(Keys.PrintScreen);
+            Commands[(int)UserCommands.GameFullscreen] = new UserCommandKeyInput(0x1C, KeyModifiers.Alt);
             Commands[(int)UserCommands.GameSwitchAhead] = new UserCommandKeyInput(0x22);
             Commands[(int)UserCommands.GameSwitchBehind] = new UserCommandKeyInput(0x22, KeyModifiers.Shift);
             Commands[(int)UserCommands.GameSwitchWithMouse] = new UserCommandModifierInput(KeyModifiers.Alt);
             Commands[(int)UserCommands.GameUncoupleWithMouse] = new UserCommandKeyInput(0x16);
             Commands[(int)UserCommands.GameLocomotiveSwitch] = new UserCommandKeyInput(0x12, KeyModifiers.Control);
-            Commands[(int)UserCommands.GameFullscreen] = new UserCommandKeyInput(0x1C, KeyModifiers.Alt);
 
             Commands[(int)UserCommands.DisplayNextWindowTab] = new UserCommandModifierInput(KeyModifiers.Shift);
             Commands[(int)UserCommands.DisplayHelpWindow] = new UserCommandModifiableKeyInput(0x3B, Commands[(int)UserCommands.DisplayNextWindowTab]);
             Commands[(int)UserCommands.DisplayTrackMonitorWindow] = new UserCommandKeyInput(0x3E);
-            Commands[(int)UserCommands.DisplayHUD] = new UserCommandKeyInput(0x3F);
+            Commands[(int)UserCommands.DisplayHUD] = new UserCommandModifiableKeyInput(0x3F, Commands[(int)UserCommands.DisplayNextWindowTab]);
             Commands[(int)UserCommands.DisplayStationLabels] = new UserCommandKeyInput(0x40);
             Commands[(int)UserCommands.DisplayCarLabels] = new UserCommandKeyInput(0x41);
             Commands[(int)UserCommands.DisplaySwitchWindow] = new UserCommandKeyInput(0x42);
@@ -122,6 +124,8 @@ namespace ORTS
             Commands[(int)UserCommands.DebugWeatherChange] = new UserCommandKeyInput(0x19, KeyModifiers.Alt);
             Commands[(int)UserCommands.DebugDispatcherExtend] = new UserCommandKeyInput(0x0F, KeyModifiers.Shift);
             Commands[(int)UserCommands.DebugDispatcherRelease] = new UserCommandKeyInput(0x0F, KeyModifiers.Shift | KeyModifiers.Control);
+            Commands[(int)UserCommands.DebugResetWheelSlip] = new UserCommandKeyInput(0x2D, KeyModifiers.Control);
+            Commands[(int)UserCommands.DebugToggleAdvancedAdhesion] = new UserCommandKeyInput(0x2D, KeyModifiers.Control | KeyModifiers.Alt);
 
             Commands[(int)UserCommands.CameraCab] = new UserCommandKeyInput(0x02);
             Commands[(int)UserCommands.CameraOutsideFront] = new UserCommandKeyInput(0x03);
@@ -170,13 +174,16 @@ namespace ORTS
             Commands[(int)UserCommands.ControlRetainersOff] = new UserCommandKeyInput(0x1A, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlBrakeHoseConnect] = new UserCommandKeyInput(0x2B);
             Commands[(int)UserCommands.ControlBrakeHoseDisconnect] = new UserCommandKeyInput(0x2B, KeyModifiers.Shift);
+            Commands[(int)UserCommands.ControlAlerter] = new UserCommandKeyInput(0x2C);
             Commands[(int)UserCommands.ControlEmergency] = new UserCommandKeyInput(0x0E);
             Commands[(int)UserCommands.ControlSander] = new UserCommandKeyInput(0x2D);
             Commands[(int)UserCommands.ControlWiper] = new UserCommandKeyInput(0x2F);
             Commands[(int)UserCommands.ControlHorn] = new UserCommandKeyInput(0x39);
+
             Commands[(int)UserCommands.ControlBell] = new UserCommandKeyInput(0x30);
             Commands[(int)UserCommands.ControlDoorLeft] = new UserCommandKeyInput(0x10);
             Commands[(int)UserCommands.ControlDoorRight] = new UserCommandKeyInput(0x10, KeyModifiers.Shift);
+
             Commands[(int)UserCommands.ControlMirror] = new UserCommandKeyInput(0x2F, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlLight] = new UserCommandKeyInput(0x26);
 			Commands[(int)UserCommands.ControlPantographFirst] = new UserCommandKeyInput(0x19);
@@ -244,9 +251,9 @@ namespace ORTS
                     {
                         writer.WriteLine("{0,-40}{1,-40}{2}", "Command", "Key", "Unique Inputs");
                         writer.WriteLine(new String('=', 40 * 3));
-                        foreach (UserCommands command in Enum.GetValues(typeof(UserCommands)))
+                    foreach (UserCommands command in Enum.GetValues(typeof(UserCommands)))
                             writer.WriteLine("{0,-40}{1,-40}{2}", UserInput.FormatCommandName(command), Commands[(int)command], String.Join(", ", Commands[(int)command].UniqueInputs().OrderBy(s => s).ToArray()));
-                    }
+                }
                     viewer.MessagesWindow.AddMessage("Keyboard command list saved to 'keyboard.txt'.", 10);
 
                     var keyWidth = 50;
@@ -372,7 +379,7 @@ namespace ORTS
             else if (scanCode >= 0x0080)
                 sc = 0xE000 | (scanCode & 0x7F);
             return (Keys)MapVirtualKey(sc, MapType.ScanToVirtualEx);
-        }
+    }
 
         public static string GetScanCodeKeyName(int scanCode)
         {
@@ -422,8 +429,8 @@ namespace ORTS
 
             foreach (var prefixToColor in prefixesToColors)
                 foreach (var command in GetScanCodeCommands(scanCode))
-                    if (command.ToString().StartsWith(prefixToColor.Key))
-                        return prefixToColor.Value;
+                        if (command.ToString().StartsWith(prefixToColor.Key))
+                            return prefixToColor.Value;
 
             return Color.TransparentBlack;
         }
@@ -455,7 +462,7 @@ namespace ORTS
 
                     lastIndex = x2;
                     x = keyboardLine.IndexOf('[', x2);
-                }
+    }
             }
         }
 
@@ -471,14 +478,15 @@ namespace ORTS
     public enum UserCommands
     {
         GameQuit,
-        GamePause,
         GameSave,
+        GamePause,
+        GameScreenshot,
+        GameFullscreen,
         GameSwitchAhead,
         GameSwitchBehind,
         GameSwitchWithMouse,
         GameUncoupleWithMouse,
         GameLocomotiveSwitch,
-        GameFullscreen,
 
         DisplayNextWindowTab,
         DisplayHelpWindow,
@@ -509,6 +517,8 @@ namespace ORTS
         DebugWeatherChange,
         DebugDispatcherExtend,
         DebugDispatcherRelease,
+        DebugResetWheelSlip,
+        DebugToggleAdvancedAdhesion,
 
         CameraCab,
         CameraOutsideFront,
@@ -557,6 +567,7 @@ namespace ORTS
         ControlRetainersOff,
         ControlBrakeHoseConnect,
         ControlBrakeHoseDisconnect,
+        ControlAlerter,
         ControlEmergency,
         ControlSander,
         ControlWiper,
@@ -662,13 +673,16 @@ namespace ORTS
     public class UserCommandKeyInput : UserCommandInput
     {
         public readonly int ScanCode;
+        public readonly Keys VirtualKey;
         public readonly bool Shift;
         public readonly bool Control;
         public readonly bool Alt;
 
-        protected UserCommandKeyInput(int scancode, bool shift, bool control, bool alt)
+        protected UserCommandKeyInput(int scancode, Keys virtualKey, bool shift, bool control, bool alt)
         {
+            Debug.Assert((scancode >= 1 && scancode <= 127) || (virtualKey != Keys.None), "Scan code for keyboard input is outside the allowed range of 1-127.");
             ScanCode = scancode;
+            VirtualKey = virtualKey;
             Shift = shift;
             Control = control;
             Alt = alt;
@@ -679,8 +693,18 @@ namespace ORTS
         {
         }
 
+        public UserCommandKeyInput(Keys virtualKey)
+            : this(virtualKey, KeyModifiers.None)
+        {
+        }
+
         public UserCommandKeyInput(int scancode, KeyModifiers modifiers)
-            : this(scancode, (modifiers & KeyModifiers.Shift) != 0, (modifiers & KeyModifiers.Control) != 0, (modifiers & KeyModifiers.Alt) != 0)
+            : this(scancode, Keys.None, (modifiers & KeyModifiers.Shift) != 0, (modifiers & KeyModifiers.Control) != 0, (modifiers & KeyModifiers.Alt) != 0)
+        {
+        }
+
+        public UserCommandKeyInput(Keys virtualKey, KeyModifiers modifiers)
+            : this(0, virtualKey, (modifiers & KeyModifiers.Shift) != 0, (modifiers & KeyModifiers.Control) != 0, (modifiers & KeyModifiers.Alt) != 0)
         {
         }
 
@@ -688,7 +712,7 @@ namespace ORTS
         {
             get
             {
-                return UserInput.GetScanCodeKeys(ScanCode);
+                return VirtualKey == Keys.None ? UserInput.GetScanCodeKeys(ScanCode) : VirtualKey;
             }
         }
 
@@ -715,7 +739,10 @@ namespace ORTS
             if (Shift) key = key.Append("Shift+");
             if (Control) key = key.Append("Control+");
             if (Alt) key = key.Append("Alt+");
-            key.AppendFormat("0x{0:X2}", ScanCode);
+            if (VirtualKey == Keys.None)
+                key.AppendFormat("0x{0:X2}", ScanCode);
+            else
+                key.Append(VirtualKey);
             return new[] { key.ToString() };
         }
 
@@ -725,9 +752,10 @@ namespace ORTS
             if (Shift) key.Append("Shift + ");
             if (Control) key.Append("Control + ");
             if (Alt) key.Append("Alt + ");
-
-            key.Append(UserInput.GetScanCodeKeyName(ScanCode));
-
+            if (VirtualKey == Keys.None)
+                key.Append(UserInput.GetScanCodeKeyName(ScanCode));
+            else
+                key.Append(VirtualKey);
             return key.ToString();
         }
     }
@@ -739,7 +767,7 @@ namespace ORTS
         public readonly bool IgnoreAlt;
 
         UserCommandModifiableKeyInput(int scanCode, bool shift, bool control, bool alt, bool ignoreShift, bool ignoreControl, bool ignoreAlt)
-            : base(scanCode, shift, control, alt)
+            : base(scanCode, Keys.None, shift, control, alt)
         {
             IgnoreShift = ignoreShift;
             IgnoreControl = ignoreControl;

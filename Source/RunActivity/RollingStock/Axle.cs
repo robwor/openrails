@@ -43,7 +43,7 @@ namespace ORTS
         /// <summary>
         /// Integrator used for axle dynamic solving
         /// </summary>
-        Integrator axleRevolutionsInt = new Integrator(0.0f, IntegratorMethods.EulerBackMod);
+        public Integrator AxleRevolutionsInt = new Integrator(0.0f, IntegratorMethods.RungeKutta4);
 
         /// <summary>
         /// Brake force covered by BrakeForceN interface
@@ -71,6 +71,13 @@ namespace ORTS
         /// Read/Write positive only damping force to the axle, in Newton-second
         /// </summary>
         public float DampingNs { set { dampingNs = Math.Abs(value); } get { return dampingNs; } }
+
+        /// <summary>
+        /// Read/Write flag to enable/disable stability correction.
+        /// If enabled, AdhesionK is increased by 0.05 each time the slipSpeedDerivationPercent reaches 1000%/s
+        /// This causes the slip characteristics to be more flat what reduces oscilations.
+        /// </summary>
+        public bool StabilityCorrection { set; get; }
 
         /// <summary>
         /// Axle drive type covered by DriveType interface
@@ -247,11 +254,42 @@ namespace ORTS
         public float AdhesionConditions { set; get; }
 
         /// <summary>
+        /// Curtius-Kniffler equation A parameter
+        /// </summary>
+        public float CurtiusKnifflerA { set; get; }
+        /// <summary>
+        /// Curtius-Kniffler equation B parameter
+        /// </summary>
+        public float CurtiusKnifflerB { set; get; }
+        /// <summary>
+        /// Curtius-Kniffler equation C parameter
+        /// </summary>
+        public float CurtiusKnifflerC { set; get; }
+
+        /// <summary>
         /// Read/Write correction parameter of adhesion, it has proportional impact on adhesion limit
         /// Should be set to 1.0 for most cases
         /// </summary>
-        public float AdhesionK { set; get; }
+        public float AdhesionK
+        {
+            set
+            {
+                adhesionK_orig = adhesionK = value;
+            }
+            get
+            {
+                return adhesionK;
+            }
 
+        }
+        private float adhesionK;
+        private float adhesionK_orig;
+
+        /// <summary>
+        /// Read/Write Adhesion2 parameter from the ENG/WAG file, used to correct the adhesion
+        /// Should not be zero
+        /// </summary>
+        public float Adhesion2 { set; get; }
         /// <summary>
         /// Axle speed value, covered by AxleSpeedMpS interface, in metric meters per second
         /// </summary>
@@ -445,20 +483,25 @@ namespace ORTS
             transmitionEfficiency = 0.99f;
             SlipWarningTresholdPercent = 70.0f;
             driveType = AxleDriveType.ForceDriven;
-            axleRevolutionsInt.IsLimited = true;
-            
+            AxleRevolutionsInt.IsLimited = true;
+            Adhesion2 = 0.331455f;
+
+            CurtiusKnifflerA = 7.5f;
+            CurtiusKnifflerB = 44.0f;
+            CurtiusKnifflerC = 0.161f;
+
             switch (driveType)
             {
                 case AxleDriveType.NotDriven:
                     break;
                 case AxleDriveType.MotorDriven:
-                    axleRevolutionsInt.Max = 5000.0f;
-                    axleRevolutionsInt.Min = -5000.0f;
+                    AxleRevolutionsInt.Max = 5000.0f;
+                    AxleRevolutionsInt.Min = -5000.0f;
                     totalInertiaKgm2 = inertiaKgm2 + transmitionRatio * transmitionRatio * motor.InertiaKgm2;
                     break;
                 case AxleDriveType.ForceDriven:
-                    axleRevolutionsInt.Max = 100.0f;
-                    axleRevolutionsInt.Min = -100.0f;
+                    AxleRevolutionsInt.Max = 100.0f;
+                    AxleRevolutionsInt.Min = -100.0f;
                     totalInertiaKgm2 = inertiaKgm2;
                     break;
                 default:
@@ -481,20 +524,26 @@ namespace ORTS
             motor.AxleConnected = this;
             transmitionEfficiency = 0.99f;
             driveType = AxleDriveType.MotorDriven;
-            axleRevolutionsInt.IsLimited = true;
+            AxleRevolutionsInt.IsLimited = true;
+            Adhesion2 = 0.331455f;
+
+            CurtiusKnifflerA = 7.5f;
+            CurtiusKnifflerB = 44.0f;
+            CurtiusKnifflerC = 0.161f;
+
             switch (driveType)
             {
                 case AxleDriveType.NotDriven:
                     totalInertiaKgm2 = inertiaKgm2;
                     break;
                 case AxleDriveType.MotorDriven:
-                    axleRevolutionsInt.Max = 5000.0f;
-                    axleRevolutionsInt.Min = -5000.0f;
+                    AxleRevolutionsInt.Max = 5000.0f;
+                    AxleRevolutionsInt.Min = -5000.0f;
                     totalInertiaKgm2 = inertiaKgm2 + transmitionRatio * transmitionRatio * motor.InertiaKgm2;
                     break;
                 case AxleDriveType.ForceDriven:
-                    axleRevolutionsInt.Max = 100.0f;
-                    axleRevolutionsInt.Min = -100.0f;
+                    AxleRevolutionsInt.Max = 100.0f;
+                    AxleRevolutionsInt.Min = -100.0f;
                     totalInertiaKgm2 = inertiaKgm2;
                     break;
                 default:
@@ -513,12 +562,13 @@ namespace ORTS
         public virtual void Update(float timeSpan)
         {
             //Update axle force ( = k * loadTorqueNm)
-            axleForceN = AxleWeightN * SlipCharacteristics(AxleSpeedMpS - TrainSpeedMpS, TrainSpeedMpS, AdhesionK, AdhesionConditions);                
+            axleForceN = AxleWeightN * SlipCharacteristics(AxleSpeedMpS - TrainSpeedMpS, TrainSpeedMpS, AdhesionK, AdhesionConditions, Adhesion2);
+
             switch (driveType)
             {
                 case AxleDriveType.NotDriven:
                     //Axle revolutions integration
-                    axleSpeedMpS = axleRevolutionsInt.Integrate(timeSpan,
+                    axleSpeedMpS = AxleRevolutionsInt.Integrate(timeSpan,
                         axleDiameterM * axleDiameterM / (4.0f * (totalInertiaKgm2))
                         * (2.0f * transmitionRatio / axleDiameterM * (-Math.Abs(brakeForceN)) - AxleForceN));
                     break;
@@ -529,7 +579,7 @@ namespace ORTS
                         dampingNs = 0.0f;
                         brakeForceN = 0.0f;
                     }
-                    axleSpeedMpS = axleRevolutionsInt.Integrate(timeSpan,
+                    axleSpeedMpS = AxleRevolutionsInt.Integrate(timeSpan,
                         axleDiameterM * axleDiameterM / (4.0f * (totalInertiaKgm2))
                         * (2.0f * transmitionRatio / axleDiameterM * motor.DevelopedTorqueNm * transmitionEfficiency
                         - Math.Abs(brakeForceN) - (axleSpeedMpS > 0.0 ? Math.Abs(dampingNs) : 0.0f)) - AxleForceN);
@@ -539,23 +589,22 @@ namespace ORTS
                     motor.Update(timeSpan);
                     break;
                 case AxleDriveType.ForceDriven:
+                    
+                    //if ((Math.Abs(axleSpeedMpS) < 1.0f) && (brakeForceN > driveForceN))
+                    //{
+                    //    axleForceN = -brakeForceN;
+                    //}
                     //Axle revolutions integration
-                    if (TrainSpeedMpS == 0.0f) 
+                    if (TrainSpeedMpS > 0.0f)
                     {
-                        if (Math.Abs(driveForceN) == 0.0f)
+                        if (((brakeForceN) > (driveForceN)) && (AxleSpeedMpS < 0.1f))
                         {
-                            Reset();
                             axleSpeedMpS = 0.0f;
-                            axleForceN = 0.0f;
+                            axleForceN = - brakeForceN + driveForceN;
                         }
                         else
-                            axleForceN = driveForceN;
-                    }
-                    else
-                    {
-                        if (TrainSpeedMpS > 0.0f)
                         {
-                            axleSpeedMpS = axleRevolutionsInt.Integrate(timeSpan,
+                            axleSpeedMpS = AxleRevolutionsInt.Integrate(timeSpan,
                                     (
                                         (
                                         driveForceN * transmitionEfficiency
@@ -566,18 +615,44 @@ namespace ORTS
                                     / totalInertiaKgm2)
                                     );
                         }
+                    }
+                    else
+                    {
+                        if (TrainSpeedMpS < 0.0f)
+                        {
+                            if (((brakeForceN) > (Math.Abs(driveForceN))) && (AxleSpeedMpS > -0.1f))
+                            {
+                                axleSpeedMpS = 0.0f;
+                                axleForceN = brakeForceN - driveForceN;
+                            }
+                            else
+                            {
+                                axleSpeedMpS = AxleRevolutionsInt.Integrate(timeSpan,
+                                        (
+                                            (
+                                            driveForceN * transmitionEfficiency
+                                            + brakeForceN
+                                            - slipDerivationMpSS * dampingNs
+                                            - AxleForceN
+                                            )
+                                        / totalInertiaKgm2)
+                                        );
+                            }
+                        }
                         else
                         {
-                            axleSpeedMpS = axleRevolutionsInt.Integrate(timeSpan,
-                                    (
-                                        (
-                                        driveForceN * transmitionEfficiency
-                                        + brakeForceN
-                                        - slipDerivationMpSS * dampingNs
-                                        - AxleForceN
-                                        )
-                                    / totalInertiaKgm2)
-                                    );
+                            if (Math.Abs(driveForceN) < 0.1f)
+                            {
+                                Reset();
+                                axleSpeedMpS = 0.0f;
+                                //axleForceN = 0.0f;
+                            }
+                            else
+                            {
+                                axleForceN = driveForceN - brakeForceN;
+                                if (Math.Abs(axleSpeedMpS) < 0.1f)
+                                    Reset();
+                            }
                         }
                     }
                     break;
@@ -593,7 +668,14 @@ namespace ORTS
                 slipDerivationPercentpS = (SlipSpeedPercent - previousSlipPercent) / timeSpan;
                 previousSlipPercent = SlipSpeedPercent;
             }
-            
+            //Stability Correction
+            if (StabilityCorrection)
+            {
+                if (slipDerivationPercentpS > 300.0f)
+                    adhesionK += 0.0001f * slipDerivationPercentpS;
+                else
+                    adhesionK = (adhesionK <= 0.7f) ? 0.7f : (adhesionK - 0.005f);
+            }
         }
 
         /// <summary>
@@ -601,7 +683,8 @@ namespace ORTS
         /// </summary>
         public void Reset()
         {
-            axleRevolutionsInt.Reset();
+            AxleRevolutionsInt.Reset();
+            adhesionK = adhesionK_orig;
             if (motor != null)
                 motor.Reset();
 
@@ -613,9 +696,9 @@ namespace ORTS
         /// <param name="initValue">Initial condition</param>
         public void Reset(float initValue)
         {
-            axleRevolutionsInt.InitialCondition = initValue;
-            axleRevolutionsInt.Reset();
-            axleRevolutionsInt.InitialCondition = 0.0f;
+            AxleRevolutionsInt.InitialCondition = initValue;
+            AxleRevolutionsInt.Reset();
+            AxleRevolutionsInt.InitialCondition = 0.0f;
             if (motor != null)
                 motor.Reset();
         }
@@ -637,10 +720,10 @@ namespace ORTS
         /// <param name="K">Slip speed correction. If is set K = 0 then K = 0.7 is used</param>
         /// <param name="conditions">Relative weather conditions, usually from 0.2 to 1.0</param>
         /// <returns>Relative force transmitted to the rail</returns>
-        public static float SlipCharacteristics(float slipSpeed, float speed, float K, float conditions)
+        public float SlipCharacteristics(float slipSpeed, float speed, float K, float conditions, float Adhesion2)
         {
             speed = Math.Abs(3.6f*speed);
-            float umax = (7.5f / (speed + 44.0f) + 0.161f); // Curtius - Kniffler equation
+            float umax = (CurtiusKnifflerA / (speed + CurtiusKnifflerB) + CurtiusKnifflerC);// *Adhesion2 / 0.331455f; // Curtius - Kniffler equation
             umax *= conditions;
             if (K == 0.0)
                 K = 1;

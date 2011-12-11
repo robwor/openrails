@@ -24,14 +24,17 @@ namespace ORTS
 		EffectParameter World;
 		EffectParameter View;
 		EffectParameter WorldViewProjection;
-		public void SetMatrix(ref Matrix world, ref Matrix view, ref Matrix viewProj)
-		{
-			World.SetValue(world);
-			View.SetValue(view);
-			WorldViewProjection.SetValue(world * viewProj);
-		}
+        public void SetViewMatrix(ref Matrix view)
+        {
+            View.SetValue(view);
+        }
+        public void SetMatrix(ref Matrix world, ref Matrix viewProj)
+        {
+            World.SetValue(world);
+            WorldViewProjection.SetValue(world * viewProj);
+        }
 
-		EffectParameter[] LightViewProjectionShadowProjection;
+        EffectParameter[] LightViewProjectionShadowProjection;
 		EffectParameter[] ShadowMapTextures;
 		EffectParameter ShadowMapLimit;
 		public void SetShadowMap(Matrix[] lightViewProjectionShadowProjection, Texture2D[] shadowMapTextures, float[] limits)
@@ -81,14 +84,14 @@ namespace ORTS
         EffectParameter viewerPos;
         public Vector3 ViewerPos { set { viewerPos.SetValue(value); } }
 
-        EffectParameter isNight_Tex;
-        public bool IsNight_Tex { set { isNight_Tex.SetValue(value); } }
+        EffectParameter imageTextureIsNight;
+        public bool ImageTextureIsNight { set { imageTextureIsNight.SetValue(value); } }
 
-        EffectParameter imageMap_Tex;
-        public Texture2D ImageMap_Tex { set { imageMap_Tex.SetValue(value); } }
+        EffectParameter imageTexture;
+        public Texture2D ImageTexture { set { imageTexture.SetValue(value); } }
 
-        EffectParameter normalMap_Tex;
-        public Texture2D NormalMap_Tex { set { normalMap_Tex.SetValue(value); } }
+        EffectParameter overlayTexture;
+        public Texture2D OverlayTexture { set { overlayTexture.SetValue(value); } }
 
 		public void Apply()
 		{
@@ -123,9 +126,9 @@ namespace ORTS
 
             overcast = Parameters["overcast"];
             viewerPos = Parameters["viewerPos"];
-            isNight_Tex = Parameters["isNight_Tex"];
-            imageMap_Tex = Parameters["imageMap_Tex"];
-            normalMap_Tex = Parameters["normalMap_Tex"];
+            imageTextureIsNight = Parameters["ImageTextureIsNight"];
+            imageTexture = Parameters["ImageTexture"];
+            overlayTexture = Parameters["OverlayTexture"];
         }
     }
 
@@ -298,7 +301,6 @@ namespace ORTS
     [CallOnThread("Render")]
     public class ParticleEmitterShader : Effect
     {
-        EffectParameter colorTint = null;
         EffectParameter emitDirection = null;
         EffectParameter emitSize = null;
         EffectParameter tileXY = null;
@@ -332,15 +334,9 @@ namespace ORTS
             set { emitSize.SetValue(value); }
         }
 
-        public Color ColorTint
-        {
-            set { colorTint.SetValue(value.ToVector4()); }
-        }
-
         public ParticleEmitterShader(GraphicsDevice graphicsDevice, ContentManager content)
             : base(graphicsDevice, content.Load<Effect>("ParticleEmitterShader"))
         {
-            colorTint = Parameters["colorTint"];
             emitDirection = Parameters["emitDirection"];
             emitSize = Parameters["emitSize"];
             currentTime = Parameters["currentTime"];

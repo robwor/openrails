@@ -74,33 +74,35 @@ namespace ORTS
             {
                 // Wait for a new Update() command
                 State.WaitTillStarted();
-
-                if (Debugger.IsAttached)
+                try
                 {
-                    Update();
-                }
-                else
-                {
-                    try
+                    if (Debugger.IsAttached)
                     {
                         Update();
                     }
-                    catch (Exception error)
+                    else
                     {
-                        if (!(error is ThreadAbortException))
+                        try
                         {
-                            // Unblock anyone waiting for us, report error and die.
-                            State.SignalFinish();
-                            Viewer.ProcessReportError(error);
-                            // Finally unblock any process that may have started us, while the message was showing
-                            State.SignalFinish();
-                            return;
+                            Update();
+                        }
+                        catch (Exception error)
+                        {
+                            if (!(error is ThreadAbortException))
+                            {
+                                // Unblock anyone waiting for us, report error and die.
+                                State.SignalFinish();
+                                Viewer.ProcessReportError(error);
+                                return;
+                            }
                         }
                     }
                 }
-
-                // Signal finished so RenderProcess can start drawing
-                State.SignalFinish();
+                finally
+                {
+                    // Signal finished so RenderProcess can start drawing
+                    State.SignalFinish();
+                }
             }
         }
 
@@ -149,6 +151,10 @@ namespace ORTS
             // the simulation so the first time we deliberately have an
             // elapsed real and clock time of 0.0s.
             if (LastTotalRealSeconds == -1)
+                LastTotalRealSeconds = TotalRealSeconds;
+            // We would like to avoid any large jumps in the simulation, so
+            // this is a 4FPS minimum, 250ms maximum update time.
+            else if (TotalRealSeconds - LastTotalRealSeconds > 0.25f)
                 LastTotalRealSeconds = TotalRealSeconds;
 
             Viewer.RealTime = TotalRealSeconds;

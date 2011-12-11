@@ -291,11 +291,11 @@ namespace MSTS
         public void MustMatch(string target)
         {
             if (Eof)
-                STFException.TraceError(this, "Unexpected end of file instead of " + target);
+                STFException.TraceWarning(this, "Unexpected end of file instead of " + target);
             else
             {
                 string s = ReadItem();
-                if (s != target)
+                if (!s.Equals(target, StringComparison.OrdinalIgnoreCase))
                     throw new STFException(this, target + " Not Found - instead found " + s);
             }
         }
@@ -317,7 +317,7 @@ namespace MSTS
                 if (includeReader.Eof)
                 {
                     if (tree.Count != 0)
-                        STFException.TraceError(includeReader, "Included file did not have a properly matched number of blocks.  It is unlikely the parent STF file will work properly.");
+                        STFException.TraceWarning(includeReader, "Included file did not have a properly matched number of blocks.  It is unlikely the parent STF file will work properly.");
                     includeReader.Dispose();
                     includeReader = null;
                 }
@@ -578,6 +578,11 @@ namespace MSTS
             /// <para>Scaled to kj/kg.</para>
             /// </summary>
             EnergyDensity = 1 << 12,
+            /// <summary>
+            /// Valid Units: gal, l
+            /// <para>Scaled to litres.</para>
+            /// </summary>
+            Diesel = 1 << 13,
             /// <summary>This is only provided for backwards compatibility - all new users should limit the units to appropriate types
             /// </summary>
             Any = -2
@@ -614,7 +619,8 @@ namespace MSTS
             {
                 if ((validUnits & UNITS.Compulsary) > 0)
                     STFException.TraceWarning(this, "Missing a suffix for data expecting " + validUnits.ToString() + " units");
-                return 1; // There is no suffix, it's all numeric
+                else
+                    return 1; // There is no suffix, it's all numeric
             }
             while ((i < constant.Length) && (constant[i] == ' ')) ++i; // skip the spaces
 
@@ -629,6 +635,7 @@ namespace MSTS
 
             // Extract the unit suffix
             string suffix = constant.Substring(suffixStart, suffixLength).ToLowerInvariant();
+            suffix = suffix.Trim();
 
             // Extract the prefixed numeric string
             constant = constant.Substring(beg, end - beg);
@@ -655,6 +662,7 @@ namespace MSTS
                     case "kph": return 0.27778;
                     case "kmh": return 0.27778;
                     case "km/h": return 0.27778;
+                    default: return 0.44704;
                 }
             if ((validUnits & UNITS.Mass) > 0)
                 switch (suffix)
@@ -703,6 +711,12 @@ namespace MSTS
                 {
                     case "*(ft^3)": return 1;
                 }
+            if ((validUnits & UNITS.Diesel) > 0)
+                switch (suffix)
+                {
+                    case "gal": return 3.785f;
+                    case "l": return 1;
+                }
             if ((validUnits & UNITS.Area) > 0)
                 switch (suffix)
                 {
@@ -728,7 +742,7 @@ namespace MSTS
 		{
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue;
             }
             string s = ReadItem();
@@ -743,12 +757,12 @@ namespace MSTS
                 SkipRestOfBlock();
                 if (result == "#\u00b6")
                 {
-                    STFException.TraceError(this, "Found a comment when an {constant item} was expected.");
+                    STFException.TraceWarning(this, "Found a comment when an {constant item} was expected.");
                     return (defaultValue != null) ? defaultValue : result;
                 }
                 return result;
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue;
 		}
 		/// <summary>Read an hexidecimal encoded number from the STF format '( {int_constant} ... )'
@@ -759,7 +773,7 @@ namespace MSTS
 		{
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue.GetValueOrDefault(0);
             }
             string s = ReadItem();
@@ -774,7 +788,7 @@ namespace MSTS
                 SkipRestOfBlock();
                 return result;
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue.GetValueOrDefault(0);
         }
 		/// <summary>Read an integer constant from the STF format '( {int_constant} ... )'
@@ -786,7 +800,7 @@ namespace MSTS
 		{
 			if (Eof)
 			{
-				STFException.TraceError(this, "Unexpected end of file");
+				STFException.TraceWarning(this, "Unexpected end of file");
 				return defaultValue.GetValueOrDefault(0);
 			}
 			string s = ReadItem();
@@ -801,7 +815,7 @@ namespace MSTS
 				SkipRestOfBlock();
 				return result;
 			}
-			STFException.TraceError(this, "Block Not Found - instead found " + s);
+			STFException.TraceWarning(this, "Block Not Found - instead found " + s);
 			return defaultValue.GetValueOrDefault(0);
 		}
 		/// <summary>Read an unsigned integer constant from the STF format '( {uint_constant} ... )'
@@ -813,7 +827,7 @@ namespace MSTS
         {
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue.GetValueOrDefault(0);
             }
             string s = ReadItem();
@@ -828,7 +842,7 @@ namespace MSTS
                 SkipRestOfBlock();
                 return result;
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue.GetValueOrDefault(0);
         }
         /// <summary>Read an single precision constant from the STF format '( {float_constant} ... )'
@@ -840,7 +854,7 @@ namespace MSTS
         {
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue.GetValueOrDefault(0);
             }
             string s = ReadItem();
@@ -855,7 +869,7 @@ namespace MSTS
                 SkipRestOfBlock();
                 return result;
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue.GetValueOrDefault(0);
         }
         /// <summary>Read an double precision constant from the STF format '( {double_constant} ... )'
@@ -867,7 +881,7 @@ namespace MSTS
 		{
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue.GetValueOrDefault(0);
             }
             string s = ReadItem();
@@ -882,7 +896,7 @@ namespace MSTS
                 SkipRestOfBlock();
                 return result;
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue.GetValueOrDefault(0);
         }
         /// <summary>Reads the first item from a block in the STF format '( {double_constant} ... )' and return true if is not-zero or 'true'
@@ -894,7 +908,7 @@ namespace MSTS
         {
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue;
             }
             string s = ReadItem();
@@ -917,7 +931,7 @@ namespace MSTS
                         return defaultValue;
                 }
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue;
         }
         /// <summary>Read a Vector3 object in the STF format '( {X} {Y} {Z} ... )'
@@ -929,7 +943,7 @@ namespace MSTS
         {
             if (Eof)
             {
-                STFException.TraceError(this, "Unexpected end of file");
+                STFException.TraceWarning(this, "Unexpected end of file");
                 return defaultValue;
             }
             string s = ReadItem();
@@ -946,7 +960,7 @@ namespace MSTS
                 SkipRestOfBlock();
                 return defaultValue;
             }
-            STFException.TraceError(this, "Block Not Found - instead found " + s);
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue;
         }
 
@@ -1150,7 +1164,7 @@ namespace MSTS
                 UpdateTreeAndStepBack(item);
                 if ((!includeReader.Eof) || (item.Length > 0)) return item;
                 if (tree.Count != 0)
-                    STFException.TraceError(includeReader, "Included file did not have a properly matched number of blocks.  It is unlikely the parent STF file will work properly.");
+                    STFException.TraceWarning(includeReader, "Included file did not have a properly matched number of blocks.  It is unlikely the parent STF file will work properly.");
                 includeReader.Dispose();
                 includeReader = null;
             }
@@ -1243,7 +1257,7 @@ namespace MSTS
                         if (c != '"')
                         {
                             if (skip_mode) return "";
-                            STFException.TraceError(this, "Reading an item started with a double-quote character and followed by the + operator but then the next item must also be double-quoted.");
+                            STFException.TraceWarning(this, "Reading an item started with a double-quote character and followed by the + operator but then the next item must also be double-quoted.");
                             return UpdateTreeAndStepBack(itemBuilder.ToString());
                         }
                         c = ReadChar(); // Read the open quote
@@ -1286,7 +1300,7 @@ namespace MSTS
                             return ReadItem(skip_mode, string_mode); // Which will recurse down when includeReader is tested
                         }
                         else
-                            STFException.TraceError(this, "Found an include directive, but it was enclosed inside block parenthesis which is illegal.");
+                            STFException.TraceWarning(this, "Found an include directive, but it was enclosed inside block parenthesis which is illegal.");
                         break;
                     #endregion
                     #region Process special token - skip and comment
@@ -1357,19 +1371,19 @@ namespace MSTS
 	}
 
     public class STFException : Exception
-    // STF errors display the last few lines of the STF file when reporting errors.
     {
-        public static void TraceError(STFReader stf, string message)
+        public static void TraceInformation(STFReader stf, string message)
         {
-            Trace.TraceError("{2} in STF {0}:line {1}", stf.FileName, stf.LineNumber, message);
+            Trace.TraceInformation("{2} in {0}:line {1}", stf.FileName, stf.LineNumber, message);
         }
+
         public static void TraceWarning(STFReader stf, string message)
         {
-            Trace.TraceWarning("{2} in STF {0}:line {1}", stf.FileName, stf.LineNumber, message);
+            Trace.TraceWarning("{2} in {0}:line {1}", stf.FileName, stf.LineNumber, message);
         }
 
         public STFException(STFReader stf, string message)
-            : base(String.Format("{2} in STF {0}:line {1}", stf.FileName, stf.LineNumber, message))
+            : base(String.Format("{2} in {0}:line {1}", stf.FileName, stf.LineNumber, message))
         {
         }
     }

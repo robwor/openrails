@@ -208,14 +208,14 @@ namespace ORTS
         /// Open the specified WFile and load all the scenery objects into the viewer.
         /// If the file doesn't exist, then return an empty WorldFile object.
         /// </summary>
-        public WorldFile( Viewer3D viewer, int tileX, int tileZ )
+        public WorldFile(Viewer3D viewer, int tileX, int tileZ)
         {
             TileX = tileX;
             TileZ = tileZ;
 
             // determine file path to the WFile at the specified tile coordinates
             string WFileName = WorldFileNameFromTileCoordinates(tileX, tileZ);
-            string WFilePath = viewer.Simulator.RoutePath + @"\WORLD\" + WFileName;
+            string WFilePath = viewer.Simulator.RoutePath + @"\World\" + WFileName;
 
             // if there isn't a file, then return with an empty WorldFile object
             if (!File.Exists(WFilePath))
@@ -230,17 +230,12 @@ namespace ORTS
                 if (worldObject.StaticDetailLevel > viewer.Settings.WorldObjectDensity)
                     continue;
 
-                // determine the full file path to the shape file for this scenery object 
-                string shapeFilePath;
-                if (worldObject.GetType() == typeof(MSTS.TrackObj))
-                    shapeFilePath = viewer.Simulator.BasePath + @"\global\shapes\" + worldObject.FileName;
-                // Skip dynamic track: no shape file
-                else if (worldObject.GetType() == typeof(MSTS.DyntrackObj))
-                    shapeFilePath = null;
-                else
-                    shapeFilePath = viewer.Simulator.RoutePath + @"\shapes\" + worldObject.FileName;
+                // Determine the file path to the shape file for this scenery object.
+                var shapeFilePath = String.IsNullOrEmpty(worldObject.FileName) ? null : File.Exists(viewer.Simulator.RoutePath + @"\Shapes\" + worldObject.FileName) ? viewer.Simulator.RoutePath + @"\Shapes\" + worldObject.FileName : File.Exists(viewer.Simulator.BasePath + @"\Global\Shapes\" + worldObject.FileName) ? viewer.Simulator.BasePath + @"\Global\Shapes\" + worldObject.FileName : null;
+                if (!String.IsNullOrEmpty(shapeFilePath))
+                    shapeFilePath = Path.GetFullPath(shapeFilePath);
 
-                // get the position of the scenery object into ORTS coordinate space
+                // Get the position of the scenery object into ORTS coordinate space.
                 WorldPosition worldMatrix;
 				if (worldObject.Matrix3x3 != null)
 					worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX, WFile.TileZ, worldObject.Position, worldObject.Matrix3x3);
@@ -248,39 +243,33 @@ namespace ORTS
 					worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX, WFile.TileZ, worldObject.Position, worldObject.QDirection);
 				else
 				{
-					Trace.TraceError("Object {1} is missing Matrix3x3 and QDirection in {0}", WFileName, worldObject.UID);
+                    Trace.TraceWarning("Object {1} is missing Matrix3x3 and QDirection in {0}", WFileName, worldObject.UID);
 					continue;
 				}
 
+                var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
 
                 if (worldObject.GetType() == typeof(MSTS.TrackObj))
                 {
-                    TrackObj trackObj = (TrackObj)worldObject;
-                    if (trackObj.JNodePosn != null)
-                    {
-                        // switch tracks need a link to the simulator engine so they can animate the points
-                        TrJunctionNode TRJ = viewer.Simulator.TDB.GetTrJunctionNode(TileX, TileZ, (int)trackObj.UID);
-                        SceneryObjects.Add(new SwitchTrackShape(viewer, shapeFilePath, worldMatrix, TRJ));
-						if (Program.Simulator.Settings.Wire == true && Program.Simulator.TRK.Tr_RouteFile.Electrified == true)
-						{
-							Wire.DecomposeStaticWire(viewer, dTrackList, trackObj, worldMatrix);
-						}
-                    }
-                    else // it's some type of track other than a switch track
-                    {
+                    var trackObj = (TrackObj)worldObject;
+                    // Switch tracks need a link to the simulator engine so they can animate the points.
+                    var trJunctionNode = trackObj.JNodePosn != null ? viewer.Simulator.TDB.GetTrJunctionNode(TileX, TileZ, (int)trackObj.UID) : null;
+                    // We might not have found the junction node; if so, fall back to the static track shape.
+                    if (trJunctionNode != null)
+                        SceneryObjects.Add(new SwitchTrackShape(viewer, shapeFilePath, worldMatrix, trJunctionNode));
+                    else
                         SceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
-						if (Program.Simulator.Settings.Wire == true && Program.Simulator.TRK.Tr_RouteFile.Electrified == true)
-						{
-							Wire.DecomposeStaticWire(viewer, dTrackList, trackObj, worldMatrix);
-						}
-                    }
+					if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true)
+					{
+						int success = Wire.DecomposeStaticWire(viewer, dTrackList, trackObj, worldMatrix);
+						//if cannot draw wire, try to see if it is converted. modified for DynaTrax
+						if (success == 0 && trackObj.FileName.Contains("Dyna")) Wire.DecomposeConvertedDynamicWire(viewer, dTrackList, trackObj, worldMatrix);
+					}
                 }
                 else if (worldObject.GetType() == typeof(MSTS.DyntrackObj))
                 {
-					if (Program.Simulator.Settings.Wire == true && Program.Simulator.TRK.Tr_RouteFile.Electrified == true)
-					{
+					if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true)
 						Wire.DecomposeDynamicWire(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
-					}
 					// Add DyntrackDrawers for individual subsections
                     Dynatrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
 
@@ -292,19 +281,18 @@ namespace ORTS
                 }
 				else if (worldObject.GetType() == typeof(MSTS.SignalObj))
 				{
-					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
 					SceneryObjects.Add(new SignalShape(viewer, (SignalObj)worldObject, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
 				}
 				else if (worldObject.GetType() == typeof(MSTS.LevelCrossingObj))
 				{
-					SceneryObjects.Add(new LevelCrossingShape(viewer, shapeFilePath, worldMatrix, (LevelCrossingObj) worldObject, viewer.Simulator.LevelCrossings.LevelCrossingObjects));
+                    SceneryObjects.Add(new LevelCrossingShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None,(LevelCrossingObj)worldObject, viewer.Simulator.LevelCrossings.LevelCrossingObjects));
 				}
 				else if (worldObject.GetType() == typeof(MSTS.CarSpawnerObj))
 				{
 					if (viewer.Simulator.RDB != null && viewer.Simulator.CarSpawnerFile != null)
 						carSpawners.Add(new CarSpawner((CarSpawnerObj)worldObject, worldMatrix));
 					else
-						Trace.TraceWarning("Ignored car spawner {1} in {0} because route has no RDB or carspawn.dat.", WFileName, worldObject.UID);
+						Trace.TraceWarning("Car spawner {1} ignored because route has no RDB or carspawn.dat in {0}", WFileName, worldObject.UID);
 				}
 				else if (worldObject.GetType() == typeof(MSTS.SidingObj)) {
 					sidings.Add(new SidingLabel(viewer, worldMatrix, (SidingObj)worldObject));
@@ -314,7 +302,6 @@ namespace ORTS
                 } 
                 else // It's some other type of object - not one of the above.
 				{
-					var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
 					SceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
 				}
             }

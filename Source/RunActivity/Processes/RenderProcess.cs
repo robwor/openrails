@@ -152,7 +152,7 @@ namespace ORTS
         public static void InitializeShadowMapLocations(Viewer3D viewer)
         {
             var ratio = (float)viewer.DisplaySize.X / viewer.DisplaySize.Y;
-            var fov = MathHelper.ToRadians(45.0f);
+            var fov = MathHelper.ToRadians(viewer.Settings.ViewingFOV);
             var n = (float)0.5;
             var f = (float)viewer.Settings.ShadowMapDistance;
 
@@ -241,10 +241,15 @@ namespace ORTS
         protected override void Draw(GameTime gameTime)
         {
             if (Viewer.Settings.Profiling)
-                if (++ProfileFrames > Viewer.Settings.ProfilingFrameCount)
+                if (++ProfileFrames > Viewer.Settings.ProfilingFrameCount) {
                     Viewer.Stop();
+                    Application.Exit();  // Added as system hangs otherwise when testing using /ProfilingFrameCount=0 and have to kill the process.
+                }
 
             Profiler.Start();
+
+            // Sort-of hack to allow the NVIDIA PerfHud to display correctly.
+            GraphicsDevice.RenderState.DepthBufferEnable = true;
 
             if ((Viewer.DisplaySize.X != GraphicsDevice.Viewport.Width) || (Viewer.DisplaySize.Y != GraphicsDevice.Viewport.Height))
             {
@@ -270,6 +275,9 @@ namespace ORTS
                     Viewer.ProcessReportError(error);
                 }
             }
+
+            // Sort-of hack to allow the NVIDIA PerfHud to display correctly.
+            GraphicsDevice.RenderState.DepthBufferEnable = false;
 
             Profiler.Stop();
         }

@@ -12,7 +12,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using MSTS;
@@ -242,23 +241,13 @@ namespace ORTS
             PatchX = x;
             PatchZ = z;
             Tile = tile;
-            int weather = (int)Viewer.Simulator.Weather;
-            int season = (int)Viewer.Simulator.Season;
 
-            terrain_patchset_patch patch = Tile.TFile.terrain.terrain_patchsets[0].GetPatch(x, z);
-            terrain_shader terrain_shader = (terrain_shader)Tile.TFile.terrain.terrain_shaders[patch.iShader];
-            string terrtexName = terrain_shader.terrain_texslots[0].Filename;
-
-            if (weather == (int)WeatherType.Snow || season == (int)SeasonType.Winter)
-            {
-                // Make sure there's a "snow" counterpart to the terrtex. If not, use the regular terrtex.
-                if (File.Exists(Viewer.Simulator.RoutePath + @"\terrtex\snow\" + terrtexName))
-                    PatchMaterial = Materials.Load(viewer.RenderProcess, "Terrain", Viewer.Simulator.RoutePath + @"\terrtex\snow\" + terrtexName);
-                else
-                    PatchMaterial = Materials.Load(viewer.RenderProcess, "Terrain", Viewer.Simulator.RoutePath + @"\terrtex\" + terrtexName);
-            }
+            var patch = Tile.TFile.terrain.terrain_patchsets[0].GetPatch(x, z);
+            var ts = ((terrain_shader)Tile.TFile.terrain.terrain_shaders[patch.iShader]).terrain_texslots;
+            if (ts.Length > 1)
+                PatchMaterial = Materials.Load(viewer.RenderProcess, "Terrain", Helpers.GetTerrainTextureFile(viewer.Simulator, ts[0].Filename) + "\0" + Helpers.GetTerrainTextureFile(viewer.Simulator, ts[1].Filename));
             else
-                PatchMaterial = Materials.Load(viewer.RenderProcess, "Terrain", Viewer.Simulator.RoutePath + @"\terrtex\" + terrtexName);
+                PatchMaterial = Materials.Load(viewer.RenderProcess, "Terrain", Helpers.GetTerrainTextureFile(viewer.Simulator, ts[0].Filename));
 
             float cx = -1024 + (int)patch.CenterX;
             float cz = -1024 - (int)patch.CenterZ;

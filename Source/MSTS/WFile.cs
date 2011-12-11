@@ -35,69 +35,99 @@ namespace MSTS
             {
                 using (SBR block = sbr.ReadSubBlock())
                 {
-                    Tr_Worldfile = new Tr_Worldfile( block );
+                    Tr_Worldfile = new Tr_Worldfile(block, filename);
                 }
             }
         }
     }
 
-    public class Tr_Worldfile : ArrayList  
+    public class Tr_Worldfile : ArrayList
     {
+        static HashSet<TokenID> UnknownBlockIDs = new HashSet<TokenID>()
+        {
+            TokenID.VDbIdCount,
+            TokenID.ViewDbSphere,
+        };
+
         public new WorldObject this[int i]
         {
             get { return (WorldObject)base[i]; }
             set { base[i] = value; }
         }
 
-        public Tr_Worldfile(SBR block)
+        public Tr_Worldfile(SBR block, string filename)
         {
             block.VerifyID(TokenID.Tr_Worldfile);
-
-            int currentWatermark = 0;
-
+            var currentWatermark = 0;
             while (!block.EndOfBlock())
             {
                 using (SBR subBlock = block.ReadSubBlock())
                 {
-
                     try
                     {
                         switch (subBlock.ID)
                         {
-							//some of the TokenID for binary W file:  309-->TelePole, 361-->Siding
+                            //some of the TokenID for binary W file:  309-->TelePole, 361-->Siding
                             case TokenID.CollideObject:
-                            case TokenID.Static: Add(new StaticObj(subBlock, currentWatermark)); break;
-                            case TokenID.TrackObj: Add(new TrackObj(subBlock, currentWatermark)); break;
-							case TokenID.CarSpawner: //unicode 
-							case (TokenID)357: Add(new CarSpawnerObj(subBlock, currentWatermark)); //car spawner
-								break; //car spawner. The tokenid number is wrong
-							case (TokenID)361://for binary file
-							case TokenID.Siding: Add(new SidingObj(subBlock, currentWatermark)); break;
-                            case TokenID.Platform: Add(new PlatformObj(subBlock, currentWatermark)); break;
-                            case TokenID.Forest: // Unicode
+                            case TokenID.Static:
+                                Add(new StaticObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.TrackObj:
+                                Add(new TrackObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.CarSpawner:
+                            case (TokenID)357:
+                                Add(new CarSpawnerObj(subBlock, currentWatermark)); //car spawner
+                                break; //car spawner. The tokenid number is wrong
+                            case TokenID.Siding:
+                            case (TokenID)361:
+                                Add(new SidingObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.Platform:
+                                Add(new PlatformObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.Forest:
                                 Add(new ForestObj(subBlock, currentWatermark));
                                 break;
-							case TokenID.LevelCr: 
-								Add(new LevelCrossingObj(subBlock, currentWatermark)); 
-								break; // Crossing
-                            case TokenID.Dyntrack: // Unicode
+                            case TokenID.LevelCr:
+                                Add(new LevelCrossingObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.Dyntrack:
                                 Add(new DyntrackObj(subBlock, currentWatermark, true));
                                 break;
-                            case (TokenID)306: // Binary
+                            case (TokenID)306:
                                 Add(new DyntrackObj(subBlock, currentWatermark, false));
                                 break;
-                            case TokenID.Transfer: subBlock.Skip(); break; // TODO
-                            case TokenID.Gantry: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                            case TokenID.Pickup: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
+                            case TokenID.Gantry:
+                            case (TokenID)356:
+                                // TODO: Add real handling.
+                                Add(new StaticObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.Pickup:
+                                // TODO: Add real handling.
+                                Add(new StaticObj(subBlock, currentWatermark));
+                                break;
                             case TokenID.Signal:
                                 Add(new SignalObj(subBlock, currentWatermark));
                                 break;
-                            case TokenID.Speedpost: Add(new StaticObj(subBlock, currentWatermark)); break; // TODO temp code
-                            case TokenID.Tr_Watermark: currentWatermark = subBlock.ReadInt(); break;
-                            default: subBlock.Skip(); break;
+                            case TokenID.Speedpost:
+                                // TODO: Add real handling.
+                                Add(new StaticObj(subBlock, currentWatermark));
+                                break;
+                            case TokenID.Tr_Watermark:
+                                currentWatermark = subBlock.ReadInt();
+                                break;
+                            default:
+                                if (!UnknownBlockIDs.Contains(subBlock.ID))
+                                {
+                                    UnknownBlockIDs.Add(subBlock.ID);
+                                    Trace.TraceInformation("Unknown world block {0} (0x{0:X}) first seen in {1}", subBlock.ID, filename);
+                                }
+                                subBlock.Skip();
+                                break;
                         }
                     }
-                    catch (System.Exception error)
+                    catch (Exception error)
                     {
                         Trace.TraceWarning(error.Message);
                     }
@@ -351,6 +381,7 @@ namespace MSTS
                 }
             }
             if (TreeTexture == null)
+                //Trace.TraceWarning("Forest {0} is missing a TreeTexture.", UID);
             {
                 throw new System.Exception( block.ErrorMessage("Missing texture filename in forest region. UID=" + UID.ToString() ));
             }
@@ -404,6 +435,7 @@ namespace MSTS
 
 	public class SignalObj : WorldObject
 	{
+        public readonly uint SignalSubObj;
 		public readonly SignalUnits SignalUnits;
 
 		public SignalObj(SBR block, int detailLevel)
@@ -423,6 +455,7 @@ namespace MSTS
 						case TokenID.Matrix3x3: Matrix3x3 = new Matrix3x3(subBlock); break;
 						case TokenID.VDbId: VDbId = subBlock.ReadUInt(); break;
 						case TokenID.StaticFlags: StaticFlags = subBlock.ReadFlags(); break;
+                        case TokenID.SignalSubObj: SignalSubObj = subBlock.ReadUInt(); break;
 						case TokenID.SignalUnits: SignalUnits = new SignalUnits(subBlock); break;
 						default: subBlock.Skip(); break;
 					}
@@ -459,7 +492,8 @@ namespace MSTS
 					switch (subBlock.ID)
 					{
 						case TokenID.UiD: UID = subBlock.ReadUInt(); break;
-						case TokenID.LevelCrParameters: levelCrParameters = new LevelCrParameters(subBlock);
+                        case TokenID.StaticFlags: StaticFlags = subBlock.ReadFlags(); break;
+                        case TokenID.LevelCrParameters: levelCrParameters = new LevelCrParameters(subBlock);
 							warningTime = levelCrParameters.crParameter1;
 							break;
 						case TokenID.CrashProbability: crashProbability = subBlock.ReadInt(); break;

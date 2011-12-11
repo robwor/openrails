@@ -37,7 +37,7 @@ namespace ORTS
         Vector3 frustumLeft;
         Vector3 frustumRight;
 
-        public float RightFrustrumA { get { return (float)Math.Cos(MathHelper.ToRadians(45.0f) / 2 * ((float)Viewer.DisplaySize.X / Viewer.DisplaySize.Y)); } }
+        public float RightFrustrumA { get { return (float)Math.Cos(MathHelper.ToRadians(Viewer.Settings.ViewingFOV) / 2 * ((float)Viewer.DisplaySize.X / Viewer.DisplaySize.Y)); } }
 
         // This sucks. It's really not camera-related at all.
         public static Matrix XNASkyProjection;
@@ -51,6 +51,9 @@ namespace ORTS
         public virtual TrainCar AttachedCar { get { return null; } }
         public virtual bool IsAvailable { get { return true; } }
         public virtual bool IsUnderground { get { return false; } }
+
+        // We need to allow different cameras to have different near planes.
+        public virtual float NearPlane { get { return 1.0f; } }
 
         protected Camera(Viewer3D viewer)
         {
@@ -121,9 +124,9 @@ namespace ORTS
         {
             var aspectRatio = (float)Viewer.DisplaySize.X / Viewer.DisplaySize.Y;
             var farPlaneDistance = SkyConstants.skyRadius + 100;  // so far the sky is the biggest object in view
-            var fovWidthRadians = MathHelper.ToRadians(45.0f);
-            xnaProjection = Matrix.CreatePerspectiveFieldOfView(fovWidthRadians, aspectRatio, 0.5f, Viewer.Settings.ViewingDistance);
-            XNASkyProjection = Matrix.CreatePerspectiveFieldOfView(fovWidthRadians, aspectRatio, 0.5f, farPlaneDistance);    // TODO remove? 
+            var fovWidthRadians = MathHelper.ToRadians(Viewer.Settings.ViewingFOV);
+            xnaProjection = Matrix.CreatePerspectiveFieldOfView(fovWidthRadians, aspectRatio, NearPlane, Viewer.Settings.ViewingDistance);
+            XNASkyProjection = Matrix.CreatePerspectiveFieldOfView(fovWidthRadians, aspectRatio, NearPlane, farPlaneDistance);    // TODO remove? 
             frustumRightProjected.X = (float)Math.Cos(fovWidthRadians / 2 * aspectRatio);  // Precompute the right edge of the view frustrum.
             frustumRightProjected.Z = (float)Math.Sin(fovWidthRadians / 2 * aspectRatio);
         }
@@ -332,8 +335,11 @@ namespace ORTS
             // Rotation
             if (UserInput.IsMouseRightButtonDown())
             {
-                rotationXRadians += speed * SpeedAdjustmentForRotation * UserInput.MouseMoveY();
-                rotationYRadians += speed * SpeedAdjustmentForRotation * UserInput.MouseMoveX();
+                // Mouse movement doesn't use 'var speed' because the MouseMove 
+                // parameters are already scaled down with increasing frame rates, 
+                // Mouse rotation speed is independant of shift key activation
+                rotationXRadians += 0.01F * UserInput.MouseMoveY();
+                rotationYRadians += 0.01F * UserInput.MouseMoveX();
             }
             if (UserInput.IsDown(UserCommands.CameraRotateUp))
                 rotationXRadians -= speed * SpeedAdjustmentForRotation;
@@ -453,7 +459,7 @@ namespace ORTS
         {
             if (attachedCar == null || attachedCar.Train != Viewer.PlayerTrain)
             {
-                if (Viewer.PlayerTrain.MUDirection == Direction.Forward)
+                if (Viewer.PlayerTrain.MUDirection != Direction.Reverse)
                     SetCameraCar(GetCameraCars().First());
                 else
                     SetCameraCar(GetCameraCars().Last());
@@ -554,7 +560,11 @@ namespace ORTS
     }
 
     public class BrakemanCamera : AttachedCamera
-    {        
+    {
+        protected bool attachedToRear;
+
+        public override float NearPlane { get { return 0.25f; } }
+
         public BrakemanCamera(Viewer3D viewer)
             : base(viewer, new CameraAngleClamper(-MathHelper.Pi / 2.1f, MathHelper.Pi / 2.1f), new CameraAngleClamper(-MathHelper.Pi / 2, MathHelper.Pi))
         {
@@ -570,11 +580,12 @@ namespace ORTS
         {
             base.SetCameraCar(car);
             attachedLocation = new Vector3(1.8f, 2.0f, attachedCar.Length / 2 - 0.3f);
+            attachedToRear = car.Train.Cars[0] != car;
         }
 
         protected override bool IsCameraFlipped()
         {
-            return (attachedCar == attachedCar.Train.Cars.Last()) ^ attachedCar.Flipped;
+            return attachedToRear ^ attachedCar.Flipped;
         }
 
         public override void HandleUserInput(ElapsedTime elapsedTime)
@@ -600,6 +611,7 @@ namespace ORTS
         public enum HeadDirection { Forward, Backward }
 
         public override bool IsAvailable { get { return Viewer.PlayerTrain != null && Viewer.PlayerTrain.Cars.Any(c => c.HeadOutViewpoints.Count > 0); } }
+        public override float NearPlane { get { return 0.25f; } }
 
         public HeadOutCamera(Viewer3D viewer, HeadDirection headDirection)
             : base(
@@ -734,7 +746,7 @@ namespace ORTS
 
     public class TrackingCamera : AttachedCamera
     {
-        const float StartPositionDistance = 9;
+        const float StartPositionDistance = 20;
         const float StartPositionXRadians = 0.399f;
         const float StartPositionYRadians = 0.387f;
 
@@ -849,6 +861,7 @@ namespace ORTS
     {
         public override Styles Style { get { return Styles.Passenger; } }
         public override bool IsAvailable { get { return Viewer.PlayerTrain != null && Viewer.PlayerTrain.Cars.Any(c => c.PassengerViewpoints.Count > 0); } }
+        public override float NearPlane { get { return 0.1f; } }
 
         public PassengerCamera(Viewer3D viewer)
             : base(viewer, null, null)
@@ -939,7 +952,7 @@ namespace ORTS
             }
             if (attachedCar == null || attachedCar.Train != Viewer.PlayerTrain)
             {
-                if (Viewer.PlayerTrain.MUDirection == Direction.Forward)
+                if (Viewer.PlayerTrain.MUDirection != Direction.Reverse)
                     attachedCar = Viewer.PlayerTrain.Cars.First();
                 else
                     attachedCar = Viewer.PlayerTrain.Cars.Last();

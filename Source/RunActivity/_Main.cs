@@ -368,28 +368,31 @@ namespace ORTS
         static void InitLogging(UserSettings settings)
         {
             var logFileName = "";
-            if ((settings.LoggingPath.Length > 0) && Directory.Exists(settings.LoggingPath))
+            if (settings.Logging)
             {
-                var fileName = settings.LoggingFilename;
-                try
+                if ((settings.LoggingPath.Length > 0) && Directory.Exists(settings.LoggingPath))
                 {
-                    fileName = String.Format(fileName, Application.ProductName, Version.Length > 0 ? Version : Build, Version, Build, DateTime.Now);
-                }
-                catch { }
-                foreach (var ch in Path.GetInvalidFileNameChars())
-                    fileName = fileName.Replace(ch, '.');
+                    var fileName = settings.LoggingFilename;
+                    try
+                    {
+                        fileName = String.Format(fileName, Application.ProductName, Version.Length > 0 ? Version : Build, Version, Build, DateTime.Now);
+                    }
+                    catch { }
+                    foreach (var ch in Path.GetInvalidFileNameChars())
+                        fileName = fileName.Replace(ch, '.');
 
-                logFileName = Path.Combine(settings.LoggingPath, fileName);
-                // Ensure we start with an empty file.
-                File.Delete(logFileName);
-                // Make Console.Out go to the log file AND the output stream.
-                Console.SetOut(new FileTeeLogger(logFileName, Console.Out));
-                // Make Console.Error go to the new Console.Out.
-                Console.SetError(Console.Out);
+                    logFileName = Path.Combine(settings.LoggingPath, fileName);
+                    // Ensure we start with an empty file.
+                    File.Delete(logFileName);
+                    // Make Console.Out go to the log file AND the output stream.
+                    Console.SetOut(new FileTeeLogger(logFileName, Console.Out));
+                    // Make Console.Error go to the new Console.Out.
+                    Console.SetError(Console.Out);
+                }
             }
 
             // Captures Trace.Trace* calls and others and formats.
-            var traceListener = new ORTraceListener(Console.Out);
+            var traceListener = new ORTraceListener(Console.Out, !settings.Logging);
             traceListener.TraceOutputOptions = TraceOptions.Callstack;
             // Trace.Listeners and Debug.Listeners are the same list.
             Trace.Listeners.Add(traceListener);
@@ -403,6 +406,11 @@ namespace ORTS
             LogSeparator();
             settings.Log();
             LogSeparator();
+            if (!settings.Logging)
+            {
+                Console.WriteLine("Logging is disabled, only fatal errors will appear here.");
+                LogSeparator();
+            }
         }
 
         static void InitSimulator(UserSettings settings, string[] args)
