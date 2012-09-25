@@ -1,4 +1,9 @@
-﻿/*
+﻿/// COPYRIGHT 2009 by the Open Rails project.
+/// This code is provided to enable you to contribute improvements to the open rails program.  
+/// Use of the code for any other purpose or distribution of the code to anyone else
+/// is prohibited without specific written permission from admin@openrails.org.
+
+/*
  *    TrainCarSimulator
  *    
  *    TrainCarViewer
@@ -9,10 +14,6 @@
  *  viewers potentially on different devices for a single car. 
  *  
  */
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
 
 using System;
 using System.Collections.Generic;
@@ -120,6 +121,11 @@ namespace ORTS
             switch (lowercasetoken)
             {
                 case "wagon(wagonshape": MainShapeFileName = stf.ReadStringBlock(null); break;
+		        case "wagon(type":
+		            stf.MustMatch("(");
+		            string typeString = stf.ReadString();
+		            IsFreight = String.Compare(typeString,"Freight") == 0 ? true : false;
+		            break;
                 case "wagon(freightanim":
                     stf.MustMatch("(");
                     FreightShapeFileName = stf.ReadString();
@@ -153,11 +159,17 @@ namespace ORTS
                     Couplers[Couplers.Count - 1].SetStiffness(stf.ReadFloat(STFReader.UNITS.Stiffness, null), stf.ReadFloat(STFReader.UNITS.Stiffness, null));
                     stf.SkipRestOfBlock();
                     break;
+                case "wagon(coupling(spring(break":
+                    stf.MustMatch("(");
+                    Couplers[Couplers.Count - 1].SetBreak(stf.ReadFloat(STFReader.UNITS.Force, null), stf.ReadFloat(STFReader.UNITS.Force, null));
+                    stf.SkipRestOfBlock();
+                    break;
                 case "wagon(coupling(spring(r0":
                     stf.MustMatch("(");
                     Couplers[Couplers.Count - 1].SetR0(stf.ReadFloat(STFReader.UNITS.Distance, null), stf.ReadFloat(STFReader.UNITS.Distance, null));
                     stf.SkipRestOfBlock();
                     break;
+                case "wagon(adhesion":  // Permits correct spelling
                 case "wagon(adheasion":
                     stf.MustMatch("(");
                     Adhesion1 = stf.ReadFloat(STFReader.UNITS.Any, null);
@@ -337,8 +349,6 @@ namespace ORTS
                 if (e1 < 0)
                     Friction0N *= (float)Math.Pow(.0025 * .44704, e1);
             }
-            //Console.WriteLine("friction {0} {1} {2} {3} {4}", c1, e1, v2, c2, e2);
-            //Console.WriteLine("davis {0} {1} {2} {3}", Friction0N, DavisAN, DavisBNSpM, DavisCNSSpMM);
         }
         public float ParseFloat(string token)
         {   // is there a better way to ignore any suffix?
@@ -415,6 +425,16 @@ namespace ORTS
             else
                 FrictionForceN = DavisAN + s * (DavisBNSpM + s * DavisCNSSpMM);
 
+            foreach (MSTSCoupling coupler in Couplers)
+            {
+                if (-CouplerForceU > coupler.Break1N)
+                {
+                    CouplerOverloaded = true;
+                }
+                else
+                    CouplerOverloaded = false;
+            }
+
             MSTSBrakeSystem.Update(elapsedClockSeconds);
         }
 
@@ -424,25 +444,23 @@ namespace ORTS
         /// </summary>
         public override void SignalEvent(EventID eventID)
         {
-			// Modified according to replacable IDs - by GeorgeS
-			//switch (eventID)
-			do
+            do  // Like 'switch' (i.e. using 'break' is more efficient than a sequence of 'if's) but doesn't need constant EventID.<values>
 			{
-				if (eventID == EventID.PantographUp) { Pan = true; if (FrontPanUp == false && AftPanUp == false) AftPanUp = true; break; }  // pan up
-				if (eventID == EventID.PantographDown) { Pan = false; FrontPanUp = AftPanUp = false;  break; } // pan down
-				if (eventID == EventID.PantographToggle) {	
+				if (eventID == EventID.Pantograph1Up) { Pan = true; if (FrontPanUp == false && AftPanUp == false) AftPanUp = true; break; }  // pan up
+				if (eventID == EventID.Pantograph1Down) { Pan = false; FrontPanUp = AftPanUp = false;  break; } // pan down
+				if (eventID == EventID.Pantograph1Toggle) {	
 					Pan = !Pan;
 					if (Pan && FrontPanUp == false && AftPanUp == false) AftPanUp = true;
 					if (Pan == false) FrontPanUp = AftPanUp = false;
 					break; 
 				} // pan down
-			} while (false);
+            } while( false );  // Never repeats
 
             foreach (CarEventHandler eventHandler in EventHandlers)
                 eventHandler.HandleCarEvent(eventID);
         }
 
-        // sound sources or and viewers can register them selves to get direct notification of an event
+        // sound sources and viewers can register themselves to get direct notification of an event
         public List<CarEventHandler> EventHandlers = new List<CarEventHandler>();
 
         public MSTSCoupling Coupler
@@ -477,6 +495,19 @@ namespace ORTS
                 return base.GetMaximumCouplerSlack2M();
             return Coupler.Rigid ? 0.0002f : base.GetMaximumCouplerSlack2M();
         }
+        public override void CopyCoupler(TrainCar other)
+        {
+            base.CopyCoupler(other);
+            MSTSCoupling coupler = new MSTSCoupling();
+            coupler.R0 = other.GetCouplerZeroLengthM();
+            coupler.R0Diff = other.GetMaximumCouplerSlack1M();
+            coupler.Rigid = coupler.R0Diff < .0002f;
+            coupler.Stiffness1NpM = other.GetCouplerStiffnessNpM() / 7;
+            coupler.Stiffness2NpM = 0;
+            Couplers[0]= coupler;
+            if (Couplers.Count > 1)
+                Couplers.RemoveAt(1);
+        }
     }
 
     public class MSTSCoupling
@@ -486,6 +517,9 @@ namespace ORTS
         public float R0Diff = .012f;
         public float Stiffness1NpM = 1e7f;
         public float Stiffness2NpM = 2e7f;
+        public float Break1N = 1e10f;
+        public float Break2N = 1e10f;
+
         public MSTSCoupling()
         {
         }
@@ -494,6 +528,8 @@ namespace ORTS
             Rigid = copy.Rigid;
             R0 = copy.R0;
             R0Diff = copy.R0Diff;
+            Break1N = copy.Break1N;
+            Break2N = copy.Break2N;
         }
         public void SetR0(float a, float b)
         {
@@ -506,7 +542,6 @@ namespace ORTS
                 R0Diff = .001f;
             else if (R0Diff > .1)
                 R0Diff = .1f;
-            //Console.WriteLine("setR0 {0} {1} {2} {3} {4} {5}", a, b, R0, R0Diff, Stiffness1NpM, Stiffness2NpM);
         }
         public void SetStiffness(float a, float b)
         {
@@ -514,6 +549,14 @@ namespace ORTS
                 return;
             Stiffness1NpM = a;
             Stiffness2NpM = b;
+        }
+
+        public void SetBreak(float a, float b)
+        {
+            if (a + b < 0)
+                return;
+            Break1N = a;
+            Break2N = b;
         }
 
         /// <summary>
@@ -527,6 +570,8 @@ namespace ORTS
             outf.Write(R0Diff);
             outf.Write(Stiffness1NpM);
             outf.Write(Stiffness2NpM);
+            outf.Write(Break1N);
+            outf.Write(Break2N);
         }
 
         /// <summary>
@@ -540,6 +585,8 @@ namespace ORTS
             R0Diff = inf.ReadSingle();
             Stiffness1NpM = inf.ReadSingle();
             Stiffness2NpM = inf.ReadSingle();
+            Break1N = inf.ReadSingle();
+            Break2N = inf.ReadSingle();
         }
     }
 
@@ -621,8 +668,9 @@ namespace ORTS
             {
                 if (AnimationKey < FrameCount)  // skip this if we are already up
                 {                               // otherwise transition up
-                    // Animation speed is hard coded at 2 frames per second
-                    AnimationKey += 2f * elapsedTime.ClockSeconds;
+                    // Animation speed is hard coded at 1 frame per second, to match the rate of MSTS.
+                    // <CJ Comment> Only tested pantographs because don't have the models for doors and mirrors. </CJ Comment>
+                    AnimationKey += 1f * elapsedTime.ClockSeconds;
                     if (AnimationKey > FrameCount) AnimationKey = FrameCount;
                     foreach (int iMatrix in MatrixIndexes)
                         PoseableShape.AnimateMatrix(iMatrix, AnimationKey);
@@ -632,7 +680,7 @@ namespace ORTS
             {
                 if (AnimationKey > 0)   // if we are already down, don't do anything
                 {                       // otherwise transition down
-                    AnimationKey -= 2f * elapsedTime.ClockSeconds;
+                    AnimationKey -= 1f * elapsedTime.ClockSeconds;
                     if (AnimationKey < 0) AnimationKey = 0;
                     foreach (int iMatrix in MatrixIndexes)
                         PoseableShape.AnimateMatrix(iMatrix, AnimationKey);
@@ -681,7 +729,7 @@ namespace ORTS
         protected PoseableShape TrainCarShape = null;
         protected AnimatedShape FreightShape = null;
         protected AnimatedShape InteriorShape = null;
-        protected List<SoundSource> SoundSources = new List<SoundSource>();
+        protected List<SoundSourceBase> SoundSources = new List<SoundSourceBase>();
 
         List<int> WheelPartIndexes = new List<int>();   // these index into a matrix in the shape file
 		List<int> RunningGearPartIndexes = new List<int>();
@@ -883,8 +931,8 @@ namespace ORTS
 				if (Viewer.Simulator.PlayerLocomotive == this.Car) //inform everyone else in the train
 					foreach (TrainCar car in Car.Train.Cars)
 						if (car != this.Car && car is MSTSWagon) ((MSTSWagon)car).FrontPanUp = MSTSWagon.FrontPanUp;
-				if (MSTSWagon.FrontPanUp || MSTSWagon.AftPanUp) Car.SignalEvent(EventID.PantographUp);
-				else Car.SignalEvent(EventID.PantographDown);
+				if (MSTSWagon.FrontPanUp || MSTSWagon.AftPanUp) Car.SignalEvent(EventID.Pantograph1Up);
+				else Car.SignalEvent(EventID.Pantograph1Down);
 			}
 			if (UserInput.IsPressed(UserCommands.ControlPantographFirst))
 			{
@@ -892,8 +940,8 @@ namespace ORTS
 				if (Viewer.Simulator.PlayerLocomotive == this.Car)//inform everyone else in the train
 					foreach (TrainCar car in Car.Train.Cars)
 						if (car != this.Car && car is MSTSWagon) ((MSTSWagon)car).AftPanUp = MSTSWagon.AftPanUp;
-				if (MSTSWagon.FrontPanUp || MSTSWagon.AftPanUp) Car.SignalEvent(EventID.PantographUp);
-				else Car.SignalEvent(EventID.PantographDown);
+				if (MSTSWagon.FrontPanUp || MSTSWagon.AftPanUp) Car.SignalEvent(EventID.Pantograph1Up);
+				else Car.SignalEvent(EventID.Pantograph1Down);
 			}
 			if (UserInput.IsPressed(UserCommands.ControlDoorLeft)) //control door (or only left)
 			{
@@ -904,6 +952,7 @@ namespace ORTS
 				/*if (MSTSWagon.DoorLeftOpen) Car.SignalEvent(EventID.DoorOpen);
 				else Car.SignalEvent(EventID.DoorClose);*/
 				//comment out, but can be added back to animate sound
+                Viewer.Simulator.Confirmer.Confirm( CabControl.DoorsLeft, MSTSWagon.DoorLeftOpen ? CabSetting.On : CabSetting.Off );
 			}
 			if (UserInput.IsPressed(UserCommands.ControlDoorRight)) //control right door
 			{
@@ -914,11 +963,13 @@ namespace ORTS
 				/*if (MSTSWagon.DoorLeftOpen) Car.SignalEvent(EventID.DoorOpen);
 				else Car.SignalEvent(EventID.DoorClose);*/
 				//comment out, but can be added back to animate sound
-			}
-			if (UserInput.IsPressed(UserCommands.ControlMirror)) //control right door
+                Viewer.Simulator.Confirmer.Confirm( CabControl.DoorsRight, MSTSWagon.DoorRightOpen ? CabSetting.On : CabSetting.Off );
+            }
+			if (UserInput.IsPressed(UserCommands.ControlMirror))    // Are these the mirrors on trams which swing out at platforms?
 			{
 				MSTSWagon.MirrorOpen = !MSTSWagon.MirrorOpen;
-			}
+                Viewer.Simulator.Confirmer.Confirm( CabControl.Mirror, MSTSWagon.MirrorOpen ? CabSetting.On : CabSetting.Off );
+            }
 		}
 
 
@@ -935,20 +986,6 @@ namespace ORTS
             RightDoor.Update( MSTSWagon.DoorRightOpen, elapsedTime);
             Mirrors.Update( MSTSWagon.MirrorOpen, elapsedTime);
 			UpdateAnimation(frame, elapsedTime);
-        }
-
-
-        public void UpdateSound(ElapsedTime elapsedTime)
-        {
-			try
-			{
-				foreach (SoundSource soundSource in SoundSources)
-					soundSource.Update();
-			}
-			catch (Exception error)
-			{
-				Trace.WriteLine(error);
-			}
         }
 
 
@@ -1093,6 +1130,13 @@ namespace ORTS
         /// </summary>
         private void LoadTrackSounds()
         {
+            if (MSTSWagon is MSTSLocomotive)
+            {
+                TrackSoundSource ts = new TrackSoundSource(MSTSWagon, Viewer);
+                SoundSources.Add(ts);
+                return;
+            }
+
             if (Viewer.TTypeDatFile.Count > 0)  // TODO, still have to figure out if this should be part of the car, or train, or track
             {
                 if (!string.IsNullOrEmpty(MSTSWagon.InteriorSoundFileName))
@@ -1120,6 +1164,15 @@ namespace ORTS
                 return;
             }
             SoundSources.Add(new SoundSource(Viewer, MSTSWagon, path));
+        }
+
+        internal override void Mark()
+        {
+            TrainCarShape.Mark();
+            if (FreightShape != null)
+                FreightShape.Mark();
+            if (InteriorShape != null)
+                InteriorShape.Mark();
         }
 
     } // class carshape

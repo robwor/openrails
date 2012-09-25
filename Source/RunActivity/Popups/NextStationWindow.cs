@@ -132,6 +132,7 @@ namespace ORTS.Popups
                         StationCurrentArriveActual.Text = at.ActArrive.HasValue ? at.ActArrive.Value.ToString("HH:mm:ss") : "";
                         StationCurrentArriveActual.Color = GetArrivalColor(at.SchArrive, at.ActArrive);
                         StationCurrentDepartScheduled.Text = at.SchDepart.ToString("HH:mm:ss");
+                        Message.Color = at.DisplayColor;
                         Message.Text = at.DisplayMessage;
                     }
                     else

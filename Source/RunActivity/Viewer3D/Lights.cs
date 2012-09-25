@@ -170,17 +170,17 @@ namespace ORTS
                 new STFReader.TokenProcessor("fadeout", ()=>{ FadeOut = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
                 new STFReader.TokenProcessor("states", ()=>{
                     stf.MustMatch("(");
-                    var numStates = stf.ReadInt(STFReader.UNITS.None, null);
+                    var count = stf.ReadInt(STFReader.UNITS.None, null);
                     stf.ParseBlock(new[] {
                         new STFReader.TokenProcessor("state", ()=>{
-                            if (States.Count < numStates)
-                                States.Add(new LightState(stf));
+                            if (States.Count >= count)
+                                STFException.TraceWarning(stf, "Skipped extra State");
                             else
-                                STFException.TraceWarning(stf, "Additional State ignored");
+                                States.Add(new LightState(stf));
                         }),
                     });
-                    if (States.Count != numStates)
-                        STFException.TraceWarning(stf, "Missing State block");
+                    if (States.Count < count)
+                        STFException.TraceWarning(stf, (count - States.Count).ToString() + " missing State(s)");
                 }),
             });
         }
@@ -241,8 +241,8 @@ namespace ORTS
         {
             Viewer = viewer;
             Car = car;
-            LightGlowMaterial = Materials.Load(Viewer.RenderProcess, "LightGlowMaterial");
-            LightConeMaterial = Materials.Load(Viewer.RenderProcess, "LightConeMaterial");
+            LightGlowMaterial = viewer.MaterialManager.Load("LightGlow");
+            LightConeMaterial = viewer.MaterialManager.Load("LightCone");
 
             UpdateState();
             if (Car.Lights != null)
@@ -325,7 +325,7 @@ namespace ORTS
             Vector3 mstsLocation = new Vector3(xnaDTileTranslation.Translation.X, xnaDTileTranslation.Translation.Y, -xnaDTileTranslation.Translation.Z);
 
             float objectRadius = 20; // Even more arbitrary.
-            float objectViewingDistance = 1500; // Arbitrary.
+            float objectViewingDistance = Viewer.Settings.ViewingDistance; // Arbitrary.
             if (Viewer.Camera.CanSee(mstsLocation, objectRadius, objectViewingDistance))
                 foreach (var lightMesh in LightMeshes)
                     if (lightMesh.Enabled || lightMesh.FadeOut)
@@ -352,6 +352,13 @@ namespace ORTS
             }
         }
 
+        [CallOnThread("Loader")]
+        public void Mark()
+        {
+            LightGlowMaterial.Mark();
+            LightConeMaterial.Mark();
+        }
+
         public static void CalculateLightCone(LightState lightState, out Vector3 position, out Vector3 direction, out float angle, out float radius, out float distance, out Vector4 color)
         {
             position = lightState.Position;
@@ -372,10 +379,12 @@ namespace ORTS
         bool UpdateState()
         {
             // Headlight
-            var newTrainHeadlight = Car.Train != null && Car.Train == Viewer.PlayerTrain ? Viewer.PlayerLocomotive.Headlight : 2;
+			var newTrainHeadlight = Car.Train != null && Car.Train == Viewer.PlayerTrain ? Viewer.PlayerLocomotive.Headlight : 2;
+			if (Car.Train != null && Car.Train.LeadLocomotive != null) newTrainHeadlight = Car.Train.LeadLocomotive.Headlight;
             // Unit
             var locoIsFlipped = Car.Train == Viewer.PlayerTrain && Viewer.PlayerLocomotive.Flipped;
-            var newCarIsReversed = Car.Flipped ^ locoIsFlipped;
+            if (Car.Train != null && Car.Train.LeadLocomotive != null && Car.Train != Viewer.PlayerTrain) locoIsFlipped = Car.Train.LeadLocomotive.Flipped;
+			var newCarIsReversed = Car.Flipped ^ locoIsFlipped;
             var newCarIsFirst = Car.Train == null || (locoIsFlipped ? Car.Train.LastCar : Car.Train.FirstCar) == Car;
             var newCarIsLast = Car.Train == null || (locoIsFlipped ? Car.Train.FirstCar : Car.Train.LastCar) == Car;
             // Coupling
@@ -383,11 +392,12 @@ namespace ORTS
             var newCarCoupledRear = Car.Train != null && (Car.Train.Cars.Count > 1) && ((Car.Flipped ? Car.Train.FirstCar : Car.Train.LastCar) != Car);
             // Control
             var newCarIsPlayer = Car == Viewer.PlayerLocomotive;
-            // TODO: Check for relevant Penalty changes.
+			if (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.REMOTE) newCarIsPlayer = true;//for remote trains
+			// TODO: Check for relevant Penalty changes.
             // Service
             var newCarInService = Car.Train != null;
             // Time
-            var newIsDay = Viewer.SkyDrawer.solarDirection.Y > 0;
+            var newIsDay = Viewer.World.Sky.solarDirection.Y > 0;
             // Weather
             var newWeather = Viewer.Simulator.Weather;
 

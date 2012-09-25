@@ -1,4 +1,8 @@
-﻿
+﻿/// COPYRIGHT 2010 by the Open Rails project.
+/// This code is provided to enable you to contribute improvements to the open rails program.  
+/// Use of the code for any other purpose or distribution of the code to anyone else
+/// is prohibited without specific written permission from admin@openrails.org.
+
 namespace ORTS
 {
     public interface CarEventHandler
@@ -16,7 +20,9 @@ namespace ORTS
         CompressorOn = 12, CompressorOff = 13, TrainBrakeRelease = 14,
         Forward = 15, Reverse = 16, TrainBrakeSet = 17, EngineBrakeSet = 18,
         EngineBrakeRelease = 21, EngineBrakeApply = 22, LightSwitchToggle = 37,
-        PantographUp = 45, PantographDown = 46, PantographToggle = 47, PowerHandler = 50,
+        Pantograph1Up = 45, Pantograph1Down = 46, Pantograph1Toggle = 47,
+        Pantograph2Up = 48, Pantograph2Down = 49,
+        PowerHandler = 50,
         TrainBrakeApply = 53, TrainBrakeEmergency = 54,
         Couple = 58, CoupleB = 59, CoupleC = 60,
         Uncouple = 61, UncoupleB = 62, UncoupleC = 63,

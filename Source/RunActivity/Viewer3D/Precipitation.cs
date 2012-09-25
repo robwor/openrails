@@ -44,7 +44,7 @@ namespace ORTS
         public PrecipDrawer(Viewer3D viewer)
         {
             Viewer = viewer;
-            precipMaterial = Materials.Load(Viewer.RenderProcess, "PrecipMaterial");
+            precipMaterial = viewer.MaterialManager.Load("Precip");
             // Instantiate classes
             precipMesh = new PrecipMesh( Viewer.RenderProcess);
 
@@ -57,7 +57,7 @@ namespace ORTS
 
             WeatherControl weather = new WeatherControl(Viewer);
             precipMesh.intensity = weather.intensity;
-			precipMesh.Initialize(Viewer.Simulator.ClockTime);
+            precipMesh.Initialize(Viewer.Simulator);
         }
         #endregion
 
@@ -75,7 +75,21 @@ namespace ORTS
             // The following keyboard commands are used for viewing sky and weather effects in "demo" mode
             // Use Alt+P to toggle precipitation through Clear, Rain and Snow states
 
-            if (UserInput.IsPressed(UserCommands.DebugWeatherChange))
+			if (MultiPlayer.MPManager.IsMultiPlayer())
+			{
+				//received message about weather change
+				if (MultiPlayer.MPManager.Instance().weatherChanged && MultiPlayer.MPManager.Instance().newWeather>=0)
+				{
+					Viewer.Simulator.Weather = (WeatherType)MultiPlayer.MPManager.Instance().newWeather;
+					try
+					{
+						MultiPlayer.MPManager.Instance().weatherChanged = false;
+					}
+					catch { }
+				}
+				precipMesh.Initialize(Viewer.Simulator);
+			}
+            if (UserInput.IsPressed(UserCommands.DebugWeatherChange) && !MultiPlayer.MPManager.IsClient())
             {
                 switch (Viewer.Simulator.Weather)
                 {
@@ -92,12 +106,16 @@ namespace ORTS
                         Viewer.Simulator.Weather = WeatherType.Clear;
                         break;
                 }
-				precipMesh.Initialize(Viewer.Simulator.ClockTime);
+                precipMesh.Initialize(Viewer.Simulator);
+				if (MultiPlayer.MPManager.IsServer())
+				{
+					MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather((int)Viewer.Simulator.Weather, -1)).ToString());//server notify others the weather has changed
+				}
             }
 
 ////////////////////////////////////////////////////////////////////
 
-            precipMesh.Update(Viewer.Simulator.ClockTime);
+            precipMesh.Update(Viewer.Simulator);
 
             frame.AddPrimitive(precipMaterial, precipMesh, RenderPrimitiveGroup.Precipitation, ref XNAPrecipWorldLocation);
         }
@@ -107,7 +125,13 @@ namespace ORTS
         /// </summary>
         public void Reset()
         {
-			precipMesh.Initialize(Viewer.Simulator.ClockTime);
+            precipMesh.Initialize(Viewer.Simulator);
+        }
+
+        [CallOnThread("Loader")]
+        internal void Mark()
+        {
+            precipMaterial.Mark();
         }
     }
     #endregion
@@ -150,47 +174,47 @@ namespace ORTS
 			particleSize = 0.35f;
         }
 
-		public void Initialize(double currentTime)
+		public void Initialize(Simulator simulator)
 		{
 			var particleCount = (int)(intensity * height);
 			Debug.Assert(particleCount < MaxParticleCount, "PrecipMesh MaxParticleCount exceeded.");
 			ParticleStartIndex = 0;
 			ParticleEndIndex = particleCount;
 			for (var i = 0; i < particleCount; i++)
-				InitializeParticle(ref Particles[i], currentTime - height * (particleCount - i) / particleCount);
+				InitializeParticle(ref Particles[i], simulator.GameTime - height * (particleCount - i) / particleCount);
 			VertexBuffer.SetData(Particles, 0, MaxParticleCount, SetDataOptions.NoOverwrite);
-			LastNewParticleTime = currentTime;
+            LastNewParticleTime = simulator.GameTime;
 		}
 
-		public void Update(double currentTime)
+        public void Update(Simulator simulator)
 		{
-			while (((ParticleEndIndex - ParticleStartIndex + MaxParticleCount) % MaxParticleCount != 1) && (currentTime >= Particles[ParticleStartIndex].time + height))
+            while (((ParticleEndIndex - ParticleStartIndex + MaxParticleCount) % MaxParticleCount != 1) && (simulator.GameTime >= Particles[ParticleStartIndex].time + height))
 			{
 				ParticleStartIndex++;
 				ParticleStartIndex %= MaxParticleCount;
 			}
 
-			var newParticles = (int)Math.Min((currentTime - LastNewParticleTime) * intensity, (ParticleStartIndex - ParticleEndIndex + MaxParticleCount) % MaxParticleCount);
+            var newParticles = (int)Math.Min((simulator.GameTime - LastNewParticleTime) * intensity, (ParticleStartIndex - ParticleEndIndex + MaxParticleCount) % MaxParticleCount);
 			if (newParticles > 0)
 			{
 				for (var i = 0; i < newParticles; i++)
 				{
-					InitializeParticle(ref Particles[ParticleEndIndex], currentTime - (currentTime - LastNewParticleTime) * (newParticles - i) / newParticles);
+                    InitializeParticle(ref Particles[ParticleEndIndex], simulator.GameTime - (simulator.GameTime - LastNewParticleTime) * (newParticles - i) / newParticles);
 					VertexBuffer.SetData(ParticleEndIndex * VertexPointSprite.SizeInBytes, Particles, ParticleEndIndex, 1, VertexPointSprite.SizeInBytes, SetDataOptions.NoOverwrite);
 					ParticleEndIndex++;
 					ParticleEndIndex %= MaxParticleCount;
 				}
-				LastNewParticleTime = currentTime;
+                LastNewParticleTime = simulator.GameTime;
 			}
 		}
 
-		void InitializeParticle(ref VertexPointSprite particle, double currentTime)
+		void InitializeParticle(ref VertexPointSprite particle, double time)
 		{
 			particle.position.X = (float)Random.NextDouble() * width - width / 2;
 			particle.position.Y = width / 2;
 			particle.position.Z = (float)Random.NextDouble() * width - width / 2;
 			particle.pointSize = particleSize;
-			particle.time = (float)currentTime;
+			particle.time = (float)time;
 			particle.wind = windStrength * windDir;
 		}
 

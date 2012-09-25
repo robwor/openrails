@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -63,8 +64,10 @@ namespace ORTS
         protected Camera(Viewer3D viewer, Camera previousCamera) // maintain visual continuity
             : this(viewer)
         {
-            if (previousCamera != null)
-                cameraLocation = previousCamera.CameraWorldLocation;
+            if( previousCamera != null ) {
+                // Clone the camera location of the previous camera - identical but independent version needed.
+                cameraLocation = new WorldLocation(previousCamera.CameraWorldLocation);
+            }
         }
 
         protected internal virtual void Save(BinaryWriter outf)
@@ -399,6 +402,10 @@ namespace ORTS
         {
         }
 
+		public void SetLocation(WorldLocation l)
+		{
+			cameraLocation = l;
+		}
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
             base.HandleUserInput(elapsedTime);
@@ -416,7 +423,7 @@ namespace ORTS
 
                     axisZSpeedBoost = ((cameraRelativeHeight / maxCameraHeight) * 50) + 1;                    
                 }                
-            }            
+            }
         }
     }
 
@@ -457,19 +464,19 @@ namespace ORTS
 
         protected override void OnActivate(bool sameCamera)
         {
-            if (attachedCar == null || attachedCar.Train != Viewer.PlayerTrain)
-            {
-                if (Viewer.PlayerTrain.MUDirection != Direction.Reverse)
-                    SetCameraCar(GetCameraCars().First());
-                else
-                    SetCameraCar(GetCameraCars().Last());
-            }
+			if (attachedCar == null || attachedCar.Train != Viewer.SelectedTrain)
+			{
+				if (Viewer.SelectedTrain.MUDirection != Direction.Reverse)
+					SetCameraCar(GetCameraCars().First());
+				else
+					SetCameraCar(GetCameraCars().Last());
+			}
             base.OnActivate(sameCamera);
         }
 
         protected virtual List<TrainCar> GetCameraCars()
         {
-            return Viewer.PlayerTrain.Cars;
+            return Viewer.SelectedTrain.Cars;
         }
 
         protected virtual void SetCameraCar(TrainCar car)
@@ -485,16 +492,21 @@ namespace ORTS
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
             var trainCars = GetCameraCars();
-            if (UserInput.IsPressed(UserCommands.CameraCarNext))
-                SetCameraCar(attachedCar == trainCars.First() ? attachedCar : trainCars[trainCars.IndexOf(attachedCar) - 1]);
-            else if (UserInput.IsPressed(UserCommands.CameraCarPrevious))
-                SetCameraCar(attachedCar == trainCars.Last() ? attachedCar : trainCars[trainCars.IndexOf(attachedCar) + 1]);
-            else if (UserInput.IsPressed(UserCommands.CameraCarFirst))
-                SetCameraCar(trainCars.First());
-            else if (UserInput.IsPressed(UserCommands.CameraCarLast))
-                SetCameraCar(trainCars.Last());
-            else
-                base.HandleUserInput(elapsedTime);
+			//with jump train now, it may be dangerous to move to the next train as it may just be uncoupled.
+			try
+			{
+				if (UserInput.IsPressed(UserCommands.CameraCarNext))
+					SetCameraCar(attachedCar == trainCars.First() ? attachedCar : trainCars[trainCars.IndexOf(attachedCar) - 1]);
+				else if (UserInput.IsPressed(UserCommands.CameraCarPrevious))
+					SetCameraCar(attachedCar == trainCars.Last() ? attachedCar : trainCars[trainCars.IndexOf(attachedCar) + 1]);
+				else if (UserInput.IsPressed(UserCommands.CameraCarFirst))
+					SetCameraCar(trainCars.First());
+				else if (UserInput.IsPressed(UserCommands.CameraCarLast))
+					SetCameraCar(trainCars.Last());
+				else
+					base.HandleUserInput(elapsedTime);
+			}
+			catch (Exception) { }
         }
         
         private void FixCameraLocation()
@@ -628,12 +640,13 @@ namespace ORTS
 
         protected override List<TrainCar> GetCameraCars()
         {
+			Viewer.SelectedTrain = Viewer.PlayerTrain;
             return base.GetCameraCars().Where(c => c.HeadOutViewpoints.Count > 0).ToList();
         }
 
         protected override void SetCameraCar(TrainCar car)
         {
-            base.SetCameraCar(car);
+			base.SetCameraCar(car);
             attachedLocation = attachedCar.HeadOutViewpoints[0].Location;
             if (!Forwards)
                 attachedLocation.X *= -1;
@@ -711,36 +724,89 @@ namespace ORTS
             return new List<TrainCar>(new[] { Viewer.PlayerLocomotive });
         }
 
-        protected override void SetCameraCar(TrainCar car)
-        {
-            base.SetCameraCar(car);
-            rotationXRadians = MSTSMath.M.Radians(attachedCar.FrontCabViewpoints[sideLocation].StartDirection.X);
-            rotationYRadians = MSTSMath.M.Radians(attachedCar.FrontCabViewpoints[sideLocation].StartDirection.Y);
-            attachedLocation = attachedCar.FrontCabViewpoints[sideLocation].Location;
+        protected void SetCameraCar( TrainCar car, float rotationXRadians ) {
+            SetCameraCar( car );
+            this.rotationXRadians = rotationXRadians;
         }
 
-        void ShiftView(int index)
+        protected override void SetCameraCar( TrainCar car )
         {
-            sideLocation += index;
-
-            if (sideLocation < 0)
-                sideLocation = attachedCar.FrontCabViewpoints.Count - 1;
-            else if (sideLocation >= attachedCar.FrontCabViewpoints.Count)
-                sideLocation = 0;
-
-            SetCameraCar(attachedCar);
+            base.SetCameraCar(car);
+            attachedLocation = attachedCar.FrontCabViewpoints[sideLocation].Location;
+            InitialiseRotation( attachedCar );
         }
 
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
-            // Switched shift number to select the right cab view - by GeorgeS
+            var speedFactor = 500;  // Gives a fairly smart response.
+            var speed = speedFactor * elapsedTime.RealSeconds; // Independent of framerate
+
             if (UserInput.IsPressed(UserCommands.CameraPanLeft))
-                ShiftView(+1);
+                ShiftView(+1, rotationXRadians );
             if (UserInput.IsPressed(UserCommands.CameraPanRight))
-                ShiftView(-1);
+                ShiftView( -1, rotationXRadians );
+            if( UserInput.IsDown( UserCommands.CameraPanUp ) )
+                PanUp( true, speed );
+            if( UserInput.IsDown( UserCommands.CameraPanDown ) )
+                PanUp( false, speed );
 
             // Don't call this or we'll let the user rotate the camera!
-            //base.HandleUserInput(elapsedTime);
+            // Actually, rotating up and down might be useful and similar to raising the driver's seat.
+            // base.HandleUserInput(elapsedTime);
+        }
+
+        /// <summary>
+        /// Switches to another cab view (e.g. side view).
+        /// Applies the rotation of the previous external view to the new external view. 
+        /// </summary>
+        void ShiftView( int index, float rotationXRadians ) {
+            sideLocation += index;
+
+            if( sideLocation < 0 )
+                sideLocation = attachedCar.FrontCabViewpoints.Count - 1;
+            else if( sideLocation >= attachedCar.FrontCabViewpoints.Count )
+                sideLocation = 0;
+
+            SetCameraCar( attachedCar, rotationXRadians );
+        }
+
+        void PanUp( bool up, float speed ) {
+            int max = 0;
+            int min = Viewer.DisplaySize.Y - Viewer.CabHeightPixels; // -ve value
+            int cushionPixels = 40;
+            int slowFactor = 4;
+
+            // Cushioned approach to limits of travel. Within 40 pixels, travel at 1/4 speed
+            if( up && Math.Abs( Viewer.CabYOffsetPixels - max ) < cushionPixels )
+                speed /= slowFactor;
+            if( !up && Math.Abs( Viewer.CabYOffsetPixels - min ) < cushionPixels )
+                speed /= slowFactor;
+            Viewer.CabYOffsetPixels += (up) ? (int)speed : -(int)speed;
+            // Enforce limits to travel
+            if( Viewer.CabYOffsetPixels > max ) {
+                Viewer.CabYOffsetPixels = max;
+                return;
+            }
+            if( Viewer.CabYOffsetPixels < min ) {
+                Viewer.CabYOffsetPixels = min;
+                return;
+            }
+            // Adjust view through window to match
+            var viewSpeed = speed * 0.00105f; // factor found by trial and error.
+            rotationXRadians -= (up) ? viewSpeed : -viewSpeed;
+            var movement = new Vector3( 0, 0, 0 );
+            movement = Vector3.Transform( movement, Matrix.CreateRotationX( rotationXRadians ) );
+            cameraLocation.Location += movement;
+            cameraLocation.Normalize();
+        }
+
+        /// <summary>
+        /// Sets direction for view out of cab front window. Also called when toggling between full screen and windowed.
+        /// </summary>
+        /// <param name="attachedCar"></param>
+        public void InitialiseRotation(TrainCar attachedCar) {
+            rotationXRadians = MSTSMath.M.Radians( attachedCar.FrontCabViewpoints[sideLocation].StartDirection.X );
+            rotationYRadians = MSTSMath.M.Radians( attachedCar.FrontCabViewpoints[sideLocation].StartDirection.Y );
         }
     }
 
@@ -794,7 +860,7 @@ namespace ORTS
 
         protected override void OnActivate(bool sameCamera)
         {
-            if (attachedCar == null || attachedCar.Train != Viewer.PlayerTrain)
+			if (attachedCar == null || attachedCar.Train != Viewer.SelectedTrain)
             {
                 if (Front)
                     SetCameraCar(GetCameraCars().First());
@@ -860,7 +926,7 @@ namespace ORTS
     public class PassengerCamera : AttachedCamera
     {
         public override Styles Style { get { return Styles.Passenger; } }
-        public override bool IsAvailable { get { return Viewer.PlayerTrain != null && Viewer.PlayerTrain.Cars.Any(c => c.PassengerViewpoints.Count > 0); } }
+        public override bool IsAvailable { get { return Viewer.SelectedTrain != null && Viewer.SelectedTrain.Cars.Any(c => c.PassengerViewpoints.Count > 0); } }
         public override float NearPlane { get { return 0.1f; } }
 
         public PassengerCamera(Viewer3D viewer)
@@ -932,6 +998,7 @@ namespace ORTS
                 // to cab view instead of putting the camera above the tunnel.
                 if (base.IsUnderground)
                     return true;
+				if (TrackCameraLocation == null) return false;
                 var elevationAtCameraTarget = Viewer.Tiles.GetElevation(TrackCameraLocation);
                 return TrackCameraLocation.Location.Y + TerrainAltitudeMargin < elevationAtCameraTarget;
             }
@@ -950,12 +1017,12 @@ namespace ORTS
                 cameraLocation.TileX = 0;
                 cameraLocation.TileZ = 0;
             }
-            if (attachedCar == null || attachedCar.Train != Viewer.PlayerTrain)
+            if (attachedCar == null || attachedCar.Train != Viewer.SelectedTrain)
             {
-                if (Viewer.PlayerTrain.MUDirection != Direction.Reverse)
-                    attachedCar = Viewer.PlayerTrain.Cars.First();
+                if (Viewer.SelectedTrain.MUDirection != Direction.Reverse)
+                    attachedCar = Viewer.SelectedTrain.Cars.First();
                 else
-                    attachedCar = Viewer.PlayerTrain.Cars.Last();
+                    attachedCar = Viewer.SelectedTrain.Cars.Last();
             }
             base.OnActivate(sameCamera);
         }
@@ -980,7 +1047,7 @@ namespace ORTS
                 }
             }
 
-            var trainCars = Viewer.PlayerTrain.Cars;
+            var trainCars = Viewer.SelectedTrain.Cars;
             if (UserInput.IsPressed(UserCommands.CameraCarNext))
                 attachedCar = attachedCar == trainCars.First() ? attachedCar : trainCars[trainCars.IndexOf(attachedCar) - 1];
             else if (UserInput.IsPressed(UserCommands.CameraCarPrevious))
@@ -997,6 +1064,7 @@ namespace ORTS
         {
             var train = attachedCar.Train;
 
+			if (train != Viewer.PlayerTrain && train.LeadLocomotive == null) train.LeadNextLocomotive();
             if (train.LeadLocomotive == null)
             {
                 base.Update(elapsedTime);
@@ -1026,9 +1094,7 @@ namespace ORTS
             // Switch to new position.
             if (!trainClose || (TrackCameraLocation == null))
             {
-                var tdb = new TDBTraveller(trainForwards ? train.FrontTDBTraveller : train.RearTDBTraveller);
-                if (!trainForwards)
-                    tdb.ReverseDirection();
+                var tdb = trainForwards ? new Traveller(train.FrontTDBTraveller) : new Traveller(train.RearTDBTraveller, Traveller.TravellerDirection.Backward);
                 tdb.Move(MaximumDistance * 0.75f);
                 var newLocation = tdb.WorldLocation;
                 TrackCameraLocation = new WorldLocation(newLocation);

@@ -47,9 +47,6 @@ namespace ORTS
         // Longitude of current route in radians. -pi = west of prime, 0 = prime, pi = east of prime.
         public double latitude, longitude;
         // Date of activity
-        public Vector4 sunpeakColor;
-        public Vector4 sunriseColor;
-        public Vector4 sunsetColor;
         public struct Date
         {
             // Day, month, year. Format: DD MM YYYY, no leading zeros. 
@@ -88,7 +85,7 @@ namespace ORTS
         public SkyDrawer(Viewer3D viewer)
         {
             Viewer = viewer;
-            skyMaterial = Materials.Load(Viewer.RenderProcess, "SkyMaterial");
+            skyMaterial = viewer.MaterialManager.Load("Sky");
 
             // Instantiate classes
             SkyMesh = new SkyMesh( Viewer.RenderProcess);
@@ -101,9 +98,6 @@ namespace ORTS
             date.month = 1 + date.ordinalDate / 30;
             date.day = 21;
             date.year = 2010;
-            sunpeakColor = new Vector4(1.0f, 1.0f, 0.95f, 1.0f);
-            sunriseColor = new Vector4(0.93f, 0.89f, 0.75f, 1.0f);
-            sunsetColor = new Vector4(0.87f, 0.28f, 0.10f, 1.0f);
             // Default wind speed and direction
             windSpeed = 5.0f; // m/s (approx 11 mph)
             windDirection = 4.7f; // radians (approx 270 deg, i.e. westerly)
@@ -140,9 +134,23 @@ namespace ORTS
                 if (moonPhase == 6 && date.ordinalDate > 45 && date.ordinalDate < 330)
                     moonPhase = 3; // Moon dog only occurs in winter
                 // Overcast factor: 0.0=almost no clouds; 0.1=wispy clouds; 1.0=total overcast
-                overcast = Viewer.weatherControl.overcast;
-                fogCoeff = Viewer.weatherControl.fogCoeff;
+                overcast = Viewer.World.WeatherControl.overcast;
+                fogCoeff = Viewer.World.WeatherControl.fogCoeff;
             }
+
+			if (MultiPlayer.MPManager.IsMultiPlayer())
+			{
+				//received message about weather change
+				if (MultiPlayer.MPManager.Instance().weatherChanged && MultiPlayer.MPManager.Instance().overCast >= 0)
+				{
+					overcast = MultiPlayer.MPManager.Instance().overCast;
+					try
+					{
+						MultiPlayer.MPManager.Instance().weatherChanged = false;
+					}
+					catch { }
+				}
+			}
 
 ////////////////////// T E M P O R A R Y ///////////////////////////
 
@@ -150,19 +158,31 @@ namespace ORTS
             // The ( + ) key speeds the time forward, the ( - ) key reverses the time.
             // When the Ctrl key is also pressed, the + and - keys control the amount of overcast.
 
-			if (UserInput.IsDown(UserCommands.DebugOvercastIncrease))
+			if (UserInput.IsDown(UserCommands.DebugOvercastIncrease) && !MultiPlayer.MPManager.IsClient())
+			{
 				overcast = MathHelper.Clamp(overcast + 0.005f, 0, 1);
-			if (UserInput.IsDown(UserCommands.DebugOvercastDecrease))
+				if (MultiPlayer.MPManager.IsServer())
+				{
+					MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather(-1, overcast)).ToString());//server notify others the weather has changed
+				}
+			}
+			if (UserInput.IsDown(UserCommands.DebugOvercastDecrease) && !MultiPlayer.MPManager.IsClient())
+			{
 				overcast = MathHelper.Clamp(overcast - 0.005f, 0, 1);
-			if (UserInput.IsDown(UserCommands.DebugClockForwards))
+				if (MultiPlayer.MPManager.IsServer())
+				{
+					MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather(-1, overcast)).ToString());//server notify others the weather has changed
+				}
+			}
+			if (UserInput.IsDown(UserCommands.DebugClockForwards) && !MultiPlayer.MPManager.IsMultiPlayer()) //dosen't make sense in MP mode
 			{
 				Viewer.Simulator.ClockTime += 120; // Two-minute (120 second) increments
-				if (Viewer.PrecipDrawer != null) Viewer.PrecipDrawer.Reset();
+                if (Viewer.World.Precipitation != null) Viewer.World.Precipitation.Reset();
 			}
-			if (UserInput.IsDown(UserCommands.DebugClockBackwards))
+			if (UserInput.IsDown(UserCommands.DebugClockBackwards) && !MultiPlayer.MPManager.IsMultiPlayer())
 			{
 				Viewer.Simulator.ClockTime -= 120;
-				if (Viewer.PrecipDrawer != null) Viewer.PrecipDrawer.Reset();
+                if (Viewer.World.Precipitation != null) Viewer.World.Precipitation.Reset();
 			}
 
 ////////////////////////////////////////////////////////////////////
@@ -209,6 +229,12 @@ namespace ORTS
             lunarDirection.Z = MathHelper.Lerp(lunarPosArray[step1].Z, lunarPosArray[step2].Z, diff);
 
             frame.AddPrimitive(skyMaterial, SkyMesh, RenderPrimitiveGroup.World, ref XNASkyWorldLocation);
+        }
+
+        [CallOnThread("Loader")]
+        internal void Mark()
+        {
+            skyMaterial.Mark();
         }
     }
     #endregion

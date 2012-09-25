@@ -24,6 +24,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MSTS;
+using System.Diagnostics; // needed for Debug
 
 namespace ORTS
 {
@@ -101,12 +102,6 @@ namespace ORTS
 
             if (MaxDieselLevelL != DieselLevelL)
                 DieselLevelL = MaxDieselLevelL;
-
-
-
-
-            // Diesel locos have step controllers ; here to go around parse prblms
-            HasStepCtrl = true;
         }
 
 
@@ -185,11 +180,23 @@ namespace ORTS
         /// </summary>
         public override void Update(float elapsedClockSeconds)
         {
-            //base.Update(elapsedClockSeconds );
-
             TrainBrakeController.Update(elapsedClockSeconds);
-            if (EngineBrakeController != null)
-                EngineBrakeController.Update(elapsedClockSeconds);
+            if( TrainBrakeController.UpdateValue > 0.0 ) {
+                Simulator.Confirmer.Update( CabControl.TrainBrake, CabSetting.Increase, GetTrainBrakeStatus() );
+            }
+            if( TrainBrakeController.UpdateValue < 0.0 ) {
+                Simulator.Confirmer.Update( CabControl.TrainBrake, CabSetting.Decrease, GetTrainBrakeStatus() );
+            }
+
+            if( EngineBrakeController != null ) {
+                EngineBrakeController.Update( elapsedClockSeconds );
+                if( EngineBrakeController.UpdateValue > 0.0 ) {
+                    Simulator.Confirmer.Update( CabControl.EngineBrake, CabSetting.Increase, GetEngineBrakeStatus() );
+                }
+                if( EngineBrakeController.UpdateValue < 0.0 ) {
+                    Simulator.Confirmer.Update( CabControl.EngineBrake, CabSetting.Decrease, GetEngineBrakeStatus() );
+                }
+            }
 
             if ((DynamicBrakeController != null) && (DynamicBrakePercent >= 0))
             {
@@ -210,10 +217,30 @@ namespace ORTS
                 ThrottleController.Update(elapsedClockSeconds);
             }
 
+#if INDIVIDUAL_CONTROL
+			//this train is remote controlled, with mine as a helper, so I need to send the controlling information, but not the force.
+			if (MultiPlayer.MPManager.IsMultiPlayer() && this.Train.TrainType == Train.TRAINTYPE.REMOTE && this == Program.Simulator.PlayerLocomotive)
+			{
+				//cannot control train brake as it is the remote's job to do so
+				if ((EngineBrakeController != null && EngineBrakeController.UpdateValue != 0.0) || (DynamicBrakeController != null && DynamicBrakeController.UpdateValue != 0.0) || ThrottleController.UpdateValue != 0.0)
+				{
+					controlUpdated = true;
+				}
+				ThrottlePercent = ThrottleController.Update(elapsedClockSeconds) * 100.0f;
+				return; //done, will go back and send the message to the remote train controller
+			}
 
-            // TODO  this is a wild simplification for diesel electric
+			if (MultiPlayer.MPManager.IsMultiPlayer() && this.notificationReceived == true)
+			{
+				ThrottlePercent = ThrottleController.CurrentValue * 100.0f;
+				this.notificationReceived = false;
+			}
+#endif
+			
+			// TODO  this is a wild simplification for diesel electric
             float t = ThrottlePercent / 100f;
             float currentSpeedMpS = Math.Abs(SpeedMpS);
+            float currentWheelSpeedMpS = Math.Abs(WheelSpeedMpS);
 
             ExhaustParticles = ((MaxExhaust - IdleExhaust) * t + IdleExhaust);
             if (ExhaustParticles < 5.0f)
@@ -235,16 +262,18 @@ namespace ORTS
                 if (TractiveForceCurves == null)
                 {
                     float maxForceN = MaxForceN * t;
-                    float maxPowerW = MaxPowerW * (EngineRPM - IdleRPM) / (MaxRPM - IdleRPM);
-                    if (maxForceN * WheelSpeedMpS > maxPowerW)
-                        maxForceN = maxPowerW / WheelSpeedMpS;
+                    float maxPowerW = MaxPowerW * t * t;
+                    if (!this.Simulator.UseAdvancedAdhesion)
+                        currentWheelSpeedMpS = currentSpeedMpS;
+                    if (maxForceN * currentWheelSpeedMpS > maxPowerW)
+                        maxForceN = maxPowerW / currentWheelSpeedMpS;
                     if (currentSpeedMpS > MaxSpeedMpS)
                         maxForceN = 0;
                     MotiveForceN = maxForceN;
                 }
                 else
                 {
-                    MotiveForceN = TractiveForceCurves.Get(t, WheelSpeedMpS);
+                    MotiveForceN = TractiveForceCurves.Get(t, currentWheelSpeedMpS);
                     if (MotiveForceN < 0)
                         MotiveForceN = 0;
                 }
@@ -292,7 +321,7 @@ namespace ORTS
 
                 // When not LeadLocomotive; check if lead is in Neutral
                 // if so this loco will have no motive force
-                var LeadLocomotive = Simulator.Trains[0];
+				var LeadLocomotive = Simulator.PlayerLocomotive.Train;
 
                 foreach (TrainCar car in LeadLocomotive.Cars)
                 {
@@ -342,12 +371,41 @@ namespace ORTS
                     MotiveForceN -= (SpeedMpS > 0 ? 1 : -1) * f;
             }
 
-            //Force is filtered due to inductance
-            FilteredMotiveForceN = CurrentFilter.Filter(MotiveForceN, elapsedClockSeconds);
+            switch (this.Train.TrainType)
+            {
+                case Train.TRAINTYPE.AI:
+                    if (!PowerOn)
+                        PowerOn = true;
+                    break;
+                case Train.TRAINTYPE.STATIC:
+                    break;
+                case Train.TRAINTYPE.PLAYER:
+                case Train.TRAINTYPE.REMOTE:
+                    // For notched throttle controls (e.g. Dash 9 found on Marias Pass) UpdateValue is always 0.0
+                    if (ThrottleController.UpdateValue != 0.0)
+                    {
+                        Simulator.Confirmer.UpdateWithPerCent(
+                            CabControl.Throttle,
+                            ThrottleController.UpdateValue > 0 ? CabSetting.Increase : CabSetting.Decrease,
+                            ThrottleController.CurrentValue * 100);
+                    }
 
-            MotiveForceN = FilteredMotiveForceN;
+                    //Force is filtered due to inductance
+                    FilteredMotiveForceN = CurrentFilter.Filter(MotiveForceN, elapsedClockSeconds);
 
-            LimitMotiveForce(elapsedClockSeconds);
+                    MotiveForceN = FilteredMotiveForceN;
+
+                    LimitMotiveForce(elapsedClockSeconds);
+
+                    if (WheelslipCausesThrottleDown && WheelSlip)
+                        ThrottleController.SetValue(0.0f);
+                    break;
+                default:
+                    break;
+
+            }
+
+            
 
             // Refined Variable2 setting to graduate
             if (Variable2 != Variable1)
@@ -385,7 +443,7 @@ namespace ORTS
             if (CompressorOn)
                 MainResPressurePSI += elapsedClockSeconds * MainResChargingRatePSIpS;
 
-            base.UpdateParent(elapsedClockSeconds);
+            base.UpdateParent(elapsedClockSeconds); // Calls the Update() method in the parent class MSTSLocomotive which calls Update() on its parent MSTSWagon which calls ...
         }
 
         /// <summary>
@@ -393,13 +451,13 @@ namespace ORTS
         /// </summary>
         public override void SignalEvent(EventID eventID)
         {
-            switch (eventID)
+            do  // Like 'switch' (i.e. using 'break' is more efficient than a sequence of 'if's) but doesn't need constant EventID.<values>
             {
                 // for example
                 // case EventID.BellOn: Bell = true; break;
-                // case EveantID.BellOff: Bell = false; break;
-                default: break;
-            }
+                // case EventID.BellOff: Bell = false; break;
+  			} while (false);  // Never repeats
+
             base.SignalEvent(eventID);
         }
 
@@ -411,6 +469,15 @@ namespace ORTS
             result.AppendFormat("Diesel level = {0:F0} L ({1:F0} gal)\n", DieselLevelL, DieselLevelL / 3.785f);
             result.AppendFormat("Diesel flow = {0:F1} L/h ({1:F1} gal/h)", DieselFlowLps * 3600.0f, DieselFlowLps * 3600.0f / 3.785f);
             return result.ToString();
+        }
+
+        /// <summary>
+        /// Catch the signal to start or stop the diesel
+        /// </summary>
+        public void StartStopDiesel()
+        {
+            if (!this.IsLeadLocomotive()&&(this.ThrottlePercent == 0))
+                PowerOn = !PowerOn;
         }
 
     } // class DieselLocomotive
@@ -445,7 +512,6 @@ namespace ORTS
         public float CoolingPowerW { get; set; }
 
         Integrator temperatureInt;
-        Integrator revolutionsInt;
 
         public Color SmokeColor;
         public float ExhaustParticles;
@@ -498,7 +564,7 @@ namespace ORTS
                 {
                     foreach (ParticleEmitterDrawer drawer in pair.Value)
                     {
-                        drawer.SetTexture(SharedTextureManager.Get(viewer.RenderProcess.GraphicsDevice, dieselTexture));
+                        drawer.SetTexture(viewer.TextureManager.Get(dieselTexture));
                         drawer.SetEmissionRate(car.ExhaustParticles);
                     }
                 }
@@ -512,7 +578,32 @@ namespace ORTS
         /// </summary>
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
-
+            if( UserInput.IsPressed( UserCommands.ControlDieselPlayer ) ) {
+                if( DieselLocomotive.ThrottlePercent < 1 ) {
+                    DieselLocomotive.PowerOn = !DieselLocomotive.PowerOn;
+                    Viewer.Simulator.Confirmer.Confirm( CabControl.PlayerDiesel, DieselLocomotive.PowerOn ? CabSetting.On : CabSetting.Off );
+                } else {
+                    Viewer.Simulator.Confirmer.Warning( CabControl.PlayerDiesel, CabSetting.Warn );
+                }
+            }
+            if (UserInput.IsPressed(UserCommands.ControlDieselHelper))
+            {
+                bool powerOn = false;
+                int helperLocos = 0;
+                foreach( TrainCar traincar in DieselLocomotive.Train.Cars )
+                {
+                    if( traincar.GetType() == typeof( MSTSDieselLocomotive ) ) {
+                        ((MSTSDieselLocomotive)traincar).StartStopDiesel();
+                        powerOn = ((MSTSDieselLocomotive)traincar).PowerOn;
+                        helperLocos++;
+                    }
+                }
+                // One confirmation however many helper locomotives
+                // <CJ Comment> Couldn't make one confirmation per loco work correctly :-( </CJ Comment>
+                if( helperLocos > 0 ) {
+                    Viewer.Simulator.Confirmer.Confirm( CabControl.HelperDiesel, powerOn ? CabSetting.On : CabSetting.Off );
+                }
+            }
             base.HandleUserInput(elapsedTime);
         }
 

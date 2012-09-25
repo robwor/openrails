@@ -18,18 +18,23 @@ namespace ORTS
 
     public class TrainCar
     {
-		public readonly Simulator Simulator;
-		public readonly string WagFilePath;
+        public readonly Simulator Simulator;
+        public readonly string WagFilePath;
+		public string RealWagFilePath; //we are substituting missing remote cars in MP, so need to remember this
+
+        // Some housekeeping
+        public bool IsPartOfActiveTrain = true;
 
         // some properties of this car
         public float Length = 40;       // derived classes must overwrite these defaults
-		public float Height = 4; //derived classes must overwrite these defaults
+        public float Height = 4;        // derived classes must overwrite these defaults
         public float MassKG = 10000;
         public bool IsDriveable = false;
         //public bool HasCabView = false;
+	    public bool IsFreight = false;  // indication freight wagon or passenger car
 
         // This is here so the viewer can see and exploit the car before this one for articulation.
-        public readonly TrainCar PreviousCar;
+        public TrainCar PreviousCar;
 
         public LightCollection Lights = null;
         public int Headlight = 0;
@@ -37,16 +42,28 @@ namespace ORTS
         // instance variables set by train train physics when it creates the traincar
         public Train Train = null;  // the car is connected to this train
         public bool Flipped = false; // the car is reversed in the consist
-		public int UiD;
-		public string CarID = "AI"; //CarID = "0 - UID" if player train, "ActivityID - UID" if loose consist, "AI" if AI train
+        public int UiD;
+        public string CarID = "AI"; //CarID = "0 - UID" if player train, "ActivityID - UID" if loose consist, "AI" if AI train
 
-        // status of the traincar - set by the train physics after it call calls TrainCar.Update()
+        // status of the traincar - set by the train physics after it calls TrainCar.Update()
         public WorldPosition WorldPosition = new WorldPosition();  // current position of the car
         public float DistanceM = 0.0f;  // running total of distance travelled - always positive, updated by train physics
-        public float SpeedMpS = 0.0f; // meters pers second; updated by train physics, relative to direction of car  50mph = 22MpS
+        public float _SpeedMpS = 0.0f; // meters per second; updated by train physics, relative to direction of car  50mph = 22MpS
         public float CouplerSlackM = 0f;// extra distance between cars (calculated based on relative speeds)
         public float CouplerSlack2M = 0f;// slack calculated using draft gear force
         public bool WheelSlip = false;// true if locomotive wheels slipping
+
+        public float SpeedMpS
+        {
+            get
+            {
+                return _SpeedMpS;
+            }
+            set
+            {
+                _SpeedMpS = value;
+            }
+        }
 
         // represents the MU line travelling through the train.  Uncontrolled locos respond to these commands.
         public float ThrottlePercent { get { return Train.MUThrottlePercent; } set { Train.MUThrottlePercent = value; } }
@@ -71,6 +88,7 @@ namespace ORTS
         public float CouplerForceG; // temporary value used by solver
         public float CouplerForceR; // right hand side value
         public float CouplerForceU; // result
+        public bool  CouplerOverloaded; //true when coupler force is higher then Break limit
 
         // set when model is loaded
         public List<WheelAxle> WheelAxles = new List<WheelAxle>();
@@ -87,12 +105,11 @@ namespace ORTS
         // Load 3D geometry into this 3D viewer and return it as a TrainCarViewer
         public virtual TrainCarViewer GetViewer(Viewer3D viewer) { return null; }
 
-        // called when its time to update the MotiveForce and FrictionForce
+        // called when it's time to update the MotiveForce and FrictionForce
         public virtual void Update(float elapsedClockSeconds)
         {
             // gravity force, M32 is up component of forward vector
             GravityForceN = MassKG * 9.8f * WorldPosition.XNAMatrix.M32;
-            //Console.WriteLine("mf {0} {1} {2}", MotiveForceN, WorldPosition.XNAMatrix.Forward, WorldPosition.XNAMatrix.M32);
         }
 
         // Notifications from others of key outside events, ie coupling etc, pantograph up etc
@@ -109,6 +126,7 @@ namespace ORTS
 			Simulator = simulator;
             WagFilePath = wagFile;
             PreviousCar = previousCar;
+			RealWagFilePath = wagFile;
         }
 
         // Game save
@@ -122,6 +140,7 @@ namespace ORTS
             outf.Write(FrictionForceN);
             outf.Write(SpeedMpS);
             outf.Write(CouplerSlackM);
+            outf.Write( Headlight );
         }
 
         // Game restore
@@ -135,6 +154,7 @@ namespace ORTS
             FrictionForceN = inf.ReadSingle();
             SpeedMpS = inf.ReadSingle();
             CouplerSlackM = inf.ReadSingle();
+            Headlight = inf.ReadInt32();
         }
 
         public virtual float GetCouplerZeroLengthM()
@@ -161,6 +181,19 @@ namespace ORTS
         {
             return 1e10f;
         }
+        public virtual void CopyCoupler(TrainCar other)
+        {
+            CouplerSlackM = other.CouplerSlackM;
+            CouplerSlack2M = other.CouplerSlack2M;
+        }
+        public virtual void CopyControllerSettings(TrainCar other)
+        {
+            Headlight = other.Headlight;
+        }
+        public virtual bool GetCabFlipped()
+        {
+            return false;
+        }
 
         public void AddWheelSet(float offset, int bogie, int parentMatrix)
         {
@@ -181,6 +214,14 @@ namespace ORTS
 
         public void SetupWheels()
         {
+            // No axles but we have bogies.
+            if (WheelAxles.Count == 0 && Parts.Count > 1)
+            {
+                // Fake the axles by pretending each has 1 axle.
+                foreach (var part in Parts.Skip(1))
+                    WheelAxles.Add(new WheelAxle(part.OffsetM, part.iMatrix, 0));
+                Trace.TraceInformation("Wheel axle data faked based on {1} bogies for {0}", WagFilePath, Parts.Count - 1);
+            }
             // Less that two axles is bad.
             if (WheelAxles.Count < 2)
                 return;
@@ -255,7 +296,7 @@ namespace ORTS
             WheelAxlesLoaded = true;
         }
 
-        public void ComputePosition(TDBTraveller traveler, bool backToFront)
+        public void ComputePosition(Traveller traveler, bool backToFront)
         {
             for (int j = 0; j < Parts.Count; j++)
                 Parts[j].InitLineFit();
@@ -267,7 +308,6 @@ namespace ORTS
                 for (int k = 0; k < WheelAxles.Count; k++)
                 {
                     float d = WheelAxles[k].OffsetM - o;
-                    //Console.WriteLine("{0} {1} {2}", d, Length, WheelSets[k].OffsetM);
                     o = WheelAxles[k].OffsetM;
                     traveler.Move(d);
                     float x = traveler.X + 2048 * (traveler.TileX - tileX);
@@ -277,7 +317,6 @@ namespace ORTS
                 }
                 o = Length / 2 - o;
                 traveler.Move(o);
-                //Console.WriteLine("{0} {1}", o, Length);
             }
             else
             {
@@ -285,7 +324,6 @@ namespace ORTS
                 for (int k = WheelAxles.Count - 1; k>=0 ; k--)
                 {
                     float d = o - WheelAxles[k].OffsetM;
-                    //Console.WriteLine("{0} {1} {2}", d, Length, WheelSets[k].OffsetM);
                     o = WheelAxles[k].OffsetM;
                     traveler.Move(d);
                     float x = traveler.X + 2048 * (traveler.TileX - tileX);
@@ -295,7 +333,6 @@ namespace ORTS
                 }
                 o = Length / 2 + o;
                 traveler.Move(o);
-                //Console.WriteLine("{0} {1}", o, Length);
             }
             TrainCarPart p0= Parts[0];
             for (int i=1; i<Parts.Count; i++)
@@ -315,9 +352,6 @@ namespace ORTS
             if (side.X != 0 && side.Y != 0 && side.Z != 0)
                 side.Normalize();
             Vector3 up = Vector3.Cross(fwd, side);
-            //Console.WriteLine("fwd {0}", fwd);
-            //Console.WriteLine("side {0}", side);
-            //Console.WriteLine("up {0}", up);
             Matrix m = Matrix.Identity;
             m.M11 = side.X;
             m.M12 = side.Y;
@@ -334,7 +368,6 @@ namespace ORTS
             WorldPosition.XNAMatrix = m;
             WorldPosition.TileX = tileX;
             WorldPosition.TileZ = tileZ;
-            //Console.WriteLine(" {0}", m.ToString());
             // calculate truck angles
             for (int i = 1; i < Parts.Count; i++)
             {
@@ -360,7 +393,6 @@ namespace ORTS
                     if (fwd.X * fwd1.Z < fwd.Z * fwd1.X)
                         p.Sin = -p.Sin;
                 }
-                //Console.WriteLine("cs {0} {1} {2}", i, p.Cos, p.Sin);
             }
         }
     }
@@ -456,9 +488,6 @@ namespace ORTS
                     B[i] = 0;
                 }
             }
-            //for (int j = 0; j < 4; j++)
-            //    Console.Write(" {0} {1}", A[j], B[j]);
-            //Console.WriteLine(" {0}", OffsetM);
         }
     }
 
@@ -486,6 +515,12 @@ namespace ORTS
         /// Executes in the UpdaterThread
         /// </summary>
         public abstract void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime);
+
+        [CallOnThread("Loader")]
+        internal virtual void LoadForPlayer() { }
+
+        [CallOnThread("Loader")]
+        internal abstract void Mark();
     }
 
 }

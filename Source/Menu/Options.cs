@@ -6,26 +6,54 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data;
 using System.Drawing;
+using System.Data;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
-using Microsoft.Xna.Framework;
-using Microsoft.Win32;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using XNA = Microsoft.Xna.Framework.Input;
 
 namespace ORTS
 {
     public partial class OptionsForm : Form
     {
-        public OptionsForm()
+        readonly UserSettings Settings;
+        UserCommandInput[] DefaultCommands = new UserCommandInput[Enum.GetNames(typeof(UserCommands)).Length];
+        bool SetAllDefaults = false;
+
+        public OptionsForm(UserSettings settings)
         {
             InitializeComponent();
 
-			// Windows 2000 and XP should use 8.25pt Tahoma, while Windows
-			// Vista and later should use 9pt "Segoe UI". We'll use the
-			// Message Box font to allow for user-customizations, though.
-			Font = SystemFonts.MessageBoxFont;
+            Settings = settings;
+
+#if !DEBUG
+            buttonDebug.Visible = false;
+#endif
+
+            InputSettings.SetDefaults();
+            for (var i = 0; i < Enum.GetNames(typeof(UserCommands)).Length; ++i)
+                DefaultCommands[i] = InputSettings.Commands[i];
+            InputSettings.SetDefaults();
+            try
+            {
+                InputSettings.LoadUserSettings(new string[0]);
+                PopulateKeyAssignmentForm();
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show(error.Message + " while parsing key assignments from registry. Reset to defaults.", Application.ProductName);
+            }
+
+            // Windows 2000 and XP should use 8.25pt Tahoma, while Windows
+            // Vista and later should use 9pt "Segoe UI". We'll use the
+            // Message Box font to allow for user-customizations, though.
+            Font = SystemFonts.MessageBoxFont;
 
             string[] strContents = 
             {
@@ -38,65 +66,283 @@ namespace ORTS
                 "1280x1024",
                 "1360x768",
                 "1440x900",
-                "1600x1200",
+                "1600x900",
                 "1680x1050",
+                "1600x1200",
                 "1768x992",
                 "1920x1080",
                 "1920x1200"
             };
 
-            this.numericWorldObjectDensity.Value = 10;
-            this.numericSoundDetailLevel.Value = 5;
-            this.comboBoxWindowSize.Items.AddRange(strContents);
-            this.comboBoxWindowSize.Text = "1024x768";
-            this.numericBrakePipeChargingRatePSIpS.Value = 21;
+            numericWorldObjectDensity.Value = 10;
+            numericSoundDetailLevel.Value = 5;
+            comboBoxWindowSize.Items.AddRange(strContents);
+            comboBoxWindowSize.Text = "1024x768";
+            numericBrakePipeChargingRatePSIpS.Value = 21;
 
-            
+            numericWorldObjectDensity.Value = Settings.WorldObjectDensity;
+            numericSoundDetailLevel.Value = Settings.SoundDetailLevel;
+            comboBoxWindowSize.Text = Settings.WindowSize;
+            checkBoxAlerter.Checked = Settings.Alerter;
+            checkBoxTrainLights.Checked = Settings.TrainLights;
+            checkBoxPrecipitation.Checked = Settings.Precipitation;
+            checkBoxWire.Checked = Settings.Wire;
+            numericBrakePipeChargingRatePSIpS.Value = Settings.BrakePipeChargingRate;
+            checkBoxGraduatedRelease.Checked = Settings.GraduatedRelease;
+            checkBoxShadows.Checked = Settings.DynamicShadows;
+            checkBoxWindowGlass.Checked = Settings.WindowGlass;
+            checkBoxBINSound.Checked = Settings.MSTSBINSound;
+            checkBoxSuppressConfirmations.Checked = Settings.SuppressConfirmations;
+            checkDispatcher.Checked = Settings.ViewDispatcher;
+            numericCab2DStretch.Value = Settings.Cab2DStretch;
+            checkBoxAdvancedAdhesion.Checked = Settings.UseAdvancedAdhesion;
+            checkBoxBreakCouplers.Checked = Settings.BreakCouplers;
 
-            // Restore retained settings
-            RegistryKey RK = Registry.CurrentUser.OpenSubKey(Program.RegistryKey);
-            if (RK != null)
-            {
-                this.numericWorldObjectDensity.Value = (int)RK.GetValue("WorldObjectDensity", (int)numericWorldObjectDensity.Value);
-                this.numericSoundDetailLevel.Value = (int)RK.GetValue("SoundDetailLevel", (int)numericSoundDetailLevel.Value);
-                this.comboBoxWindowSize.Text = (string)RK.GetValue("WindowSize", (string)comboBoxWindowSize.Text);
-                this.checkBoxAlerter.Checked = (1 == (int)RK.GetValue("Alerter", 0));
-                this.checkBoxTrainLights.Checked = (1 == (int)RK.GetValue("TrainLights", 0));
-                this.checkBoxPrecipitation.Checked = (1 == (int)RK.GetValue("Precipitation", 0));
-                this.checkBoxWire.Checked = (1 == (int)RK.GetValue("Wire", 0));
-                this.numericBrakePipeChargingRatePSIpS.Value = (int)RK.GetValue("BrakePipeChargingRate", (int)numericBrakePipeChargingRatePSIpS.Value);
-                this.checkBoxGraduatedRelease.Checked = (1 == (int)RK.GetValue("GraduatedRelease", 0));
-				this.checkBoxShadows.Checked = (1 == (int)RK.GetValue("DynamicShadows", 0));
-				this.checkBoxWindowGlass.Checked = (1 == (int)RK.GetValue("WindowGlass", 0));
-                this.checkBoxBINSound.Checked = (1 == (int)RK.GetValue("MSTSBINSound", 0));
-			}
         }
 
-        private void buttonOK_Click(object sender, EventArgs e)
+        string ParseCategoryFrom(string name)
         {
-            // Retain settings for convenience
-            RegistryKey RK = Registry.CurrentUser.CreateSubKey(Program.RegistryKey);
-            if (RK != null)
+            var len = name.IndexOf(' ');
+            if (len == -1)
+                return "";
+            else
+                return name.Substring(0, len);
+        }
+
+
+        string ParseDescriptorFrom(string name)
+        {
+            var len = name.IndexOf(' ');
+            if (len == -1)
+                return name;
+            else
+                return name.Substring(len + 1);
+        }
+
+        void PopulateKeyAssignmentForm()
+        {
+            // TODO read from registry
+
+            panelKeys.Controls.Clear();
+            panelKeys.Controls.Clear();
+
+            var i = 0;
+            var lastCategory = "";
+            foreach (UserCommands eCommand in Enum.GetValues(typeof(UserCommands)))
             {
-                RK.SetValue("WorldObjectDensity", (int)this.numericWorldObjectDensity.Value);
-                RK.SetValue("SoundDetailLevel", (int)this.numericSoundDetailLevel.Value);
-                RK.SetValue("WindowSize", (string)this.comboBoxWindowSize.Text);
-                RK.SetValue("Alerter", this.checkBoxAlerter.Checked ? 1 : 0);
-                RK.SetValue("TrainLights", this.checkBoxTrainLights.Checked ? 1 : 0);
-                RK.SetValue("Precipitation", this.checkBoxPrecipitation.Checked ? 1 : 0);
-                RK.SetValue("Wire", this.checkBoxWire.Checked ? 1 : 0);
-                RK.SetValue("BrakePipeChargingRate", (int)this.numericBrakePipeChargingRatePSIpS.Value);
-                RK.SetValue("GraduatedRelease", this.checkBoxGraduatedRelease.Checked ? 1 : 0);
-                RK.SetValue("DynamicShadows", this.checkBoxShadows.Checked ? 1 : 0);
-                RK.SetValue("WindowGlass", this.checkBoxWindowGlass.Checked ? 1 : 0);
-                RK.SetValue("MSTSBINSound", this.checkBoxBINSound.Checked ? 1 : 0);
+                var name = InputSettings.FormatCommandName(eCommand);
+                var category = ParseCategoryFrom(name);
+                var descriptor = ParseDescriptorFrom(name);
+
+#if (!DEBUG )
+                if ( category.ToUpper() == "DEBUG" )
+                    continue;
+#endif
+                var keyPressControl = new KeyPressControl();
+                var label = new Label();
+                panelKeys.Controls.Add(keyPressControl);
+                panelKeys.Controls.Add(label);
+
+                if (category != lastCategory)
+                {
+                    // 
+                    // category label
+                    // 
+                    var catlabel = new Label();
+                    panelKeys.Controls.Add(catlabel);
+                    catlabel.Location = new Point(32, 11 + i * 22);
+                    catlabel.Name = "Label";
+                    catlabel.Size = new Size(180, 17);
+                    catlabel.TabIndex = 0;
+                    catlabel.Text = category;
+                    catlabel.TextAlign = ContentAlignment.TopLeft;
+                    catlabel.Font = new Font(catlabel.Font, FontStyle.Bold);
+                    lastCategory = category;
+                    ++i;
+                }
+
+                // 
+                // label
+                // 
+                label.Location = new Point(12, 11 + i * 22);
+                label.Name = "Label";
+                label.Size = new Size(180, 17);
+                label.TabIndex = 0;
+                label.Text = descriptor;
+                label.TextAlign = ContentAlignment.TopRight;
+                // 
+                // keyPressControl
+                // 
+                keyPressControl.Location = new Point(200, 8 + i * 22);
+                keyPressControl.Name = "KeyPressControl";
+                keyPressControl.Size = new Size(200, 20);
+                keyPressControl.TabIndex = 1;
+                keyPressControl.ReadOnly = true;
+                keyPressControl.InitFrom(eCommand, DefaultCommands[(int)eCommand]);
+                toolTip1.SetToolTip(keyPressControl, "Click here to change this key.");
+
+                ++i;
             }
-			Close();
         }
 
-        private void buttonCancel_Click(object sender, EventArgs e)
+
+        // Keys that use optional modifiers must have their modifiers listed as 'ignore' keys in their CommandInput class.
+        // This function sets the 'ignore' keys according to the modifiers used by the command.
+        // For example, if the user changed the CameraMoveFast key from ALT to CTRL, then all camera movement commands must ignore CTRL
+        // If the modifier key conflicts with the assigned keys, proceed anyway, it will be caught by InputSettings.CheckForErrors()
+        void FixModifiableKey(UserCommands eCommand, UserCommands[] eModifiers)
         {
-            Close();
+            var command = (UserCommandModifiableKeyInput)InputSettings.Commands[(int)eCommand];
+            command.IgnoreControl = false;
+            command.IgnoreAlt = false;
+            command.IgnoreShift = false;
+
+            foreach (UserCommands eModifier in eModifiers)
+            {
+                var modifier = (UserCommandModifierInput)InputSettings.Commands[(int)eModifier];
+                if (modifier.Control) command.IgnoreControl = true;
+                if (modifier.Alt) command.IgnoreAlt = true;
+                if (modifier.Shift) command.IgnoreShift = true;
+            }
+        }
+
+        void FixModifiableKeys()
+        {
+            // for now this is a manual fixup process
+
+            // these ones use the DisplayNextWindowTab modifier
+            FixModifiableKey(UserCommands.DisplayHelpWindow, new UserCommands[] { UserCommands.DisplayNextWindowTab });
+            FixModifiableKey(UserCommands.DisplayHUD, new UserCommands[] { UserCommands.DisplayNextWindowTab });
+
+            // these ones use the CameraMoveFast and CameraMoveSlow modifier
+            foreach (UserCommands eCommand in new UserCommands[] { UserCommands.CameraPanLeft, UserCommands.CameraPanRight, 
+                        UserCommands.CameraPanUp, UserCommands.CameraPanDown, UserCommands.CameraPanIn, UserCommands.CameraPanOut, 
+                        UserCommands.CameraRotateLeft, UserCommands.CameraRotateRight, UserCommands.CameraRotateUp, UserCommands.CameraRotateDown })
+
+                FixModifiableKey(eCommand, new UserCommands[] { UserCommands.CameraMoveFast, UserCommands.CameraMoveSlow });
+
+        }
+
+        bool MatchesDefaults(UserCommands eCommand)
+        {
+            int scan1, scan2;
+            XNA.Keys vkey1, vkey2;
+            bool ctrl1, ctrl2;
+            bool alt1, alt2;
+            bool shift1, shift2;
+            bool ictrl1, ictrl2;
+            bool ialt1, ialt2;
+            bool ishift1, ishift2;
+
+            var currentKeyCombo = InputSettings.Commands[(int)eCommand];
+            var defaultKeyCombo = DefaultCommands[(int)eCommand];
+            defaultKeyCombo.ToValue(out scan1, out vkey1, out ctrl1, out alt1, out shift1, out ictrl1, out ialt1, out ishift1);
+            currentKeyCombo.ToValue(out scan2, out vkey2, out ctrl2, out alt2, out shift2, out ictrl2, out ialt2, out ishift2);
+
+            return scan1 == scan2 && vkey1 == vkey2 && ctrl1 == ctrl2 && alt1 == alt2 && shift1 == shift2
+                                                    && ictrl1 == ictrl2 && ialt1 == ialt2 && ishift1 == ishift2;
+        }
+
+        void WriteInputSettingsToRegistry()
+        {
+            // When we see this condition, do a general cleanup.
+            if (SetAllDefaults)
+            {
+                try
+                {
+                    Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(InputSettings.RegistryKey);
+                }
+                catch (ArgumentException) { }
+            }
+
+            using (var RK = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(InputSettings.RegistryKey))
+            {
+                // for every user command
+                foreach (UserCommands eCommand in Enum.GetValues(typeof(UserCommands)))
+                {
+                    var keyCombo = InputSettings.Commands[(int)eCommand];
+
+                    if (MatchesDefaults(eCommand))
+                    {
+                        RK.DeleteValue(eCommand.ToString(), false);
+                    }
+                    else
+                    {
+                        var setting = keyCombo.ToRegString();
+                        RK.SetValue(eCommand.ToString(), setting);
+                    }
+                }
+            }
+        }
+
+
+        void buttonOK_Click(object sender, EventArgs e)
+        {
+            FixModifiableKeys();
+
+            var result = InputSettings.CheckForErrors(false);
+            if (result != "" && DialogResult.Yes != MessageBox.Show(result + "\nContinue with conflicting key assignments?", Application.ProductName, MessageBoxButtons.YesNo))
+                return;
+
+            WriteInputSettingsToRegistry();
+
+            Settings.WorldObjectDensity = (int)numericWorldObjectDensity.Value;
+            Settings.SoundDetailLevel = (int)numericSoundDetailLevel.Value;
+            Settings.WindowSize = comboBoxWindowSize.Text;
+            Settings.Alerter = checkBoxAlerter.Checked;
+            Settings.TrainLights = checkBoxTrainLights.Checked;
+            Settings.Precipitation = checkBoxPrecipitation.Checked;
+            Settings.Wire = checkBoxWire.Checked;
+            Settings.BrakePipeChargingRate = (int)numericBrakePipeChargingRatePSIpS.Value;
+            Settings.GraduatedRelease = checkBoxGraduatedRelease.Checked;
+            Settings.DynamicShadows = checkBoxShadows.Checked;
+            Settings.WindowGlass = checkBoxWindowGlass.Checked;
+            Settings.MSTSBINSound = checkBoxBINSound.Checked;
+            Settings.SuppressConfirmations = checkBoxSuppressConfirmations.Checked;
+            Settings.ViewDispatcher = checkDispatcher.Checked;
+            Settings.Cab2DStretch = (int)numericCab2DStretch.Value;
+            Settings.UseAdvancedAdhesion = checkBoxAdvancedAdhesion.Checked;
+            Settings.BreakCouplers = checkBoxBreakCouplers.Checked;
+            Settings.Save();
+
+            DialogResult = DialogResult.OK;
+        }
+
+        void buttonDefaultKeys_Click(object sender, EventArgs e)
+        {
+            if (DialogResult.Yes == MessageBox.Show("Remove all custom key assignments?", Application.ProductName, MessageBoxButtons.YesNo))
+            {
+                InputSettings.SetDefaults();
+                PopulateKeyAssignmentForm();
+                SetAllDefaults = true;
+            }
+        }
+
+        void buttonExport_Click(object sender, EventArgs e)
+        {
+            var OutputPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+            InputSettings.DumpToText(OutputPath + @"\Keyboard.txt");
+            //InputSettings.DumpToGraphic( OutputPath + @"\Keyboard.png");
+            MessageBox.Show("Placed Keyboard.txt on your desktop", Application.ProductName);
+        }
+
+        void buttonCheckKeys_Click(object sender, EventArgs e)
+        {
+            var errors = InputSettings.CheckForErrors(false);
+            if (errors != "")
+                MessageBox.Show(errors, Application.ProductName);
+            else
+                MessageBox.Show("No errors found.", Application.ProductName);
+        }
+
+        void buttonDebug_Click(object sender, EventArgs e)
+        {
+            var errors = InputSettings.CheckForErrors(true);
+            if (errors != "")
+                MessageBox.Show(errors, Application.ProductName);
+            else
+                MessageBox.Show("No errors found.", Application.ProductName);
         }
     }
 }

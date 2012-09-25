@@ -23,7 +23,6 @@ namespace ORTS
 	public class AITrain : Train
 	{
 		public int UiD;
-		public AIPath Path = null;
 		public AIPathNode NextStopNode = null;  // next path node train should stop at
 		public float AuthUpdateDistanceM = 0;  // distance to next stop node to ask for longer authorization
 		public float NextStopDistanceM = 0;  // distance to next stop node
@@ -35,7 +34,6 @@ namespace ORTS
 		public double WaitUntil = 0;    // clock time to wait for before next update
 		public int StartTime;        // starting time, may be modified by dispatcher
 		public int Priority = 0;        // train priority, smaller value is higher priority
-		public TrackAuthority TrackAuthority = null;  // track authority issued by Dispatcher
 		public AI AI;
 		public List<AISwitchInfo> SwitchList = new List<AISwitchInfo>();
 
@@ -48,6 +46,7 @@ namespace ORTS
 			NextStopNode = Path.FirstNode;
 			StartTime = start;
 			Priority = start % 10;
+			TrainType = TRAINTYPE.AI;
 		}
 
 		// restore game state
@@ -99,13 +98,13 @@ namespace ORTS
 				return;
 			if ((SpeedMpS <= 0 && NextStopDistanceM < .3) || NextStopDistanceM < 0)
 			{
-				//Console.WriteLine("stop {0} {1} {2}", NextStopDistanceM, SpeedMpS, NextStopNode.Type);
-				if (NextStopDistanceM < 0)
+                SpeedMpS = 0;
+                foreach (TrainCar tc in Cars) tc.SpeedMpS = 0;
+                if (NextStopDistanceM < 0)
 				{
 					CalculatePositionOfCars(NextStopDistanceM);
 					NextStopDistanceM = 0;
 				}
-				SpeedMpS = 0;
 				Update(0);   // stop the wheels from moving etc
 				AITrainThrottlePercent = 0;
 				AITrainBrakePercent = 100;
@@ -116,10 +115,12 @@ namespace ORTS
 					NextStopNode = null;
 					return;
 				}
-				if ((TrackAuthority == null || NextStopNode == TrackAuthority.EndNode) && !AI.Dispatcher.RequestAuth(this, false))
-				{
-					WaitUntil = clockTime + 10;
-					return;
+				//if ((TrackAuthority == null || NextStopNode == TrackAuthority.EndNode) && !AI.Dispatcher.RequestAuth(this, false))
+				if (TrackAuthority == null || NextStopNode == TrackAuthority.EndNode)
+                {
+                    AI.Dispatcher.RequestAuth(this, false);
+                    //WaitUntil = clockTime + 10;
+					//return;
 				}
 				if (NextStopNode.IsFacingPoint)
 					Path.AlignSwitch(NextStopNode.JunctionIndex, GetTVNIndex(NextStopNode));
@@ -128,24 +129,27 @@ namespace ORTS
 					AIPathNode prevNode = FindPrevNode(NextStopNode);
 					Path.AlignSwitch(NextStopNode.JunctionIndex, GetTVNIndex(prevNode));
 				}
-				//Console.WriteLine("auth {0} {1}", AuthEndNode.ID, (AuthSidingNode == null ? "null" : AuthSidingNode.ID.ToString()));
 				NextStopNode = FindStopNode(NextStopNode, 50);
 				if (NextStopNode == null)
 					return;
-				//Console.WriteLine("nextstop {0} {1} {2} {3} {4}", UiD, NextStopNode.ID, NextStopNode.Type, NextStopNode.IsFacingPoint, SwitchList.Count);
 				if (!CalcNextStopDistance(clockTime))
 					return;
 			}
-			if (NextStopDistanceM < AuthUpdateDistanceM)
+            else if (SpeedMpS <= 0 && NextStopDistanceM <= 10 && NextStopNode.NextMainNode == null && NextStopNode.NextSidingNode == null)
+            {
+                NextStopNode = null;
+                return;
+            }
+            /*
+			if ( (NextStopDistanceM < AuthUpdateDistanceM || AuthUpdateDistanceM == -1) && 
+                (NextStopNode.NextMainNode != null || NextStopNode.NextSidingNode != null) )
 			{
-				//Console.WriteLine("auth update {0} {1}", NextStopDistanceM, AuthUpdateDistanceM);
 				AuthUpdateDistanceM = -1;
 				if (AI.Dispatcher.RequestAuth(this, true))
 				{
 					if (Path.SwitchIsAligned(NextStopNode.JunctionIndex, NextStopNode.IsFacingPoint ? GetTVNIndex(NextStopNode) : FrontTDBTraveller.TrackNodeIndex))
 					{
 						AIPathNode node = FindStopNode(NextStopNode, 50);
-						//Console.WriteLine("authupdate {0} {1} {2} {3}", NextStopNode.ID, node.ID, NextStopNode.Type, node.Type);
 						if (node != null && NextStopNode != node)
 						{
 							NextStopNode = node;
@@ -153,8 +157,19 @@ namespace ORTS
 						}
 					}
 				}
+                else
+                {
+                    AIPathNode node = FindStopNode(NextStopNode, 50);
+                    //Console.WriteLine("authupdate {0} {1} {2} {3}", NextStopNode.ID, node.ID, NextStopNode.Type, node.Type);
+                    if (node != null && NextStopNode != node)
+                    {
+                        NextStopNode = node;
+                    }
+                    CalcNextStopDistance(clockTime);
+                }
 				//Console.WriteLine("new next stop distance {0} {1} {2}", UiD, NextStopDistanceM, AuthUpdateDistanceM);
 			}
+            */
 			WaitUntil = 0;
 			float prevSpeedMpS = SpeedMpS;
 			base.Update(elapsedClockSeconds);
@@ -168,6 +183,21 @@ namespace ORTS
 				AdjustControls(targetMpSS, dir * (SpeedMpS - prevSpeedMpS) / elapsedClockSeconds, dir * elapsedClockSeconds);
 		}
 
+        public void TryAdvanceStopNode(double clockTime)
+        {
+            if (NextStopNode.Type == AIPathNodeType.Other || NextStopNode.Type == AIPathNodeType.SidingEnd ||
+                NextStopNode.Type == AIPathNodeType.SidingStart)
+            {
+                AIPathNode node = FindStopNode(NextStopNode, 50);
+                //Console.WriteLine("authupdate {0} {1} {2} {3}", NextStopNode.ID, node.ID, NextStopNode.Type, node.Type);
+                if (node != null && NextStopNode != node)
+                {
+                    NextStopNode = node;
+                }
+                CalcNextStopDistance(clockTime);
+            }
+        }
+
 		/// <summary>
 		/// Computes the NextStopDistanceM value, i.e. the distance from one end of the train to the NextStopNode.
 		/// Returns false and performs the NextStopNode action if its past the train end.
@@ -176,23 +206,25 @@ namespace ORTS
 		private bool CalcNextStopDistance(double clockTime)
 		{
 			CoupleOnNextStop = false;
+            // By GeorgeS
+            if (NextStopNode.Type == AIPathNodeType.Other && (NextStopNode.NextMainNode != null || NextStopNode.NextSidingNode != null))
+            {
+                NextStopDistanceM = 30000;
+                AuthUpdateDistanceM = 29000;
+                return false;
+            }
 			WorldLocation wl = NextStopNode.Location;
-			TDBTraveller traveller = FrontTDBTraveller;
+			Traveller traveller = FrontTDBTraveller;
 			if (!AITrainDirectionForward)
-			{
-				traveller = new TDBTraveller(RearTDBTraveller);
-				traveller.ReverseDirection();
-			}
+				traveller = new Traveller(RearTDBTraveller, Traveller.TravellerDirection.Backward);
+
 			NextStopDistanceM = traveller.DistanceTo(wl.TileX, wl.TileZ, wl.Location.X, wl.Location.Y, wl.Location.Z);
-			//Console.WriteLine("nextstopdist {0} {1} {2} {3}", NextStopDistanceM, FrontTDBTraveller.Direction, RearTDBTraveller.Direction,
-			//    Math.Sqrt(WorldLocation.DistanceSquared(wl,FrontTDBTraveller.WorldLocation)));
 			if (NextStopDistanceM < 0 && HandleNodeAction(NextStopNode, clockTime))
 				return false;
 			foreach (AISwitchInfo sw in SwitchList)
 			{
 				wl = sw.PathNode.Location;
 				sw.DistanceM = NextStopDistanceM - traveller.DistanceTo(wl.TileX, wl.TileZ, wl.Location.X, wl.Location.Y, wl.Location.Z);
-				//Console.WriteLine("switch distance {0} {1}", sw.PathNode.JunctionIndex, sw.DistanceM);
 			}
 			if (NextStopNode.Type == AIPathNodeType.Stop || NextStopNode.Type == AIPathNodeType.Reverse || NextStopNode.Type == AIPathNodeType.Uncouple)
 			{
@@ -230,14 +262,11 @@ namespace ORTS
 					if (node != null && node.JunctionIndex >= 0)
 					{
 						wl = node.Location;
-						TDBTraveller rtraveller = RearTDBTraveller;
+						Traveller rtraveller = RearTDBTraveller;
 						if (!AITrainDirectionForward)
-						{
-							rtraveller = new TDBTraveller(FrontTDBTraveller);
-							rtraveller.ReverseDirection();
-						}
-						float d = rtraveller.DistanceTo(wl.TileX, wl.TileZ, wl.Location.X, wl.Location.Y, wl.Location.Z);
-						//Console.WriteLine("reverse distance {0} {1}", d, NextStopDistanceM);
+							rtraveller = new Traveller(FrontTDBTraveller, Traveller.TravellerDirection.Backward);
+
+                        float d = rtraveller.DistanceTo(wl.TileX, wl.TileZ, wl.Location.X, wl.Location.Y, wl.Location.Z);
 						if (d > 0 && d + 1 < NextStopDistanceM && d + 100 > NextStopDistanceM)
 							NextStopDistanceM = d + 1;
 					}
@@ -261,17 +290,19 @@ namespace ORTS
 				}
 				NextStopDistanceM -= clearance;
 			}
-			//Console.WriteLine("nextstopdist {0}", NextStopDistanceM);
 			if (NextStopDistanceM < 0)
 				NextStopDistanceM = 0;
 			AuthUpdateDistanceM = -1;
 			if (AITrainDirectionForward && (NextStopNode == TrackAuthority.EndNode || NextStopNode == TrackAuthority.SidingNode))
 			{
-				AuthUpdateDistanceM = .5f * MaxSpeedMpS * MaxSpeedMpS / MaxDecelMpSS;
-				if (AuthUpdateDistanceM > .5f * NextStopDistanceM)
-					AuthUpdateDistanceM = .5f * NextStopDistanceM;
+                //AuthUpdateDistanceM = .5f * MaxSpeedMpS * MaxSpeedMpS / MaxDecelMpSS;
+                //if (AuthUpdateDistanceM > .5f * NextStopDistanceM)
+                //    AuthUpdateDistanceM = .5f * NextStopDistanceM;
+                // By GeorgeS
+                AuthUpdateDistanceM = .5f * MaxSpeedMpS * MaxSpeedMpS / MaxDecelMpSS;
+				if (AuthUpdateDistanceM > NextStopDistanceM + 1500)
+					AuthUpdateDistanceM = NextStopDistanceM + 1500;
 			}
-			//Console.WriteLine("new next stop distance {0} {1}", NextStopDistanceM, AuthUpdateDistanceM);
 			return true;
 		}
 
@@ -300,12 +331,14 @@ namespace ORTS
 				}
 				if (!Path.SwitchIsAligned(node.JunctionIndex, node.IsFacingPoint ? GetTVNIndex(node) : GetTVNIndex(prevNode)))
 				{
-					TDBTraveller traveller = AITrainDirectionForward ? FrontTDBTraveller : RearTDBTraveller;
-					float d = WorldLocation.DistanceSquared(traveller.WorldLocation, node.Location);
-					//Console.WriteLine("throw distance {0}", d);
-					if (d > throwDistance * throwDistance || AI.Simulator.SwitchIsOccupied(node.JunctionIndex))
+					Traveller traveller = AITrainDirectionForward ? FrontTDBTraveller : RearTDBTraveller;
+					float d = WorldLocation.GetDistanceSquared(traveller.WorldLocation, node.Location);
+					//if (d > throwDistance * throwDistance || AI.Simulator.SwitchIsOccupied(node.JunctionIndex))
+                    // By GeorgeS
+                    if (AI.Simulator.SwitchIsOccupied(node.JunctionIndex))
 						return node;
-					Path.AlignSwitch(node.JunctionIndex, node.IsFacingPoint ? GetTVNIndex(node) : GetTVNIndex(prevNode));
+                    if (node != TrackAuthority.EndNode || (node.NextMainNode == null && node.NextSidingNode == null))
+					    Path.AlignSwitch(node.JunctionIndex, node.IsFacingPoint ? GetTVNIndex(node) : GetTVNIndex(prevNode));
 				}
 				if (node.JunctionIndex >= 0 && node != TrackAuthority.EndNode)
 					SwitchList.Add(new AISwitchInfo(Path, node));
@@ -339,7 +372,6 @@ namespace ORTS
 		{
 			if (CoupleOnNextStop)
 			{
-				//Console.WriteLine("couple");
 				CoupleOnNextStop = false;
 				if (AITrainDirectionForward)
 					SpeedMpS = 20; // speed controls distance threshold which must be larger than our stop threshold
@@ -349,7 +381,6 @@ namespace ORTS
 				SpeedMpS = 0;
 				CalculatePositionOfCars(0);
 			}
-			//Console.WriteLine("stop node type {0} {1} {2}", node.Type, node.NCars, node.WaitTimeS);
 			switch (node.Type)
 			{
 				case AIPathNodeType.Stop:
@@ -392,11 +423,11 @@ namespace ORTS
 				n1 = 0;
 				n2 = Cars.Count + nCars;
 			}
-			//Console.WriteLine("uncouple {0} {1} {2} {3}", nCars, n1, n2, Cars.Count);
 			if (n1 > n2 || n2 > Cars.Count)
 				return;
 			// move rest of cars to the new train
 			Train train2 = new Train(Simulator);
+			train2.TrainType = Train.TRAINTYPE.AI;
 			for (int k = n1; k < n2; ++k)
 			{
 				TrainCar newcar = Cars[k];
@@ -411,18 +442,25 @@ namespace ORTS
 			// and fix up the travellers
 			if (nCars < 0)
 			{
-				train2.FrontTDBTraveller = new TDBTraveller(FrontTDBTraveller);
+				train2.FrontTDBTraveller = new Traveller(FrontTDBTraveller);
 				train2.RepositionRearTraveller();
 				CalculatePositionOfCars(0);
 			}
 			else
 			{
-				train2.RearTDBTraveller = new TDBTraveller(RearTDBTraveller);
+				train2.RearTDBTraveller = new Traveller(RearTDBTraveller);
 				train2.CalculatePositionOfCars(0);  // fix the front traveller
 				RepositionRearTraveller();    // fix the rear traveller
 			}
-            train2.InitializeSignals();
+
+			// check if trains are freight or passenger - for both trains
+
+			CheckFreight();
+			train2.CheckFreight();
+
+			train2.InitializeSignals(false);  // Initialize signals and speedposts without active speed information [R.Roeterdink]
 			AI.Simulator.Trains.Add(train2);
+			
 			if (nCars != 0)
 				Update(0);   // stop the wheels from moving etc
 			train2.Update(0);  // stop the wheels from moving etc
@@ -452,7 +490,7 @@ namespace ORTS
 		/// </summary>
 		private float CalcAccelMpSS()
 		{
-			float targetMpS = MaxSpeedMpS;
+            float targetMpS = MaxSpeedMpS < base.AllowedMaxSpeedMpS ? MaxSpeedMpS : base.AllowedMaxSpeedMpS;
 			if (!AITrainDirectionForward || CoupleOnNextStop)
 				targetMpS *= .75f;
 			float stopDistanceM = NextStopDistanceM;
@@ -474,16 +512,15 @@ namespace ORTS
 						stopDistanceM = 0;
 					if (d < 40.5f && !AI.Simulator.SwitchIsOccupied(sw.JunctionNode))
 						sw.JunctionNode.SelectedRoute = sw.SelectedRoute;
-					//Console.WriteLine("accelthrow {0} {1} {2} {3} {4} {5}", UiD, sw.JunctionNode.SelectedRoute, sw.SelectedRoute, d, SpeedMpS, !AI.Simulator.SwitchIsOccupied(sw.JunctionNode));
 					break;
 				}
 			}
 			if (AI.Dispatcher.PlayerOverlaps(this, true))
 			{
-				TDBTraveller traveller = FrontTDBTraveller;
+				Traveller traveller = FrontTDBTraveller;
 				if (!AITrainDirectionForward)
 					traveller = RearTDBTraveller;
-				float d = (float)Math.Sqrt(WorldLocation.DistanceSquared(traveller.WorldLocation, AI.Simulator.PlayerLocomotive.Train.FrontTDBTraveller.WorldLocation));
+				float d = (float)Math.Sqrt(WorldLocation.GetDistanceSquared(traveller.WorldLocation, AI.Simulator.PlayerLocomotive.Train.FrontTDBTraveller.WorldLocation));
 				d -= SpeedMpS == 0 ? 500 : 50;
 				if (d < 0)
 					d = 0;
@@ -492,8 +529,8 @@ namespace ORTS
 			}
 			if (AI.Dispatcher.PlayerOverlaps(this, false))
 			{
-				TDBTraveller traveller = AITrainDirectionForward ? FrontTDBTraveller : RearTDBTraveller;
-				float d = (float)Math.Sqrt(WorldLocation.DistanceSquared(traveller.WorldLocation, AI.Simulator.PlayerLocomotive.Train.RearTDBTraveller.WorldLocation));
+				Traveller traveller = AITrainDirectionForward ? FrontTDBTraveller : RearTDBTraveller;
+				float d = (float)Math.Sqrt(WorldLocation.GetDistanceSquared(traveller.WorldLocation, AI.Simulator.PlayerLocomotive.Train.RearTDBTraveller.WorldLocation));
 				d -= SpeedMpS == 0 ? 500 : 50;
 				if (d < 0)
 					d = 0;
@@ -505,12 +542,18 @@ namespace ORTS
 				switch (GetNextSignalAspect())
 				{
 					case SignalHead.SIGASP.STOP:
-						targetMpS *= .5f;
+                        targetMpS = 30 > targetMpS ? targetMpS : 30;
+                        targetMpS = distanceToSignal < 1200 && 20 > targetMpS ? targetMpS : 20;
+                        targetMpS = distanceToSignal < 500 && 10 > targetMpS ? targetMpS : 10;
+						//targetMpS *= .5f;
 						if (stopDistanceM > distanceToSignal - 1)
-							stopDistanceM = distanceToSignal - 1;
+							stopDistanceM = distanceToSignal - 5;
 						break;
 					case SignalHead.SIGASP.STOP_AND_PROCEED:
-						targetMpS *= .5f;
+                        targetMpS = 30 > targetMpS ? targetMpS : 30;
+                        targetMpS = distanceToSignal < 1200 && 20 > targetMpS ? targetMpS : 20;
+                        targetMpS = distanceToSignal < 500 && 10 > targetMpS ? targetMpS : 10;
+                        //targetMpS *= .5f;
 						if (distanceToSignal > 3 && stopDistanceM > distanceToSignal - 1)
 							stopDistanceM = distanceToSignal - 1;
 						break;
@@ -538,7 +581,6 @@ namespace ORTS
 				minSpeedSq = (stopDistanceM - .2f) * MaxDecelMpSS;
 			if (minSpeedSq < 0)
 				minSpeedSq = 0;
-			//Console.WriteLine("{0} {1}", stopDistanceM, SpeedMpS);
 			float speedSq = SpeedMpS * SpeedMpS;
 			if (speedSq > maxSpeedSq && stopDistanceM > 0 && 2 * stopDistanceM * MaxDecelMpSS < speedSq)
 				return -.5f * speedSq / stopDistanceM;
@@ -579,16 +621,15 @@ namespace ORTS
 				}
 				else
 				{
+                   
 					float ds = timeS * (targetMpSS - measMpSS);
-					SpeedMpS += ds;
+					SpeedMpS = Math.Max (SpeedMpS+ds, 0); // avoid negative speeds
 					foreach (TrainCar car in Cars)
 						if (car.Flipped)
-							car.SpeedMpS -= ds;
+							car.SpeedMpS = -SpeedMpS;
 						else
-							car.SpeedMpS += ds;
-					//Console.WriteLine("extra {0} {1} {2}", SpeedMpS, targetMpSS, measMpSS);
+							car.SpeedMpS = SpeedMpS;
 				}
-				//Console.WriteLine("down {0} {1}", AITrainThrottlePercent, AITrainBrakePercent);
 			}
 			if (targetMpSS > 0 && measMpSS < targetMpSS)
 			{
@@ -600,12 +641,34 @@ namespace ORTS
 				}
 				else if (AITrainThrottlePercent < 100)
 				{
-					AITrainThrottlePercent += 10;
-					if (AITrainThrottlePercent > 100)
-						AITrainThrottlePercent = 100;
+
+                    if (AITrainThrottlePercent == 25 && targetMpSS > measMpSS * 500)
+                    {
+                        float ds = timeS * (targetMpSS - measMpSS);
+                        SpeedMpS += ds;
+                        foreach (TrainCar car in Cars)
+                            if (car.Flipped)
+                                car.SpeedMpS -= ds;
+                            else
+                                car.SpeedMpS += ds;
+                    }
+                    else
+                    {
+                        AITrainThrottlePercent += 2;
+                        if (SpeedMpS > 0 && AITrainThrottlePercent > SpeedMpS * 10)
+                            AITrainThrottlePercent = SpeedMpS * 10;
+
+                        if (AITrainThrottlePercent < 25)
+                            AITrainThrottlePercent = 25;
+
+                        if (AITrainThrottlePercent > 100)
+                            AITrainThrottlePercent = 100;
+                    }
+
 				}
 				else
 				{
+                    
 					float ds = timeS * (targetMpSS - measMpSS);
 					SpeedMpS += ds;
 					foreach (TrainCar car in Cars)
@@ -613,22 +676,25 @@ namespace ORTS
 							car.SpeedMpS -= ds;
 						else
 							car.SpeedMpS += ds;
-					//Console.WriteLine("extra {0} {1} {2}", SpeedMpS, targetMpSS, measMpSS);
 				}
-				//Console.WriteLine("up {0} {1}", AITrainThrottlePercent, AITrainBrakePercent);
 			}
+            if (FirstCar != null)
+            {
+                FirstCar.ThrottlePercent = AITrainThrottlePercent;
+                FirstCar.BrakeSystem.AISetPercent(AITrainBrakePercent);
+            }
 		}
 
-		public float Length()
-		{
-			float sum = 0;
-			foreach (TrainCar car in Cars)
-				sum += car.Length;
-			return sum;
-		}
+        public void Release()
+        {
+            nextSignal.Clear();
+            foreach (TrainCar car in Cars)
+                car.IsPartOfActiveTrain = false;
+        }
+
 		public float PassTime()
 		{
-			return Length() / MaxSpeedMpS;
+			return Length / MaxSpeedMpS;
 		}
 		public float StopStartTime()
 		{

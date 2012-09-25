@@ -56,9 +56,7 @@ namespace ORTS.Popups
                 TextPageBrakeInfo,
 				TextPageForceInfo,
                 TextPageDispatcherInfo,
-#if DEBUG
 				TextPageDebugInfo,
-#endif
             };
 
             TextFont = owner.TextFontDefaultOutlined;
@@ -217,7 +215,7 @@ namespace ORTS.Popups
                 }
             }
             TableAddLabelValue(table, "Coupler slack", "{0:F2} m ({1} pulling, {2} pushing) {3}", playerTrain.TotalCouplerSlackM, playerTrain.NPull, playerTrain.NPush, stretched ? "Stretched" : bunched ? "Bunched" : "");
-            TableAddLabelValue(table, "Coupler force", "{0:F0} N", playerTrain.MaximumCouplerForceN);
+            TableAddLabelValue(table, "Coupler force", "{0:F0} N ({1:F0} kW)", playerTrain.MaximumCouplerForceN, playerTrain.MaximumCouplerForceN * playerTrain.SpeedMpS / 1000.0f);
             TableAddLine(table);
             TableAddLabelValue(table, "FPS", "{0:F0}", Viewer.RenderProcess.FrameRate.SmoothedValue);
             TableAddLine(table);
@@ -235,6 +233,16 @@ namespace ORTS.Popups
                 TableAddLine(table, "Wheel slip warning");
             if (Viewer.PlayerLocomotive.GetSanderOn())
                 TableAddLine(table, "Sander on");
+
+			if (MultiPlayer.MPManager.IsMultiPlayer())
+			{
+				TableAddLine(table, "MultiPlayer Status");
+				var text = MultiPlayer.MPManager.Instance().GetOnlineUsersInfo();
+				string[] temp = text.Split('\t');
+				foreach(string t in temp) TableAddLabelValue(table, "", "{0}", t);
+
+
+			}
         }
 
         void TextPageBrakeInfo(TableData table)
@@ -277,9 +285,12 @@ namespace ORTS.Popups
                 else
                 {
                     TableAddLine(table, "(Advanced adhesion model disabled)");
+                    TableAddLabelValue(table, "Axle out force", "{0:F0} N ({1:F0} kW)", mstsLocomotive.MotiveForceN, mstsLocomotive.MotiveForceN * mstsLocomotive.SpeedMpS / 1000.0f);
                 }
                 TableAddLine(table);
             }
+
+            //TableAddLine(table,"Coupler breaks: {0:F0}", train.NumOfCouplerBreaks);
 
             TableSetCells(table, 0, "Car", "Total", "Motive", "Friction", "Gravity", "Coupler", "Mass", "Notes");
             TableAddLine(table);
@@ -297,6 +308,7 @@ namespace ORTS.Popups
                 TableSetCell(table, 5, "{0:F0}", car.CouplerForceU);
                 TableSetCell(table, 6, "{0:F0}", car.MassKG);
                 TableSetCell(table, 7, car.Flipped ? "Flipped" : "");
+                TableSetCell(table, 8, car.CouplerOverloaded ? "Coupler overloaded" : "");
                 TableAddLine(table);
             }
         }
@@ -308,7 +320,7 @@ namespace ORTS.Popups
             TableSetCells(table, 0, "Train", "Speed", "Signal aspect", "", "Distance", "Path");
             TableAddLine(table);
 
-            foreach (TrackAuthority auth in Program.Simulator.AI.Dispatcher.TrackAuthorities)
+            foreach (var auth in Viewer.Simulator.AI.Dispatcher.TrackAuthorities)
             {
                 var status = auth.GetStatus();
                 TableSetCells(table, 0, status.TrainID.ToString(), TrackMonitorWindow.FormatSpeed(status.Train.SpeedMpS, Viewer.MilepostUnitsMetric), status.Train.GetNextSignalAspect().ToString(), "", TrackMonitorWindow.FormatDistance(status.Train.distanceToSignal, Viewer.MilepostUnitsMetric), status.Path);
@@ -322,7 +334,7 @@ namespace ORTS.Popups
 
             TableAddLabelValue(table, "Logging enabled", "{0}", Viewer.Settings.DataLogger);
             TableAddLabelValue(table, "Build", "{0}", Program.Build);
-            TableAddLabelValue(table, "Memory", "{0:F0} MB (managed: {1:F0} MB, collections: {2:F0}/{3:F0}/{4:F0})", GetWorkingSetSize() / 1024 / 1024, GC.GetTotalMemory(false) / 1024 / 1024, GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2));
+            TableAddLabelValue(table, "Memory", "{0:F0} MB ({5}, {6}, {7}, {8}, {1:F0} MB managed, {2:F0}/{3:F0}/{4:F0} GCs)", GetWorkingSetSize() / 1024 / 1024, GC.GetTotalMemory(false) / 1024 / 1024, GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), Viewer.TextureManager.GetStatus(), Viewer.MaterialManager.GetStatus(), Viewer.ShapeManager.GetStatus(), Viewer.World.Terrain.GetStatus());
             TableAddLabelValue(table, "CPU", "{0:F0}% ({1} logical processors)", (Viewer.RenderProcess.Profiler.CPU.SmoothedValue + Viewer.UpdaterProcess.Profiler.CPU.SmoothedValue + Viewer.LoaderProcess.Profiler.CPU.SmoothedValue + Viewer.SoundProcess.Profiler.CPU.SmoothedValue) / ProcessorCount, ProcessorCount);
             TableAddLabelValue(table, "GPU", "{0:F0} FPS ({1:F1} \u00B1 {2:F1} ms, shader model {3})", Viewer.RenderProcess.FrameRate.SmoothedValue, Viewer.RenderProcess.FrameTime.SmoothedValue * 1000, Viewer.RenderProcess.FrameJitter.SmoothedValue * 1000, Viewer.Settings.ShaderModel);
             TableAddLabelValue(table, "Adapter", "{0} ({1:F0} MB)", Viewer.AdapterDescription, Viewer.AdapterMemory / 1024 / 1024);

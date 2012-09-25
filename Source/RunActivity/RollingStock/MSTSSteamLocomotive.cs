@@ -36,7 +36,7 @@ namespace ORTS
     {
         //Configure a default cutoff controller
         //IF none is specified, this will be used, otherwise those values will be overwritten
-        MSTSNotchController CutoffController = new MSTSNotchController(-0.9f, 0.9f, 0.1f);
+        public MSTSNotchController CutoffController = new MSTSNotchController(-0.9f, 0.9f, 0.1f);
         MSTSNotchController Injector1Controller = new MSTSNotchController(0, 1, 0.1f);
         MSTSNotchController Injector2Controller = new MSTSNotchController(0, 1, 0.1f);
         MSTSNotchController BlowerController = new MSTSNotchController(0, 1, 0.1f);
@@ -100,8 +100,6 @@ namespace ORTS
 		public MSTSSteamLocomotive(Simulator simulator, string wagFile, TrainCar previousCar)
             : base(simulator, wagFile, previousCar)
         {
-            //Console.WriteLine(" {0} {1} {2} {3}", NumCylinders, CylinderDiameterM, CylinderStrokeM, DriverWheelRadiusM);
-            //Console.WriteLine(" {0} {1} {2} {3} {4}", MaxBoilerPressurePSI,MaxBoilerOutputLBpH,ExhaustLimitLBpH,BasicSteamUsageLBpS,BoilerVolumeFT3);
             if (NumCylinders < 0 && ZeroError(NumCylinders, "NumCylinders", wagFile))
                 NumCylinders = 0;
             if (ZeroError(CylinderDiameterM, "CylinderDiammeter", wagFile))
@@ -134,7 +132,6 @@ namespace ORTS
             WaterFraction = .85f;
             BoilerMassLB= WaterFraction*BoilerVolumeFT3*WaterDensity[MaxBoilerPressurePSI] + (1-WaterFraction)*BoilerVolumeFT3*SteamDensity[MaxBoilerPressurePSI];
             BoilerHeatBTU = WaterFraction * BoilerVolumeFT3 * WaterDensity[BoilerPressurePSI]*WaterHeat[BoilerPressurePSI] + (1-WaterFraction) * BoilerVolumeFT3 * SteamDensity[BoilerPressurePSI]*SteamHeat[BoilerPressurePSI];
-            //Console.WriteLine("initstate {0} {1}", BoilerMassLB, BoilerHeatBTU);
             // the next two tables are the average over a full wheel rotation calculated using numeric integration
             // they depend on valve geometry and main rod length etc
             if (ForceFactor1 == null)
@@ -397,6 +394,16 @@ namespace ORTS
         {
             return new MSTSSteamLocomotiveViewer( viewer, this );
         }
+        /// <summary>
+        /// Sets controler settings from other engine for cab switch
+        /// </summary>
+        /// <param name="other"></param>
+        public override void CopyControllerSettings(TrainCar other)
+        {
+            base.CopyControllerSettings(other);
+            if (CutoffController != null)
+                CutoffController.SetValue(Train.MUReverserPercent / 100);
+        }
 
         /// <summary>
         /// This is a periodic update to calculate physics 
@@ -406,6 +413,31 @@ namespace ORTS
         /// </summary>
         public override void Update(float elapsedClockSeconds)
         {
+
+            if( CutoffController.UpdateValue != 0.0 ) {
+                // On a steam locomotive, the Reverser is the same as the Cut Off Control.
+                Simulator.Confirmer.Message( CabControl.Reverser, GetCutOffControllerStatus() );
+            }
+            if( BlowerController.UpdateValue > 0.0 ) {
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Blower, CabSetting.Increase, BlowerController.CurrentValue * 100 );
+            }
+            if( BlowerController.UpdateValue < 0.0 ) {
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Blower, CabSetting.Decrease, BlowerController.CurrentValue * 100 );
+            }
+            if( DamperController.UpdateValue > 0.0 ) {
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Damper, CabSetting.Increase, DamperController.CurrentValue * 100 );
+            }
+            if( DamperController.UpdateValue < 0.0 ) {
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Damper, CabSetting.Decrease, DamperController.CurrentValue * 100 );
+            }
+            if( FiringRateController.UpdateValue > 0.0 ) {
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.FiringRate, CabSetting.Increase, FiringRateController.CurrentValue * 100 );
+            }
+            if( FiringRateController.UpdateValue < 0.0 ) {
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.FiringRate, CabSetting.Decrease, FiringRateController.CurrentValue * 100 );
+            }
+
+
             PowerOn = true;
 
             if (this.IsLeadLocomotive())
@@ -418,15 +450,61 @@ namespace ORTS
             }
             else
                 CutoffController.Update(elapsedClockSeconds);
-            Injector1Controller.Update(elapsedClockSeconds);
-            Injector2Controller.Update(elapsedClockSeconds);
-            BlowerController.Update(elapsedClockSeconds);
-            DamperController.Update(elapsedClockSeconds);
-            FiringRateController.Update(elapsedClockSeconds);
 
+            Injector1Controller.Update(elapsedClockSeconds);
+            if( Injector1Controller.UpdateValue > 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Injector1, CabSetting.Increase, Injector1Controller.CurrentValue * 100 );
+            if( Injector1Controller.UpdateValue < 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Injector1, CabSetting.Decrease, Injector1Controller.CurrentValue * 100 );
+            Injector2Controller.Update(elapsedClockSeconds);
+            if( Injector2Controller.UpdateValue > 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Injector2, CabSetting.Increase, Injector2Controller.CurrentValue * 100 );
+            if( Injector2Controller.UpdateValue < 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Injector2, CabSetting.Decrease, Injector2Controller.CurrentValue * 100 );
+
+            BlowerController.Update(elapsedClockSeconds);
+            if( BlowerController.UpdateValue > 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Blower, CabSetting.Increase, BlowerController.CurrentValue * 100 );
+            if( BlowerController.UpdateValue < 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Blower, CabSetting.Decrease, BlowerController.CurrentValue * 100 );
+            DamperController.Update(elapsedClockSeconds);
+            if( DamperController.UpdateValue > 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Damper, CabSetting.Increase, DamperController.CurrentValue * 100 );
+            if( DamperController.UpdateValue < 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.Damper, CabSetting.Decrease, DamperController.CurrentValue * 100 );
+            FiringRateController.Update(elapsedClockSeconds);
+            if( FiringRateController.UpdateValue > 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.FiringRate, CabSetting.Increase, FiringRateController.CurrentValue * 100 );
+            if( FiringRateController.UpdateValue < 0.0 )
+                Simulator.Confirmer.UpdateWithPerCent( CabControl.FiringRate, CabSetting.Decrease, FiringRateController.CurrentValue * 100 );
             
             base.Update(elapsedClockSeconds);
 
+#if INDIVIDUAL_CONTROL
+			//this train is remote controlled, with mine as a helper, so I need to send the controlling information, but not the force.
+			if (MultiPlayer.MPManager.IsMultiPlayer() && this.Train.TrainType == Train.TRAINTYPE.REMOTE && this == Program.Simulator.PlayerLocomotive)
+			{
+				if (CutoffController.UpdateValue != 0.0 || BlowerController.UpdateValue != 0.0 || DamperController.UpdateValue != 0.0 || FiringRateController.UpdateValue != 0.0 || Injector1Controller.UpdateValue != 0.0 || Injector2Controller.UpdateValue != 0.0)
+				{
+					controlUpdated = true;
+				}
+				Train.MUReverserPercent = CutoffController.Update(elapsedClockSeconds) * 100.0f;
+				if (Train.MUReverserPercent >= 0)
+					Train.MUDirection = Direction.Forward;
+				else
+					Train.MUDirection = Direction.Reverse;
+				return; //done, will go back and send the message to the remote train controller
+			}
+
+			if (MultiPlayer.MPManager.IsMultiPlayer() && this.notificationReceived == true)
+			{
+				Train.MUReverserPercent = CutoffController.CurrentValue * 100.0f;
+				if (Train.MUReverserPercent >= 0)
+					Train.MUDirection = Direction.Forward;
+				else
+					Train.MUDirection = Direction.Reverse;
+			}
+#endif 
             Variable1 = Math.Abs(SpeedMpS);   // Steam loco's seem to need this.
             Variable2 = 50;   // not sure what this ones for ie in an SMS file
 
@@ -453,7 +531,20 @@ namespace ORTS
                 (backPressure * ForceFactor1[cutoff] + cylinderPressure * ForceFactor2[cutoff]);
             if (float.IsNaN(MotiveForceN))
                 MotiveForceN = 0;
-            LimitMotiveForce(elapsedClockSeconds);
+            switch (this.Train.TrainType)
+            {
+                case Train.TRAINTYPE.AI:
+                case Train.TRAINTYPE.STATIC:
+                    break;
+                case Train.TRAINTYPE.PLAYER:
+                case Train.TRAINTYPE.REMOTE:
+                    LimitMotiveForce(elapsedClockSeconds);
+                    break;
+                default:
+                    break;
+
+            }
+
             if (speed == 0 && cutoff < .5f)
                 MotiveForceN = 0;   // valves assumed to be closed
             // usage calculated as moving average to minimize chance of oscillation
@@ -523,6 +614,10 @@ namespace ORTS
             }
         }
 
+        private string GetCutOffControllerStatus() {
+            return String.Format( " {0} {1:F0}", Direction, Math.Abs( Train.MUReverserPercent ) );
+        }
+
         public override string GetStatus()
         {
             var evap = EvaporationLBpS * 3600;
@@ -550,15 +645,16 @@ namespace ORTS
                 else
                     result.Append(" Off");
                 result.AppendFormat("\nBlower = {0:F0} %", BlowerController.CurrentValue * 100);
-                //result.AppendFormat("\nDamper = {0:F0} %", DamperController.CurrentValue * 100);
+                result.AppendFormat("\nDamper = {0:F0} %", DamperController.CurrentValue * 100);
                 result.AppendFormat("\nFiring rate = {0:F0} %", FiringRateController.CurrentValue * 100);
             }
             return result.ToString();
         }
 
-        public void StartReverseIncrease()
+        public new void StartReverseIncrease()
         {
             CutoffController.StartIncrease();
+            Simulator.Confirmer.Message(CabControl.Reverser, GetCutOffControllerStatus());
         }
 
         public void StopReverseIncrease()
@@ -566,12 +662,13 @@ namespace ORTS
             CutoffController.StopIncrease();
         }
 
-        public void StartReverseDecrease()
+        public new void StartReverseDecrease()
         {
             CutoffController.StartDecrease();
+            Simulator.Confirmer.Message(CabControl.Reverser, GetCutOffControllerStatus());
         }
 
-        public void StopReverseDecrease()
+        public  void StopReverseDecrease()
         {
             CutoffController.StopDecrease();
         }
@@ -587,6 +684,7 @@ namespace ORTS
 
         public void StartInjector1Increase()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Injector1, CabSetting.Increase, Injector1Controller.CurrentValue * 100 );
             Injector1Controller.StartIncrease();
         }
         public void StopInjector1Increase()
@@ -595,6 +693,7 @@ namespace ORTS
         }
         public void StartInjector1Decrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Injector1, CabSetting.Decrease, Injector1Controller.CurrentValue * 100 );
             Injector1Controller.StartDecrease();
         }
         public void StopInjector1Decrease()
@@ -604,10 +703,12 @@ namespace ORTS
         public void ToggleInjector1()
         {
             Injector1On = !Injector1On;
+            Simulator.Confirmer.Confirm( CabControl.Injector1, Injector1On ? CabSetting.On : CabSetting.Off );
         }
 
         public void StartInjector2Increase()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Injector2, CabSetting.Increase, Injector2Controller.CurrentValue * 100 );
             Injector2Controller.StartIncrease();
         }
         public void StopInjector2Increase()
@@ -616,6 +717,7 @@ namespace ORTS
         }
         public void StartInjector2Decrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Injector2, CabSetting.Decrease, Injector2Controller.CurrentValue * 100 );
             Injector2Controller.StartDecrease();
         }
         public void StopInjector2Decrease()
@@ -625,10 +727,12 @@ namespace ORTS
         public void ToggleInjector2()
         {
             Injector2On = !Injector2On;
+            Simulator.Confirmer.Confirm( CabControl.Injector2, Injector2On ? CabSetting.On : CabSetting.Off );
         }
 
         public void StartBlowerIncrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Blower, CabSetting.Increase, BlowerController.CurrentValue * 100 );
             BlowerController.StartIncrease();
         }
         public void StopBlowerIncrease()
@@ -637,6 +741,7 @@ namespace ORTS
         }
         public void StartBlowerDecrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Blower, CabSetting.Decrease, BlowerController.CurrentValue * 100 );
             BlowerController.StartDecrease();
         }
         public void StopBlowerDecrease()
@@ -646,6 +751,7 @@ namespace ORTS
 
         public void StartDamperIncrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Damper, CabSetting.Increase, DamperController.CurrentValue * 100 );
             DamperController.StartIncrease();
         }
         public void StopDamperIncrease()
@@ -654,6 +760,7 @@ namespace ORTS
         }
         public void StartDamperDecrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Damper, DamperController.CurrentValue * 100 );
             DamperController.StartDecrease();
         }
         public void StopDamperDecrease()
@@ -663,6 +770,7 @@ namespace ORTS
 
         public void StartFiringRateIncrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Damper, FiringRateController.CurrentValue * 100 );
             FiringRateController.StartIncrease();
         }
         public void StopFiringRateIncrease()
@@ -671,6 +779,7 @@ namespace ORTS
         }
         public void StartFiringRateDecrease()
         {
+            Simulator.Confirmer.ConfirmWithPerCent( CabControl.Damper, FiringRateController.CurrentValue * 100 );
             FiringRateController.StartDecrease();
         }
         public void StopFiringRateDecrease()
@@ -681,31 +790,59 @@ namespace ORTS
         public void FireShovelFull()
         {
             FireMassKG+= ShovelMassKG;
+            Simulator.Confirmer.Confirm( CabControl.FireShovelfull, CabSetting.On );
         }
 
         public void ToggleCylinderCocks()
         {
             CylinderCocksOpen = !CylinderCocksOpen;
+            Simulator.Confirmer.Confirm( CabControl.CylinderCocks, CylinderCocksOpen ? CabSetting.On : CabSetting.Off );
         }
 
         public void ToggleManualFiring()
         {
             ManualFiring = !ManualFiring;
+            Simulator.Confirmer.Confirm( CabControl.ManualFiring, ManualFiring ? CabSetting.On : CabSetting.Off );
         }
+
+		public void GetLocoInfo(ref float CC, ref float BC, ref float DC, ref float FC, ref float I1, ref float I2)
+		{
+			CC = CutoffController.CurrentValue;
+			BC = BlowerController.CurrentValue;
+			DC = DamperController.CurrentValue;
+			FC = FiringRateController.CurrentValue;
+			I1 = Injector1Controller.CurrentValue;
+			I2 = Injector2Controller.CurrentValue;
+		}
+
+		public void SetLocoInfo(float CC, float BC, float DC, float FC, float I1, float I2)
+		{
+			CutoffController.CurrentValue = CC;
+			CutoffController.UpdateValue = 0.0f;
+			BlowerController.CurrentValue = BC;
+			BlowerController.UpdateValue = 0.0f;
+			DamperController.CurrentValue = DC;
+			DamperController.UpdateValue = 0.0f;
+			FiringRateController.CurrentValue = FC;
+			FiringRateController.UpdateValue = 0.0f;
+			Injector1Controller.CurrentValue = I1;
+			Injector1Controller.UpdateValue = 0.0f;
+			Injector2Controller.CurrentValue = I2;
+			Injector2Controller.UpdateValue = 0.0f;
+		}
 
         /// <summary>
         /// Used when someone want to notify us of an event
         /// </summary>
-        public override void SignalEvent(EventID eventID)
-        {
-            switch (eventID)
+        public override void SignalEvent( EventID eventID ) {
+            do  // Like 'switch' (i.e. using 'break' is more efficient than a sequence of 'if's) but doesn't need constant EventID.<values>
             {
                 // for example
                 // case EventID.BellOn: Bell = true; break;
                 // case EventID.BellOff: Bell = false; break;
-                default: break;
-            }
-            base.SignalEvent(eventID);
+            } while( false );  // Never repeats
+
+            base.SignalEvent( eventID );
         }
     } // class SteamLocomotive
 
@@ -733,11 +870,27 @@ namespace ORTS
                 {
                     foreach (ParticleEmitterDrawer drawer in pair.Value)
                     {
-                        drawer.SetTexture(SharedTextureManager.Get(viewer.RenderProcess.GraphicsDevice, steamTexture));
+                        drawer.SetTexture(viewer.TextureManager.Get(steamTexture));
                         drawer.SetEmissionRate(20);
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Overrides the base method as steam locomotives have continuous reverser controls and so
+        /// lacks the throttle interlock and warning in other locomotives. 
+        /// </summary>
+        protected override void ReverserControlForwards() {
+                SteamLocomotive.StartReverseIncrease();
+        }
+
+        /// <summary>
+        /// Overrides the base method as steam locomotives have continuous reverser controls and so
+        /// lacks the throttle interlock and warning in other locomotives. 
+        /// </summary>
+        protected override void ReverserControlBackwards() {
+                SteamLocomotive.StartReverseDecrease();
         }
 
         /// <summary>
@@ -746,14 +899,12 @@ namespace ORTS
         /// </summary>
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
-			if (UserInput.IsPressed(UserCommands.ControlReverserForward))
-                SteamLocomotive.StartReverseIncrease();
-			else if (UserInput.IsReleased(UserCommands.ControlReverserForward))
+            // Note: UserInput.IsPressed( UserCommands.ControlReverserForward/Backwards ) are handled in base class MSTSLocomotive
+            // else there will be calls to StartReverseIncrease() here and also from MSTSLocomotive.
+            if( UserInput.IsReleased( UserCommands.ControlReverserForward ) )
                 SteamLocomotive.StopReverseIncrease();
-			else if (UserInput.IsPressed(UserCommands.ControlReverserBackwards))
-                SteamLocomotive.StartReverseDecrease();
-			else if (UserInput.IsReleased(UserCommands.ControlReverserBackwards))
-                SteamLocomotive.StopReverseDecrease();
+            else if( UserInput.IsReleased( UserCommands.ControlReverserBackwards ) )
+                SteamLocomotive.StopReverseDecrease();  
             if (UserInput.IsPressed(UserCommands.ControlInjector1Increase))
                 SteamLocomotive.StartInjector1Increase();
             else if (UserInput.IsReleased(UserCommands.ControlInjector1Increase))

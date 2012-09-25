@@ -43,7 +43,7 @@ namespace MSTS
                     if (tileX == tn.UiD.WorldTileX && tileZ == tn.UiD.WorldTileZ && UiD == tn.UiD.WorldID)
                         return tn.TrJunctionNode;
 
-            Trace.TraceWarning("Track node in tile {0},{1} with UiD {2} could not be found in TDB.", tileX, tileZ, UiD);
+            Trace.TraceWarning("{{TileX:{0} TileZ:{1}}} track node {2} could not be found in TDB", tileX, tileZ, UiD);
             return null;
         }
 
@@ -106,11 +106,11 @@ namespace MSTS
         public TrackNode(STFReader stf, int idx)
         {
             stf.MustMatch("(");
-            uint index = stf.ReadUInt(STFReader.UNITS.None, null);
-            Debug.Assert(idx == index, "TrackNode Index Mismatch");
+            Index = stf.ReadUInt(STFReader.UNITS.None, null);
+            Debug.Assert(idx == Index, "TrackNode Index Mismatch");
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("uid", ()=>{ UiD = new UiD(stf); }),
-                new STFReader.TokenProcessor("trjunctionnode", ()=>{ TrJunctionNode = new TrJunctionNode(stf); }),
+                new STFReader.TokenProcessor("trjunctionnode", ()=>{ TrJunctionNode = new TrJunctionNode(stf, idx); TrJunctionNode.TN = this; }),
                 new STFReader.TokenProcessor("trvectornode", ()=>{ TrVectorNode = new TrVectorNode(stf); }),
                 new STFReader.TokenProcessor("trendnode", ()=>{ TrEndNode = true; stf.SkipBlock(); }),
                 new STFReader.TokenProcessor("trpins", ()=>{
@@ -127,8 +127,13 @@ namespace MSTS
                 }),
             });
             // TODO We assume there is only 2 outputs to each junction
-            if (TrVectorNode != null && TrPins.Length != 2)
-                Trace.TraceWarning("TDB DEBUG TVN={0} has {1} pins.", UiD, TrPins.Length);
+            var expectedPins = TrJunctionNode != null ? new[] { 3, 1, 2 } : TrVectorNode != null ? new[] { 2, 1, 1 } : TrEndNode ? new[] { 1, 1, 0 } : new[] { 0, 0, 0 };
+            if (TrPins.Length != expectedPins[0])
+                Trace.TraceWarning("Track node {0} has unexpected number of pins; expected {1}, got {2}", Index, expectedPins[0], TrPins.Length);
+            if (Inpins != expectedPins[1])
+                Trace.TraceWarning("Track node {0} has unexpected number of input pins; expected {1}, got {2}", Index, expectedPins[1], TrPins.Length);
+            if (Outpins != expectedPins[2])
+                Trace.TraceWarning("Track node {0} has unexpected number of output pins; expected {1}, got {2}", Index, expectedPins[2], TrPins.Length);
         }
         public TrJunctionNode TrJunctionNode;
         public TrVectorNode TrVectorNode;
@@ -143,7 +148,7 @@ namespace MSTS
         public UiD UiD;  // only provided for TrJunctionNode and TrEndNode type of TrackNodes
         public uint Inpins;
         public uint Outpins;
-
+		public uint Index;
 
         public InterlockingTrack InterlockingTrack { get; set; }
     
@@ -195,10 +200,25 @@ namespace MSTS
     [DebuggerDisplay("\\{MSTS.TrJunctionNode\\} SelectedRoute={SelectedRoute}, ShapeIndex={ShapeIndex}")]
     public class TrJunctionNode
     {
-        public int SelectedRoute = 0;
-
-        public TrJunctionNode(STFReader stf)
+        public int SelectedRoute
         {
+            get
+            {
+                return _selectedRoute;
+            }
+            set
+            {
+                _selectedRoute = value;
+            }
+        }
+		public TrackNode TN;
+
+        private int _selectedRoute = 0;
+        public int Idx { get; private set; }
+
+        public TrJunctionNode(STFReader stf, int idx)
+        {
+            Idx = idx;
             stf.MustMatch("(");
             stf.ReadString();
             ShapeIndex = stf.ReadUInt(STFReader.UNITS.None, null);
@@ -235,7 +255,7 @@ namespace MSTS
 						}
 					}
 				}
-				catch (Exception e) { } 
+				catch (Exception ) { } 
 			}
 			return angle;
 		}
@@ -262,14 +282,14 @@ namespace MSTS
                     int refidx = 0;
                     stf.ParseBlock(new STFReader.TokenProcessor[] {
                         new STFReader.TokenProcessor("tritemref", ()=>{
-                            if (refidx < noItemRefs)
-                                TrItemRefs[refidx++] = stf.ReadIntBlock(STFReader.UNITS.None, null);
+                            if (refidx >= noItemRefs)
+                                STFException.TraceWarning(stf, "Skipped extra TrItemRef");
                             else
-                                STFException.TraceWarning(stf, "TrItemRef Count Mismatch");
+                                TrItemRefs[refidx++] = stf.ReadIntBlock(STFReader.UNITS.None, null);
                         }),
                     });
-                    if(refidx != noItemRefs)
-                        STFException.TraceWarning(stf, "TrItemRef Count Mismatch");
+                    if (refidx < noItemRefs)
+                        STFException.TraceWarning(stf, (noItemRefs - refidx).ToString() + " missing TrItemRef(s)");
                 }),
             });
         }
@@ -458,7 +478,9 @@ namespace MSTS
                     int sigidx = 0;
                     stf.ParseBlock(new STFReader.TokenProcessor[] {
                         new STFReader.TokenProcessor("trsignaldir", ()=>{
-                            if(sigidx<noSigDirs)
+                            if (sigidx >= noSigDirs)
+                                STFException.TraceWarning(stf, "Skipped extra TrSignalDirs");
+                            else
                             {
                                 TrSignalDirs[sigidx]=new strTrSignalDir();
                                 stf.MustMatch("(");
@@ -471,7 +493,8 @@ namespace MSTS
                             }
                         }),
                     });
-                    if(sigidx != noSigDirs)  STFException.TraceWarning(stf, "TrSignalDirs count mismatch");
+                    if (sigidx < noSigDirs)
+                        STFException.TraceWarning(stf, (noSigDirs - sigidx).ToString() + " missing TrSignalDirs(s)");
                 }),
             });
         }
@@ -479,13 +502,32 @@ namespace MSTS
 
     public class SpeedPostItem : TrItem
     {
-        uint Flags;
-        float SpeedInd;      // Or distance if mile post.
+        public uint Flags;
+		public bool IsMilePost = false; //true to be milepost
+		public bool IsWarning = false; //speed warning
+		public bool IsLimit = false; //speed limit
+		public bool IsResume= false; // speed resume sign (has no speed defined!)
+		public bool IsPassenger = false; //is passender speed limit
+		public bool IsFreight = false; //is freight speed limit
+		public bool IsMPH = false;//is the digit in MPH or KPH
+		public bool ShowNumber = false; //show numbers instead of KPH, like 5 means 50KMH
+		public bool ShowDot = false; //if ShowNumber is true and this is set, will show 1.5 as for 15KMH
+        public float SpeedInd;      // Or distance if mile post.
+	public int sigObj = -1;	    // index to Signal Object Table
+	public float Angle;         // speedpost (normalized) angle
+	public int Direction;       // derived direction relative to track
+	public int DisplayNumber;   // number to be displayed if ShowNumber is true
+
+        public int revDir
+        {
+            get {return Direction==0?1:0;}
+        }
+
         public SpeedPostItem(STFReader stf, int idx)
         {
             ItemType = trItemType.trSPEEDPOST;
             stf.MustMatch("(");
-            stf.ParseBlock(new STFReader.TokenProcessor[] {
+			stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("tritemid", ()=>{ TrItemID(stf, idx); }),
                 new STFReader.TokenProcessor("tritemrdata", ()=>{ TrItemRData(stf); }),
                 new STFReader.TokenProcessor("tritemsdata", ()=>{ TrItemSData(stf); }),
@@ -494,9 +536,42 @@ namespace MSTS
                 new STFReader.TokenProcessor("speedposttritemdata", ()=>{
                     stf.MustMatch("(");
                     Flags = stf.ReadUInt(STFReader.UNITS.None, null);
+					if ((Flags & 1) != 0) IsWarning = true;
+					if ((Flags & (1 << 1)) != 0) IsLimit = true;
+					if (!IsWarning && !IsLimit) {
+						IsMilePost = true;
+					}
+					else {
+						if (IsWarning && IsLimit)
+						{
+							IsWarning = false;
+							IsResume = true;
+						}
+
+						if ((Flags & (1 << 5)) != 0) IsPassenger = true;
+						if ((Flags & (1 << 6)) != 0) IsFreight = true;
+						if ((Flags & (1 << 7)) != 0) IsFreight = IsPassenger = true;
+						if ((Flags & (1 << 8)) != 0) IsMPH = true;
+						if ((Flags & (1 << 4)) != 0) {
+							ShowNumber = true;
+							if ((Flags & (1 << 9)) != 0) ShowDot = true;
+						}
+					}
+
                     //  The number of parameters depends on the flags seeting
                     //  To do: Check flags seetings and parse accordingly.
-                    SpeedInd = stf.ReadFloat(STFReader.UNITS.Speed, null);
+		    if (!IsResume)
+		    {
+                    	SpeedInd = stf.ReadFloat(STFReader.UNITS.None, null);
+		    }
+    		if (ShowNumber)
+		    {
+			    DisplayNumber = stf.ReadInt(STFReader.UNITS.None, null);
+		    }
+                    
+			Angle = stf.ReadFloat(STFReader.UNITS.None, null);
+		    MSTSMath.M.NormalizeRadians(ref Angle);
+
                     stf.SkipRestOfBlock();
                 }),
             });
@@ -541,14 +616,7 @@ namespace MSTS
     }
 
     public class LevelCrItem : TrItem
-
     {
-		public uint Direction;                // 0 or 1 depending on which way signal is facing
-		public int revDir
-		{
-			get { return Direction == 0 ? 1 : 0; }
-		}
-
         public LevelCrItem(STFReader stf, int idx)
         {
             ItemType = trItemType.trXING;
@@ -558,7 +626,6 @@ namespace MSTS
                 new STFReader.TokenProcessor("tritemrdata", ()=>{ TrItemRData(stf); }),
                 new STFReader.TokenProcessor("tritemsdata", ()=>{ TrItemSData(stf); }),
                 new STFReader.TokenProcessor("tritempdata", ()=>{ TrItemPData(stf); }),
-
             });
         }
     }

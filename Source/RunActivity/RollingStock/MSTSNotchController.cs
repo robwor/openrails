@@ -3,11 +3,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Microsoft.Xna.Framework;
+using ORTS.Popups;  // needed for Confirmations
+using System.Diagnostics;   // needed for Debug
 
 namespace ORTS
 {
     /**
-     * This is the most used contorller. The main use if for diesel locomotives Throttle control.
+     * This is the most used controller. The main use is for diesel locomotives' Throttle control.
      * 
      * It is used with single keypress, this means that when the user press a key, only the keydown event is handled.
      * The user need to press the key multiple times to update this controller.
@@ -22,6 +24,8 @@ namespace ORTS
         public float StepSize = 0;
         private List<MSTSNotch> Notches = new List<MSTSNotch>();
         public int CurrentNotch = 0;
+
+        protected Simulator Simulator;
 
         //Does not need to persist
         //this indicates if the controller is increasing or decreasing, 0 no changes
@@ -49,7 +53,7 @@ namespace ORTS
             StepSize = other.StepSize;
             CurrentNotch = other.CurrentNotch;
 
-            foreach (MSTSNotch notch in Notches)
+            foreach (MSTSNotch notch in other.Notches)
             {
                 Notches.Add(notch.Clone());
             }
@@ -83,7 +87,6 @@ namespace ORTS
             MaximumValue = stf.ReadFloat(STFReader.UNITS.Any, null);
             StepSize = stf.ReadFloat(STFReader.UNITS.Any, null);
             IntermediateValue = CurrentValue = stf.ReadFloat(STFReader.UNITS.Any, null);
-            //Console.WriteLine("controller {0} {1} {2} {3}", MinimumValue, MaximumValue, StepSize, CurrentValue);
             string token = stf.ReadItem(); // s/b numnotches
             if (string.Compare(token, "NumNotches", true) != 0) // handle error in gp38.eng where extra parameter provided before NumNotches statement 
                 stf.ReadItem();
@@ -95,12 +98,16 @@ namespace ORTS
                     float value = stf.ReadFloat(STFReader.UNITS.Any, null);
                     int smooth = stf.ReadInt(STFReader.UNITS.Any, null);
                     string type = stf.ReadString();
-                    //Console.WriteLine("Notch {0} {1} {2}", value, smooth, type);
                     Notches.Add(new MSTSNotch(value, smooth, type, stf));
                     if (type != ")") stf.SkipRestOfBlock();
                 }),
             });
             SetValue(CurrentValue);
+        }
+
+        public int NotchCount()
+        {
+            return Notches.Count;
         }
 
         private float GetNotchBoost()
@@ -183,7 +190,25 @@ namespace ORTS
                 ++CurrentNotch;
                 IntermediateValue = CurrentValue = Notches[CurrentNotch].Value;
             }
-        }
+			//the following are added to cope with the combined notch/smooth control like this:
+			//      EngineControllers (
+            //			Throttle ( 0 1 0.01 0 
+            //			NumNotches ( 5 Notch ( 0    0 Dummy ) Notch ( 0.1  0 Dummy ) Notch ( 0.1  1 Dummy ) Notch ( 0.2  0 Dummy )Notch ( 0.3  1 Dummy ))
+			//		)
+			/*
+			else if ((Notches.Count > 0) && (CurrentNotch < Notches.Count - 1) && (Notches[CurrentNotch].Smooth))
+			{
+				IntermediateValue += StepSize;
+				if (IntermediateValue >= Notches[CurrentNotch + 1].Value) { ++CurrentNotch; IntermediateValue = CurrentValue = Notches[CurrentNotch].Value; }
+				else CurrentValue = IntermediateValue;
+			}
+			else if ((Notches.Count > 0) && (CurrentNotch == Notches.Count - 1) && (Notches[CurrentNotch].Smooth))
+			{
+				IntermediateValue += StepSize; 
+				if (IntermediateValue >= MaximumValue) IntermediateValue = MaximumValue;
+				CurrentValue = IntermediateValue;
+			}*/
+		}
 
         public void StopIncrease()
         {
@@ -226,10 +251,10 @@ namespace ORTS
             IntermediateValue += StepSize * elapsedSeconds * GetNotchBoost() * direction;
             IntermediateValue = MathHelper.Clamp(IntermediateValue, MinimumValue, MaximumValue);
 
-            //Do we have nothces
+            //Do we have notches
             if (Notches.Count > 0)
             {
-                //Increasing, check if the notche has changed
+                //Increasing, check if the notch has changed
                 if ((direction > 0) && (CurrentNotch < Notches.Count - 1) && (IntermediateValue >= Notches[CurrentNotch + 1].Value))
                 {
                     //update notch
@@ -252,7 +277,6 @@ namespace ORTS
                 //if no notches, we just keep updating the current value directly
                 CurrentValue = IntermediateValue;
             }
-
             return CurrentValue;
         }
 

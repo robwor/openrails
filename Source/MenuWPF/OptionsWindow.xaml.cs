@@ -45,29 +45,38 @@ namespace MenuWPF
             this.sliderWOD.Value = 10;
             this.sliderSound.Value = 5;
             this.cboResolution.Text = "1024x768";
-            this.txtBrakePipe.Text = "21";
-            this.regKey = registryKey;
+			this.txtBrakePipe.Text = "21";
+			this.avatarURL.Text = "http://www.openrails.org/images/ICONmediumOD.jpg";
+			this.regKey = registryKey;
             this.foldersFile = foldersFile;
 
             // Restore retained settings
-            RegistryKey RK = Registry.CurrentUser.OpenSubKey(registryKey);
-            if (RK != null)
+            using (var RK = Registry.CurrentUser.OpenSubKey(registryKey))
             {
-                this.sliderWOD.Value = (int)RK.GetValue("WorldObjectDensity", (int)sliderWOD.Value);
-                this.sliderSound.Value = (int)RK.GetValue("SoundDetailLevel", (int)sliderSound.Value);
-                this.cboResolution.Text = (string)RK.GetValue("WindowSize", (string)cboResolution.Text);
-                this.chkAlerter.IsChecked = (1 == (int)RK.GetValue("Alerter", 0));
-                this.chkTrainLights.IsChecked = (1 == (int)RK.GetValue("TrainLights", 0));
-                this.chkPrecipitation.IsChecked = (1 == (int)RK.GetValue("Precipitation", 0));
-                this.chkOverheadWire.IsChecked = (1 == (int)RK.GetValue("Wire", 0));
-                this.txtBrakePipe.Text = RK.GetValue("BrakePipeChargingRate", txtBrakePipe.Text).ToString();
-                this.chkGraduated.IsChecked = (1 == (int)RK.GetValue("GraduatedRelease", 0));
-                this.chkDinamicShadows.IsChecked = (1 == (int)RK.GetValue("DynamicShadows", 0));
-                this.chkUseGlass.IsChecked = (1 == (int)RK.GetValue("WindowGlass", 0));
-                this.chkUseMSTSbin.IsChecked = (1 == (int)RK.GetValue("MSTSBINSound", 0));
-                this.chkFullScreen.IsChecked = (int)RK.GetValue("Fullscreen", 0) == 1 ? true : false;
-                this.chkWarningLog.IsChecked = (int)RK.GetValue("Logging", 1) == 1 ? true : false;
-                this.txtBgImage.Text = RK.GetValue("BackgroundImage", txtBgImage.Text).ToString();
+                if (RK != null)
+                {
+                    this.sliderWOD.Value = (int)RK.GetValue("WorldObjectDensity", (int)sliderWOD.Value);
+                    this.sliderSound.Value = (int)RK.GetValue("SoundDetailLevel", (int)sliderSound.Value);
+                    this.cboResolution.Text = (string)RK.GetValue("WindowSize", (string)cboResolution.Text);
+                    this.chkAlerter.IsChecked = (1 == (int)RK.GetValue("Alerter", 0));
+                    this.chkTrainLights.IsChecked = (1 == (int)RK.GetValue("TrainLights", 0));
+                    this.chkPrecipitation.IsChecked = (1 == (int)RK.GetValue("Precipitation", 0));
+                    this.chkOverheadWire.IsChecked = (1 == (int)RK.GetValue("Wire", 0));
+                    this.txtBrakePipe.Text = RK.GetValue("BrakePipeChargingRate", txtBrakePipe.Text).ToString();
+                    this.chkGraduated.IsChecked = (1 == (int)RK.GetValue("GraduatedRelease", 0));
+                    this.chkDinamicShadows.IsChecked = (1 == (int)RK.GetValue("DynamicShadows", 0));
+                    this.chkUseGlass.IsChecked = (1 == (int)RK.GetValue("WindowGlass", 0));
+                    this.chkUseMSTSbin.IsChecked = (1 == (int)RK.GetValue("MSTSBINSound", 0));
+                    this.chkFullScreen.IsChecked = (int)RK.GetValue("Fullscreen", 0) == 1 ? true : false;
+                    this.chkWarningLog.IsChecked = (int)RK.GetValue("Logging", 1) == 1 ? true : false;
+                    this.txtBgImage.Text = RK.GetValue("BackgroundImage", txtBgImage.Text).ToString();
+					this.chkDispatcher.IsChecked = (1 == (int)RK.GetValue("ViewDispatcher", 0));
+					this.textMPUpdate.Text = RK.GetValue("MPUpdateInterval", textMPUpdate.Text).ToString();
+					this.showAvatar.IsChecked = (1 == (int)RK.GetValue("ShowAvatar", 0));
+					this.avatarURL.Text = RK.GetValue("AvatarURL", this.avatarURL.Text).ToString();
+
+				}
+
             }
             if (System.IO.File.Exists(txtBgImage.Text))
             {
@@ -114,9 +123,17 @@ namespace MenuWPF
                     return;
                 }
 
+				//Check the values for the MP Update Frequency
+				result = -1;
+				int.TryParse(textMPUpdate.Text, out result);
+				if (result < 0)
+				{
+					MessageBox.Show("The Multiplayer Update Interval should be numbers in seconds.", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+					return;
+				}
+
                 // Retain settings for convenience
-                RegistryKey RK = Registry.CurrentUser.CreateSubKey(regKey);
-                if (RK != null)
+                using (var RK = Registry.CurrentUser.CreateSubKey(regKey))
                 {
                     RK.SetValue("WorldObjectDensity", (int)this.sliderWOD.Value);
                     RK.SetValue("SoundDetailLevel", (int)this.sliderSound.Value);
@@ -133,6 +150,11 @@ namespace MenuWPF
                     RK.SetValue("Fullscreen", this.chkFullScreen.IsChecked.Value ? 1 : 0);
                     RK.SetValue("Logging", this.chkWarningLog.IsChecked.Value ? 1 : 0);
                     RK.SetValue("BackgroundImage", this.txtBgImage.Text);
+					RK.SetValue("ViewDispatcher", this.chkDispatcher.IsChecked.Value ? 1 : 0);
+					RK.SetValue("MPUpdateInterval", (int)double.Parse(textMPUpdate.Text));
+					RK.SetValue("ShowAvatar", this.showAvatar.IsChecked.Value ? 1 : 0);
+					RK.SetValue("AvatarURL", this.avatarURL.Text);
+
                 }
                 SaveFolders();
                 Close();
@@ -292,5 +314,6 @@ namespace MenuWPF
         
 
         #endregion
+
     }
 }

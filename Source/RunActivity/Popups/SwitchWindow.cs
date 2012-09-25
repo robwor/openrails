@@ -58,7 +58,7 @@ namespace ORTS.Popups
 		void SwitchBackwards_Click(Control arg1, Point arg2)
 		{
 			Owner.Viewer.Simulator.SwitchTrackBehind(Owner.Viewer.PlayerTrain);
-		}
+        }
 
         public override void PrepareFrame(ElapsedTime elapsedTime, bool updateFull)
         {
@@ -67,8 +67,12 @@ namespace ORTS.Popups
             if (updateFull)
             {
                 var train = Owner.Viewer.PlayerTrain;
-                UpdateSwitch(SwitchForwards, train, true);
-                UpdateSwitch(SwitchBackwards, train, false);
+				try
+				{
+					UpdateSwitch(SwitchForwards, train, true);
+					UpdateSwitch(SwitchBackwards, train, false);
+				}
+				catch (Exception) { }
             }
         }
 
@@ -76,15 +80,12 @@ namespace ORTS.Popups
 		{
 			image.Source = new Rectangle(0, 0, SwitchImageSize, SwitchImageSize);
 
-            var traveller = new TDBTraveller(front ^ train.LeadLocomotive.Flipped ? train.FrontTDBTraveller : train.RearTDBTraveller);
-            if (!(front ^ train.LeadLocomotive.Flipped))
-				traveller.ReverseDirection();
-
+            var traveller = front ^ train.LeadLocomotive.Flipped ? new Traveller(train.FrontTDBTraveller) : new Traveller(train.RearTDBTraveller, Traveller.TravellerDirection.Backward);
 			TrackNode SwitchPreviousNode = traveller.TN;
 			TrackNode SwitchNode = null;
 			while (traveller.NextSection())
 			{
-				if (traveller.TN.TrJunctionNode != null)
+				if (traveller.IsJunction)
 				{
 					SwitchNode = traveller.TN;
 					break;

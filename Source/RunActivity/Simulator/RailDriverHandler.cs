@@ -59,10 +59,8 @@ namespace ORTS
             try
             {
                 PIEDevice[] devices = PIEHidDotNet.PIEDevice.EnumeratePIE();
-                //Console.WriteLine("devices {0}", devices.Length);
                 for (int i = 0; i < devices.Length; i++)
                 {
-                    //Console.WriteLine("device {0} {1}", devices[i].HidUsagePage, devices[i].Pid);
                     if (devices[i].HidUsagePage == 0xc && devices[i].Pid == 210)
                     {
                         Device = devices[i];
@@ -77,10 +75,10 @@ namespace ORTS
                     }
                 }
             }
-            catch (Exception e)
+            catch (Exception error)
             {
                 Device = null;
-                Trace.TraceWarning(e.ToString());
+                Trace.WriteLine(error);
             }
         }
 
@@ -145,7 +143,6 @@ namespace ORTS
                 }
             }
             State.Changed = true;
-            //Console.WriteLine(State.ToString());
         }
         
         /// <summary>
@@ -155,7 +152,7 @@ namespace ORTS
         /// <param name="sourceDevice"></param>
         public void HandlePIEHidError(Int32 error, PIEDevice sourceDevice)
         {
-            Trace.TraceWarning("RailDriver Error: " + error.ToString());
+            Trace.TraceWarning("RailDriver Error: {0}", error);
         }
 
         float Percentage(float x, float x0, float x100)
@@ -262,7 +259,7 @@ namespace ORTS
                 if (!File.Exists(file))
                 {
                     SetLEDs(0, 0, 0);
-                    Trace.TraceWarning("Cannot find RailDriver calibration file " + file);
+                    Trace.TraceWarning("Cannot find RailDriver calibration file {0}", file);
                     return;
                 }
             }
@@ -310,7 +307,7 @@ namespace ORTS
                             case "Rotary Switch 2-Position 1(OFF)": Rotary2Position1 = v; break;
                             case "Rotary Switch 2-Position 2(DIM)": Rotary2Position2 = v; break;
                             case "Rotary Switch 2-Position 3(FULL)": Rotary2Position3 = v; break;
-                            default: STFException.TraceWarning(reader, "unknown calibration value " + name); break;
+                            default: STFException.TraceWarning(reader, "Skipped unknown calibration value " + name); break;
                         }
                     }
                 }
@@ -350,7 +347,7 @@ namespace ORTS
             PreviousButtonData = new byte[6];
             Commands = new RailDriverUserCommand[Enum.GetNames(typeof(UserCommands)).Length];
             // top row of blue buttons left to right
-            Commands[(int)UserCommands.GameQuit] = new RailDriverUserCommand(0, 0x01);
+            Commands[(int)UserCommands.GamePauseMenu] = new RailDriverUserCommand(0, 0x01);
             Commands[(int)UserCommands.GameSave] = new RailDriverUserCommand(0, 0x02);
             //Commands[(int)UserCommands. F3] = new RailDriverUserCommand(0, 0x04);
             Commands[(int)UserCommands.DisplayTrackMonitorWindow] = new RailDriverUserCommand(0, 0x08);

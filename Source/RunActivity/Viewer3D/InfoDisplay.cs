@@ -69,8 +69,8 @@ namespace ORTS
         public InfoDisplay(Viewer3D viewer)
         {
             Viewer = viewer;
-            TextMaterial = (SpriteBatchMaterial)Materials.Load(Viewer.RenderProcess, "SpriteBatch");
-            DrawInforMaterial = (ActivityInforMaterial)Materials.Load(Viewer.RenderProcess, "DrawInforMaterial");
+            TextMaterial = (SpriteBatchMaterial)viewer.MaterialManager.Load("SpriteBatch");
+            DrawInforMaterial = (ActivityInforMaterial)viewer.MaterialManager.Load("DrawInfor");
 
             ProcessHandle = OpenProcess(0x410 /* PROCESS_QUERY_INFORMATION | PROCESS_VM_READ */, false, Process.GetCurrentProcess().Id);
             ProcessMemoryCounters = new PROCESS_MEMORY_COUNTERS() { cb = 40 };
@@ -79,7 +79,8 @@ namespace ORTS
                 DataLoggerStart();
         }
 
-        public void Stop()
+        [ThreadName("Render")]
+        internal void Terminate()
         {
             if (Viewer.Settings.DataLogger)
                 DataLoggerStop();
@@ -174,22 +175,20 @@ namespace ORTS
             }
             if (DrawCarNumber == true)
             {
-                foreach (TrainCar tcar in Viewer.TrainDrawer.ViewableCars)
-                {
-                    frame.AddPrimitive(DrawInforMaterial,
-                        new ActivityInforPrimitive(DrawInforMaterial, tcar),
-                            RenderPrimitiveGroup.World, ref Identity);
-                }
+                var cars = Viewer.World.Trains.Cars;
+                foreach (var car in cars.Keys)
+                    frame.AddPrimitive(DrawInforMaterial, new ActivityInforPrimitive(DrawInforMaterial, car), RenderPrimitiveGroup.World, ref Identity);
 
                 //	UpdateCarNumberText(frame, elapsedTime);
             }
             if (DrawSiding == true || DrawPlatform == true)
             {
-                foreach (WorldFile w in Viewer.SceneryDrawer.WorldFiles)
+                var worldFiles = Viewer.World.Scenery.WorldFiles;
+                foreach (var w in worldFiles)
                 {
                     if (DrawSiding == true && w != null && w.sidings != null)
                     {
-                        foreach (SidingLabel sd in w.sidings)
+                        foreach (var sd in w.sidings)
                         {
                             if (sd != null) frame.AddPrimitive(DrawInforMaterial,
                                 new ActivityInforPrimitive(DrawInforMaterial, sd, Color.Coral),
@@ -198,15 +197,22 @@ namespace ORTS
                     }
                     if (DrawPlatform == true && w != null && w.platforms != null)
                     {
-                        foreach (PlatformLabel pd in w.platforms)
+                        foreach (var pd in w.platforms)
                         {
                             if (pd != null) frame.AddPrimitive(DrawInforMaterial,
-                                new ActivityInforPrimitive(DrawInforMaterial, pd, Color.CornflowerBlue),
+                                new ActivityInforPrimitive(DrawInforMaterial, pd, Color.Yellow),
                                 RenderPrimitiveGroup.World, ref Identity);
                         }
                     }
                 }
             }
+        }
+
+        [CallOnThread("Loader")]
+        public void Mark()
+        {
+            TextMaterial.Mark();
+            DrawInforMaterial.Mark();
         }
 
         int GetWorkingSetSize()
@@ -361,7 +367,7 @@ namespace ORTS
 
     }
 
-    //2D straight lines
+    //2D textures
     public class ActivityInforPrimitive : RenderPrimitive
     {
         public readonly ActivityInforMaterial Material;
@@ -369,17 +375,19 @@ namespace ORTS
         public Viewer3D Viewer;
         TrainCar TrainCar = null;
         TrItemLabel TrItemLabel = null;
-        Color LabelColor;
+        Color LabelColor = Color.Blue;
         float LineSpacing;
+		WindowTextFont TextFont;
 
         //constructor: create one that draw car numbers
         public ActivityInforPrimitive(ActivityInforMaterial material, TrainCar tcar)
         {
             Material = material;
             Font = material.Font;
-            Viewer = material.RenderProcess.Viewer;
+            Viewer = material.Viewer;
             TrainCar = tcar;
             LineSpacing = Material.LineSpacing;
+			TextFont = Viewer.WindowManager.TextManager.Get("Arial", 12, System.Drawing.FontStyle.Bold, 1);
         }
 
         /// <summary>
@@ -389,10 +397,11 @@ namespace ORTS
         {
             Material = material;
             Font = material.Font;
-            Viewer = material.RenderProcess.Viewer;
+            Viewer = material.Viewer;
             TrItemLabel = pd;
             LineSpacing = Material.LineSpacing;
             LabelColor = labelColor;
+			TextFont = Viewer.WindowManager.TextManager.Get("Arial", 12, System.Drawing.FontStyle.Bold, 1);
         }
 
         /// <summary>
@@ -429,17 +438,8 @@ namespace ORTS
             //want to draw the train car name at cameraVector.Y, but need to check if it overlap other texts in Material.AlignedTextB
             //and determine the new location if conflict occurs
             TopY = AlignVertical(cameraVector.Y, X, X + Font.MeasureString(TrainCar.CarID).X, LineSpacing, Material.AlignedTextA);
+			TextFont.Draw(Material.SpriteBatch, new Point((int)X, (int)TopY), TrainCar.CarID, LabelColor, Color.White);
 
-            //draw the car number with blue and white color 
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X - 1, TopY - 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X + 0, TopY - 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X + 1, TopY - 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X - 1, TopY + 0), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X + 1, TopY + 0), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X - 1, TopY + 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X + 0, TopY + 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X + 1, TopY + 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrainCar.CarID, new Vector2(X, TopY), Color.Blue);
 
             //draw the vertical line with length Math.Abs(cameraVector.Y + LineSpacing - BottomY)
             //the term LineSpacing is used so that the text is above the line head
@@ -479,19 +479,7 @@ namespace ORTS
             //want to draw the text at cameraVector.Y, but need to check if it overlap other texts in Material.AlignedTextB
             //and determine the new location if conflict occurs
             TopY = AlignVertical(cameraVector.Y, X, X + Font.MeasureString(TrItemLabel.ItemName).X, LineSpacing, Material.AlignedTextB);
-
-            //outline the siding/platform name in white by pre-drawing all 8 points of compass
-            //Isn't this a clumsy way to do it?
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X + 0, TopY + 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X + 1, TopY + 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X + 1, TopY + 0), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X + 1, TopY - 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X + 0, TopY - 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X - 1, TopY - 1), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X - 1, TopY - 0), Color.White);
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X - 1, TopY + 1), Color.White);
-            //draw the siding/platform name in colour
-            Material.SpriteBatch.DrawString(Font, TrItemLabel.ItemName, new Vector2(X, TopY), LabelColor);
+			TextFont.Draw(Material.SpriteBatch, new Point((int)X, (int)TopY), TrItemLabel.ItemName, LabelColor);
 
             //draw a vertical line with length TopY + LineSpacing - BottomY
             //the term LineSpacing is used so that the text is above the line head

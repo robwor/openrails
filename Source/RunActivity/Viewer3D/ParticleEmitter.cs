@@ -29,7 +29,7 @@ namespace ORTS
             Direction.Y = stf.ReadFloat(STFReader.UNITS.Distance, 1.0f);  // May as well go up by default.
             Direction.Z = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
             NozzleWidth = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
-            stf.MustMatch(")");
+            stf.SkipRestOfBlock();
 
             MaxParticlesPerSecond = 60; // May come from the STF in the future.
             ParticleDuration = 5.0f;    // May come from the STF in the future.
@@ -61,7 +61,7 @@ namespace ORTS
         {
             Viewer = viewer;
             //string texturePath = viewer.Simulator.BasePath + @"\GLOBAL\TEXTURES\dieselsmoke.ace";
-            ParticleMaterial = (ParticleEmitterMaterial)Materials.Load(Viewer.RenderProcess, "ParticleEmitterMaterial");
+            ParticleMaterial = (ParticleEmitterMaterial)viewer.MaterialManager.Load("ParticleEmitter");
             emitter = new ParticleEmitter(Viewer.RenderProcess, data);
         }
 
@@ -81,7 +81,7 @@ namespace ORTS
 
         public void SetTexture(Texture2D texture)
         {
-            ParticleMaterial.texture = texture;
+            ParticleMaterial.Texture = texture;
         }
 
         public void SetEmissionRate(float particlesPerSecond)
@@ -96,6 +96,12 @@ namespace ORTS
 
         public void Reset()
         {
+        }
+
+        [CallOnThread("Loader")]
+        internal void Mark()
+        {
+            ParticleMaterial.Mark();
         }
     }
 

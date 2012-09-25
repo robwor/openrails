@@ -24,21 +24,22 @@ namespace MSTS
         public List<string> LightViews = new List<string>();    // Light CAB Views - by GeorgeS
         public CabViewControls CabViewControls = null;     // Controls in CAB - by GeorgeS
 
-        public CVFFile(string filePath)
+        public CVFFile(string filePath, string basePath)
 		{
-            string basepath = filePath.Substring(0, filePath.LastIndexOf('\\') + 1);
             using (STFReader stf = new STFReader(filePath, false))
                 stf.ParseFile(new STFReader.TokenProcessor[] {
                     new STFReader.TokenProcessor("tr_cabviewfile", ()=>{ stf.MustMatch("("); stf.ParseBlock(new STFReader.TokenProcessor[] {
                         new STFReader.TokenProcessor("position", ()=>{ Locations.Add(stf.ReadVector3Block(STFReader.UNITS.None, new Vector3())); }),
                         new STFReader.TokenProcessor("direction", ()=>{ Directions.Add(stf.ReadVector3Block(STFReader.UNITS.None, new Vector3())); }),
                         new STFReader.TokenProcessor("cabviewfile", ()=>{
-                            string filename = stf.ReadStringBlock(null);
-                            TwoDViews.Add(basepath + filename);
-                            NightViews.Add(basepath + Path.GetDirectoryName(filename) + "night\\" + Path.GetFileName(filename));
-                            LightViews.Add(basepath + Path.GetDirectoryName(filename) + "cablight\\" + Path.GetFileName(filename));
+                            var fileName = stf.ReadStringBlock(null);
+                            var path = Path.Combine(basePath, Path.GetDirectoryName(fileName));
+                            var name = Path.GetFileName(fileName);
+                            TwoDViews.Add(Path.Combine(path, name));
+                            NightViews.Add(Path.Combine(path, Path.Combine("NIGHT", name)));
+                            LightViews.Add(Path.Combine(path, Path.Combine("CABLIGHT", name)));
                         }),
-                        new STFReader.TokenProcessor("cabviewcontrols", ()=>{ CabViewControls = new CabViewControls(stf, basepath); }),
+                        new STFReader.TokenProcessor("cabviewcontrols", ()=>{ CabViewControls = new CabViewControls(stf, basePath); }),
                     });}),
                 });
 		}
@@ -122,6 +123,7 @@ namespace MSTS
         SPRUNG,
         NOT_SPRUNG,
         WHILE_PRESSED,
+        PRESSED,
         ONOFF, 
         _24HOUR, 
         _12HOUR
@@ -207,7 +209,7 @@ namespace MSTS
             catch(ArgumentException)
             {
                 stf.StepBackOneItem();
-                STFException.TraceInformation(stf, "Unknown ControlType " + stf.ReadString());
+                STFException.TraceWarning(stf, "Skipped unknown ControlType " + stf.ReadString());
                 ControlType = CABViewControlTypes.NONE;
             }
             //stf.ReadItem(); // Skip repeated Class Type 
@@ -216,14 +218,19 @@ namespace MSTS
         protected void ParsePosition(STFReader stf)
         {
             stf.MustMatch("(");
-            PositionX = stf.ReadInt(STFReader.UNITS.None, null);
-            PositionY = stf.ReadInt(STFReader.UNITS.None, null);
-            Width = stf.ReadInt(STFReader.UNITS.None, null);
-            Height = stf.ReadInt(STFReader.UNITS.None, null);
+            //PositionX = stf.ReadInt(STFReader.UNITS.None, null);
+            //PositionY = stf.ReadInt(STFReader.UNITS.None, null);
+            //Width = stf.ReadInt(STFReader.UNITS.None, null);
+            //Height = stf.ReadInt(STFReader.UNITS.None, null);
+            PositionX = stf.ReadDouble( STFReader.UNITS.None, null );
+            PositionY = stf.ReadDouble( STFReader.UNITS.None, null );
+            Width = stf.ReadDouble( STFReader.UNITS.None, null );
+            Height = stf.ReadDouble( STFReader.UNITS.None, null );
+
             // Handling middle values
             while (!stf.EndOfBlock())
             {
-                STFException.TraceWarning(stf, "Ignoring additional positional parameters");
+                STFException.TraceWarning(stf, "Ignored additional positional parameters");
                 Width = Height;
                 Height = stf.ReadInt(STFReader.UNITS.None, null);
             }
@@ -237,7 +244,7 @@ namespace MSTS
         }
         protected void ParseGraphic(STFReader stf, string basepath)
         {
-            ACEFile = basepath + stf.ReadStringBlock(null);
+            ACEFile = Path.Combine(basepath, stf.ReadStringBlock(null));
         }
         protected void ParseStyle(STFReader stf)
         {
@@ -255,7 +262,7 @@ namespace MSTS
             catch (ArgumentException)
             {
                 stf.StepBackOneItem();
-                STFException.TraceWarning(stf, "Unknown ControlStyle " + stf.ReadString());
+                STFException.TraceWarning(stf, "Skipped unknown ControlStyle " + stf.ReadString());
                 ControlStyle = CABViewControlStyles.NONE;
             }
             stf.SkipRestOfBlock();
@@ -272,7 +279,7 @@ namespace MSTS
             catch (ArgumentException)
             {
                 stf.StepBackOneItem();
-                STFException.TraceWarning(stf, "Unknown ControlStyle " + stf.ReadItem());
+                STFException.TraceWarning(stf, "Skipped unknown ControlStyle " + stf.ReadItem());
                 Units = CABViewControlUnits.NONE;
             }
             stf.SkipRestOfBlock();
@@ -285,7 +292,7 @@ namespace MSTS
     {
         public float FromDegree = 0;
         public float ToDegree = 0;
-        public int Center = 0;
+        public float Center = 0;
         public int Direction = 0;
         
         public CVCDial(STFReader stf, string basepath)
@@ -299,7 +306,7 @@ namespace MSTS
                 new STFReader.TokenProcessor("style", ()=>{ ParseStyle(stf); }),
                 new STFReader.TokenProcessor("units", ()=>{ ParseUnits(stf); }),
 
-                new STFReader.TokenProcessor("pivot", ()=>{ Center = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("pivot", ()=>{ Center = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
                 new STFReader.TokenProcessor("dirincrease", ()=>{ Direction = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
                 new STFReader.TokenProcessor("scalepos", ()=>{
                     stf.MustMatch("(");
@@ -312,7 +319,7 @@ namespace MSTS
     }
     #endregion
 
-    #region Guages
+    #region Gauges
     public class CVCGauge : CabViewControl
     {
         public Rectangle Area = new Rectangle();

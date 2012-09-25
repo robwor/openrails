@@ -26,33 +26,31 @@ namespace ORTS.Popups
         List<TabData> Tabs = new List<TabData>();
         int ActiveTab;
 
-		string statusText = "";
-
 		public HelpWindow(WindowManager owner)
 			: base(owner, 600, 450, "Help")
 		{
-            Tabs.Add(new TabData(Tab.KeyboardShortcuts, "Key Commands", (cl) =>
+            Tabs.Add( new TabData( Tab.KeyboardShortcuts, "Key Commands", ( cl ) =>
             {
                 var scrollbox = cl.AddLayoutScrollboxVertical(cl.RemainingWidth);
-                var keyWidth = scrollbox.RemainingWidth / UserInput.KeyboardLayout[0].Length;
+                var keyWidth = scrollbox.RemainingWidth / InputSettings.KeyboardLayout[0].Length;
                 var keyHeight = 3 * keyWidth;
-                UserInput.DrawKeyboardMap((rowBox) =>
+                InputSettings.DrawKeyboardMap((rowBox) =>
                 {
                 }, (keyBox, keyScanCode, keyName) =>
                 {
-                    var color = UserInput.GetScanCodeColor(keyScanCode);
+                    var color = InputSettings.GetScanCodeColor(keyScanCode);
                     if (color == Color.TransparentBlack)
                         color = Color.Black;
 
-                    UserInput.Scale(ref keyBox, keyWidth, keyHeight);
+                    InputSettings.Scale(ref keyBox, keyWidth, keyHeight);
                     scrollbox.Add(new Key(keyBox.Left - scrollbox.CurrentLeft, keyBox.Top - scrollbox.CurrentTop, keyBox.Width - 1, keyBox.Height - 1, keyName, color));
                 });
                 foreach (UserCommands command in Enum.GetValues(typeof(UserCommands)))
                 {
                     var line = scrollbox.AddLayoutHorizontal(TextHeight);
                     var width = line.RemainingWidth / 2;
-                    line.Add(new Label(width, line.RemainingHeight, UserInput.FormatCommandName(command)));
-                    line.Add(new Label(width, line.RemainingHeight, UserInput.Commands[(int)command].ToString()));
+                    line.Add(new Label(width, line.RemainingHeight, InputSettings.FormatCommandName(command)));
+                    line.Add(new Label(width, line.RemainingHeight, InputSettings.Commands[(int)command].ToString()));
                 }
             }));
             if (owner.Viewer.Simulator.Activity != null)
@@ -162,25 +160,35 @@ namespace ORTS.Popups
                                         var wagonName = trainIndex.ToString() + " - " + wagonIndex.ToString();
                                         var wagonType = "";
                                         var wagonFound = false;
-                                        foreach (MSTS.ActivityObject activityObject in owner.Viewer.Simulator.Activity.Tr_Activity.Tr_Activity_File.ActivityObjects.ActivityObjectList) {
-                                            if (activityObject.ID == trainIndex) {
-                                                foreach (MSTS.Wagon trainWagon in activityObject.Train_Config.TrainCfg.WagonList) {
-                                                    if (trainWagon.UiD == wagonIndex) {
-                                                        wagonType = trainWagon.Name;
+                                        if (owner.Viewer.Simulator.Activity.Tr_Activity.Tr_Activity_File.ActivityObjects != null)
+                                        {
+                                            foreach (MSTS.ActivityObject activityObject in owner.Viewer.Simulator.Activity.Tr_Activity.Tr_Activity_File.ActivityObjects.ActivityObjectList)
+                                            {
+                                                if (activityObject.ID == trainIndex)
+                                                {
+                                                    foreach (MSTS.Wagon trainWagon in activityObject.Train_Config.TrainCfg.WagonList)
+                                                    {
+                                                        if (trainWagon.UiD == wagonIndex)
+                                                        {
+                                                            wagonType = trainWagon.Name;
+                                                            wagonFound = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if (wagonFound)
+                                                    break;
+                                            }
+                                            if (!wagonFound)
+                                            {
+                                                foreach (var car in owner.Viewer.PlayerTrain.Cars)
+                                                {
+                                                    if (car.UiD == wagonItem.UID)
+                                                    {
+                                                        wagonType = Path.GetFileNameWithoutExtension(car.WagFilePath);
                                                         wagonFound = true;
                                                         break;
                                                     }
-                                                }
-                                            }
-                                            if (wagonFound)
-                                                break;
-                                        }
-                                        if (!wagonFound) {
-                                            foreach (var car in owner.Viewer.PlayerTrain.Cars) {
-                                                if (car.UiD == wagonItem.UID) {
-                                                    wagonType = Path.GetFileNameWithoutExtension(car.WagFilePath);
-                                                    wagonFound = true;
-                                                    break;
                                                 }
                                             }
                                         }

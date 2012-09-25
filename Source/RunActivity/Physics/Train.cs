@@ -32,53 +32,89 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using MSTS;
 using ORTS.Popups;
-
+using ORTS.MultiPlayer;
 
 namespace ORTS
 {
 	public class Train
 	{
-		// public static Signals Signals;
 		public List<TrainCar> Cars = new List<TrainCar>();  // listed front to back
+		public int Number;
+		public float LastReportedSpeed = 10.0f; //Multiplayer, used to check if the train has stopped, others should know that
+		public static int TotalNumber = 0;
 		public TrainCar FirstCar { get { return Cars[0]; } }
 		public TrainCar LastCar { get { return Cars[Cars.Count - 1]; } }
-		public TDBTraveller RearTDBTraveller;   // positioned at the back of the last car in the train
-		public TDBTraveller FrontTDBTraveller; // positioned at the front of the train by CalculatePositionOfCars
-        public float Length; // length of train from FrontTDBTraveller to RearTDBTraveller
+		public Traveller RearTDBTraveller;   // positioned at the back of the last car in the train
+		public Traveller FrontTDBTraveller; // positioned at the front of the train by CalculatePositionOfCars
+		public float Length; // length of train from FrontTDBTraveller to RearTDBTraveller
 		public float SpeedMpS = 0.0f;  // meters per second +ve forward, -ve when backing
+		public float lastSpeedMps = 0.0f;
 		public Train UncoupledFrom = null;  // train not to coupled back onto
 		public float TotalCouplerSlackM = 0;
 		public float MaximumCouplerForceN = 0;
 		public int NPull = 0;
 		public int NPush = 0;
 		private int LeadLocomotiveIndex = -1;
+	public bool IsFreight = false;
 		public float SlipperySpotDistanceM = 0; // distance to extra slippery part of track
 		public float SlipperySpotLengthM = 0;
 
 		// These signals pass through to all cars and locomotives on the train
-        public Direction MUDirection = Direction.N; //set by player locomotive to control MU'd locomotives
-        public float MUThrottlePercent = 0;  // set by player locomotive to control MU'd locomotives
+		public Direction MUDirection = Direction.N; //set by player locomotive to control MU'd locomotives
+		public float MUThrottlePercent = 0;  // set by player locomotive to control MU'd locomotives
 		public float MUReverserPercent = 100;  // steam engine direction/cutoff control for MU'd locomotives
 		public float MUDynamicBrakePercent = -1;  // dynamic brake control for MU'd locomotives, <0 for off
 		public float BrakeLine1PressurePSI = 90;     // set by player locomotive to control entire train brakes
-		public float BrakeLine2PressurePSI = 0;     // extra line for dual line systems
-		public float BrakeLine3PressurePSI = 0;     // extra line just in case
-		public float BrakeLine4PressurePSI = 0;     // extra line just in case
+		public float BrakeLine2PressurePSI = 0;     // extra line for dual line systems, main reservoir
+		public float BrakeLine3PressurePSI = 0;     // extra line just in case, engine brake pressure
+		public float BrakeLine4PressurePSI = 0;     // extra line just in case, ep brake control line
 		public RetainerSetting RetainerSetting = RetainerSetting.Exhaust;
 		public int RetainerPercent = 100;
 
-		private Signal nextSignal = new Signal(null, null, -1);
+		public AIPath Path = null;
+		public TrackAuthority TrackAuthority = null;  // track authority issued by Dispatcher
+
+		public enum TRAINTYPE
+		{
+			PLAYER,
+			STATIC,
+			AI,
+			REMOTE
+		}
+
+		public TRAINTYPE TrainType = TRAINTYPE.AI;
+
+        public Signal nextSignal = new Signal(null, null, -1); // made public for signalling processing
 		public float distanceToSignal = 0.1f;
+        public List<ObjectItemInfo> SignalObjectItems;
+        public int IndexNextSignal = -1;  // Index in SignalObjectItems for next signal
+        public int IndexNextSpeedlimit = -1;  // Index in SignalObjectItems for next speedpost
+        public SignalObject NextSignalObject; // direct reference to next signal
+
 		public TrackMonitorSignalAspect TMaspect = TrackMonitorSignalAspect.None;
-		private bool spad = false;      // Signal Passed At Danger
+		public bool spad = false;      // Signal Passed At Danger
 		public SignalHead.SIGASP CABAspect = SignalHead.SIGASP.UNKNOWN; // By GeorgeS
-        public TrackLayer EditTrain = null; //WaltN: Temporary facility for track-laying experiments
+
+        public float RouteMaxSpeedMpS = 0;    // Max speed as set by route (default value)
+        public float AllowedMaxSpeedMpS = 0;  // Max speed as allowed
+        private float allowedMaxSpeedSignalMpS = 0;  // Max speed as set by signal
+        private float allowedMaxSpeedLimitMpS = 0;   // Max speed as set by limit
+        private float maxTimeS = 120;         // check ahead for distance covered in 2 mins.
+        private float minCheckDistanceM = 5000;  // minimum distance to check ahead
+
+        //To investigate coupler breaks on route
+        public int NumOfCouplerBreaks = 0;
+        private bool numOfCouplerBreaksNoted = false;
+
+		public TrackLayer EditTrain = null; //WaltN: Temporary facility for track-laying experiments
 
 		/// <summary>
 		/// Reference to the Simulator object.
 		/// </summary>
 		protected Simulator Simulator;
 
+		public bool updateMSGReceived = false; //sometime the train is controled remotely, so need to know when to update location
+		public float travelled;//distance travelled, but not exactly
 
 		// For AI control of the train
 		public float AITrainBrakePercent
@@ -95,7 +131,7 @@ namespace ORTS
 		public bool AITrainDirectionForward
 		{
 			get { return MUDirection == Direction.Forward; }
-			set { MUDirection = value ? Direction.Forward : Direction.Reverse; MUReverserPercent = value ? 100 : -100; }
+            set { MUDirection = value ? Direction.Forward : Direction.Reverse; MUReverserPercent = value ? 100 : -100; }
 		}
 		public TrainCar LeadLocomotive
 		{
@@ -117,9 +153,54 @@ namespace ORTS
 			}
 		}
 
+        public bool Reverse
+        {
+            get
+            {
+                return MUDirection == Direction.Reverse;
+            }
+        }
+
+        public Traveller dFrontTDBTraveller
+        {
+            get
+            {
+                if (Reverse)
+                {
+                    Traveller tr = new Traveller(RearTDBTraveller);
+                    tr.ReverseDirection();
+                    return tr;
+                }
+                else
+                {
+                    return FrontTDBTraveller;
+                }
+            }
+        }
+
+        public Traveller dRearTDBTraveller
+        {
+            get
+            {
+                if (Reverse)
+                {
+                    Traveller tr = new Traveller(FrontTDBTraveller);
+                    tr.ReverseDirection();
+                    return tr;
+                }
+                else
+                {
+                    return RearTDBTraveller;
+                }
+            }
+        }
+
         public Train(Simulator simulator)
         {
             Simulator = simulator;
+			Number = TotalNumber;
+			TotalNumber++;
+            SignalObjectItems = new List<ObjectItemInfo>();
         }
 
 		// restore game state
@@ -127,7 +208,9 @@ namespace ORTS
 		{
             Simulator = simulator;
 			RestoreCars(simulator, inf);
+			CheckFreight();
 			SpeedMpS = inf.ReadSingle();
+			TrainType = (TRAINTYPE)inf.ReadInt32();
 			MUDirection = (Direction)inf.ReadInt32();
 			MUThrottlePercent = inf.ReadSingle();
 			MUDynamicBrakePercent = inf.ReadSingle();
@@ -139,11 +222,17 @@ namespace ORTS
 			LeadLocomotiveIndex = inf.ReadInt32();
 			RetainerSetting = (RetainerSetting)inf.ReadInt32();
 			RetainerPercent = inf.ReadInt32();
-			RearTDBTraveller = new TDBTraveller(inf);
+			RearTDBTraveller = new Traveller(simulator.TSectionDat, simulator.TDB.TrackDB.TrackNodes, inf);
 			SlipperySpotDistanceM = inf.ReadSingle();
 			SlipperySpotLengthM = inf.ReadSingle();
 			CalculatePositionOfCars(0);
+            RouteMaxSpeedMpS         = inf.ReadSingle();
+            AllowedMaxSpeedMpS       = inf.ReadSingle();
+            allowedMaxSpeedSignalMpS = inf.ReadSingle();
+            allowedMaxSpeedLimitMpS  = inf.ReadSingle();
 
+            SignalObjectItems = new List<ObjectItemInfo>();
+            InitializeSignals(true);
 		}
 
 		// save game state
@@ -151,6 +240,7 @@ namespace ORTS
 		{
 			SaveCars(outf);
 			outf.Write(SpeedMpS);
+			outf.Write((int)TrainType);
 			outf.Write((int)MUDirection);
 			outf.Write(MUThrottlePercent);
 			outf.Write(MUDynamicBrakePercent);
@@ -165,6 +255,10 @@ namespace ORTS
 			RearTDBTraveller.Save(outf);
 			outf.Write(SlipperySpotDistanceM);
 			outf.Write(SlipperySpotLengthM);
+            outf.Write(RouteMaxSpeedMpS);
+            outf.Write(AllowedMaxSpeedMpS);
+            outf.Write(allowedMaxSpeedSignalMpS);
+            outf.Write(allowedMaxSpeedLimitMpS);
 		}
 
 		private void SaveCars(BinaryWriter outf)
@@ -181,14 +275,129 @@ namespace ORTS
 				Cars.Add(RollingStock.Restore(simulator, inf, this, i == 0 ? null : Cars[i - 1]));
 		}
 
-        public void InitializeSignals()
+        public void InitializeSignals(bool existingSpeedLimits)
         {
             Debug.Assert(Simulator.Signals != null, "Cannot InitializeSignals() without Simulator.Signals.");
 
-            nextSignal = Simulator.Signals.FindNearestSignal(FrontTDBTraveller);
-            distanceToSignal = nextSignal.DistanceToSignal(FrontTDBTraveller);
-            nextSignal.UpdateTrackOcupancy(RearTDBTraveller);
-            // if (isPlayerTrain) nextSignal.SetSignalState(Signal.SIGNALSTATE.STOP);
+	        IndexNextSignal = -1;
+	        IndexNextSpeedlimit = -1;
+            List<int> tmp = new List<int>();
+
+  //  set overall speed limits if these do not yet exist
+
+            if (!existingSpeedLimits)
+            {
+                    AllowedMaxSpeedMpS       = RouteMaxSpeedMpS;   // set default
+                    allowedMaxSpeedSignalMpS = RouteMaxSpeedMpS;   // set default
+                    allowedMaxSpeedLimitMpS  = RouteMaxSpeedMpS;   // set default
+            }
+
+  //  get first item from train (irrespective of distance)
+
+            ObjectItemInfo.ObjectItemFindState returnState = 0;
+            float distanceToLastObject = 9E29f;  // set to overlarge value
+
+            ObjectItemInfo firstObject = Simulator.Signals.getNextObject(dFrontTDBTraveller, ObjectItemInfo.ObjectItemType.ANY,
+                    true, -1, ref returnState);
+
+            if (returnState > 0)
+            {
+                if (!SignalObjectItems.Exists(oi => oi.ObjectDetails.thisRef == firstObject.ObjectDetails.thisRef))
+                    SignalObjectItems.Add(firstObject);
+                tmp.Add(firstObject.ObjectDetails.thisRef);
+                distanceToLastObject = firstObject.distance_to_train;
+            }
+
+  // get next items within max distance
+
+            float maxDistance = Math.Max(AllowedMaxSpeedMpS * maxTimeS, minCheckDistanceM);    // look maxTimeS or minCheckDistance ahead
+
+            ObjectItemInfo nextObject;
+            ObjectItemInfo prevObject = firstObject;
+
+            while (returnState > 0 && distanceToLastObject < maxDistance)
+            {
+                nextObject = Simulator.Signals.getNextObject(prevObject.ObjectDetails, ObjectItemInfo.ObjectItemType.ANY,
+                null, -1, ref returnState);
+
+                if (returnState > 0)
+                {
+                    nextObject.distance_to_train = prevObject.distance_to_train + nextObject.distance_to_object;
+                    distanceToLastObject = nextObject.distance_to_train;
+                    if (!SignalObjectItems.Exists(oi => oi.ObjectDetails.thisRef == nextObject.ObjectDetails.thisRef))
+                        SignalObjectItems.Add(nextObject);
+                    tmp.Add(nextObject.ObjectDetails.thisRef);
+                    prevObject = nextObject;
+                }
+            }
+
+            SignalObjectItems.RemoveAll(oi => !tmp.Contains(oi.ObjectDetails.thisRef));
+
+ //
+ // get first signal and first speedlimit
+ // also initiate nextSignal variable
+ //
+  
+            bool signalFound = false;
+            bool speedlimFound = false;
+
+            for (int isig = 0; isig < SignalObjectItems.Count && (!signalFound || !speedlimFound); isig++)
+            {
+                if (!signalFound)
+                {
+                    ObjectItemInfo thisObject = SignalObjectItems[isig];
+                    if (thisObject.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                    {
+                        Signals signals = thisObject.ObjectDetails.signalRef;
+                        nextSignal = signals.InitSignalItem(thisObject.ObjectDetails.thisRef);
+                        //nextSignal.UpdateTrackOcupancy(dRearTDBTraveller);
+                        signalFound = true;
+                        IndexNextSignal = isig;
+                    }
+                }
+
+                if (!speedlimFound)
+                {
+                    ObjectItemInfo thisObject = SignalObjectItems[isig];
+                    if (thisObject.ObjectType == ObjectItemInfo.ObjectItemType.SPEEDLIMIT)
+                    {
+                        IndexNextSpeedlimit = isig;
+                    }
+                }
+            }
+
+        //
+ // If signal in list, set signal reference,
+ // else try to get first signal
+ //
+
+            NextSignalObject = null;
+            if (IndexNextSignal > 0)
+            {
+                    NextSignalObject = SignalObjectItems[IndexNextSignal].ObjectDetails;
+                    distanceToSignal = SignalObjectItems[IndexNextSignal].distance_to_train;
+            }
+            else
+            {
+                    ObjectItemInfo firstSignalObject = 
+                            Simulator.Signals.getNextObject(dFrontTDBTraveller, ObjectItemInfo.ObjectItemType.SIGNAL,
+                            true, -1, ref returnState);
+
+                    if (returnState > 0)
+                    {
+                            NextSignalObject = firstSignalObject.ObjectDetails;
+                            distanceToSignal = firstSignalObject.distance_to_train;
+                            Signals signals = NextSignalObject.signalRef;
+                            nextSignal = signals.InitSignalItem(NextSignalObject.thisRef);
+                            //nextSignal.UpdateTrackOcupancy(dRearTDBTraveller);
+                    }
+            }
+
+ //
+ // determine actual speed limits depending on overall speed and type of train
+ //
+
+            updateSpeedInfo();
         }
 
         //
@@ -196,10 +405,108 @@ namespace ORTS
         //
         public void ResetSignal(bool askPermisiion)
         {
-            nextSignal.Reset(FrontTDBTraveller, askPermisiion);
-            nextSignal.UpdateTrackOcupancy(RearTDBTraveller);
+#if DUMP_DISPATCHER
+            Simulator.AI.Dispatcher.Dump();
+
+            if (lastclocktime != Simulator.ClockTime)
+            {
+                dumps.Add(Simulator.ClockTime + 3, Program.Simulator.AI.Dispatcher.Dump);
+                lastclocktime = Simulator.ClockTime;
+            }
+#endif
+            nextSignal.Reset(dFrontTDBTraveller, askPermisiion);
+            nextSignal.UpdateTrackOcupancy(dRearTDBTraveller);
             spad = false;
+
+        // Clear and recreate full signal list
+
+            int sigtotal = SignalObjectItems.Count;
+            SignalObjectItems.RemoveRange(0,sigtotal);
+
+            InitializeSignals(true);                
         }
+
+		//
+		//  This method is invoked whenever the train direction has changed or 'G' key pressed 
+		//
+		public void ResetSignal()
+		{
+			ObjectItemInfo ob;
+			bool force = SignalObjectItems != null &&
+				(ob = (SignalObjectItems.Where(o => o.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL).FirstOrDefault())) != null &&
+				ob.ObjectDetails.hasPermission == Signal.PERMISSION.GRANTED;
+
+			nextSignal.Reset(dFrontTDBTraveller, false);
+			nextSignal.UpdateTrackOcupancy(dRearTDBTraveller);
+			spad = false;
+
+			// Clear and recreate full signal list
+
+			int sigtotal = SignalObjectItems.Count;
+			SignalObjectItems.RemoveRange(0, sigtotal);
+
+			Simulator.AI.Dispatcher.ExtendTrainAuthorization(this, force);
+		}
+		
+#if DUMP_DISPATCHER
+        private Heap<Action> dumps = new Heap<Action>();
+        private double lastclocktime = -1;
+        private void CheckDump()
+        {
+            if (dumps.GetSize() > 0)
+            {
+                if (dumps.GetMinKey() < Program.Simulator.ClockTime)
+                {
+                    Action a = dumps.DeleteMin();
+                    a();
+                }
+            }
+        }
+
+        public void DumpSignals(StringBuilder sta)
+        {
+            sta.AppendFormat("|Speed|{0:000.0}\r\n\r\n", this.SpeedMpS);
+            sta.AppendLine("|Signals");
+            if (nextSignal != null)
+            {
+                int sigid = nextSignal.nextSigRef;
+                
+                sta.AppendFormat("|NextSigRef|{0}\r\n", sigid);
+                if (sigid > -1)
+                {
+                    SignalObject s = Signal.signalObjects[sigid];
+                    s.Dump(sta, dFrontTDBTraveller);
+                    sigid = s.nextSignal;
+                    sta.AppendLine();
+                    sta.AppendFormat("|Next-NextSigRef|{0}\r\n", sigid);
+                    if (sigid > -1)
+                    {
+                        s = Signal.signalObjects[sigid];
+                        s.Dump(sta, dFrontTDBTraveller);
+                    }
+                }
+                sta.AppendLine();
+                
+                sigid = nextSignal.prevSigRef; 
+                sta.AppendFormat("|PrevSigRef|{0}\r\n", sigid);
+                if (sigid > -1)
+                {
+                    SignalObject s = Signal.signalObjects[sigid];
+                    s.Dump(sta, null);
+                }
+                sta.AppendLine();
+
+                sigid = nextSignal.rearSigRef;
+                sta.AppendFormat("|RearSigRef|{0}\r\n", sigid);
+                if (sigid > -1)
+                {
+                    SignalObject s = Signal.signalObjects[sigid];
+                    s.Dump(sta, null);
+                }
+                sta.AppendLine();
+            }
+        }
+#endif
 
         // Sets the Lead locomotive to the next in the consist
         public void LeadNextLocomotive()
@@ -215,6 +522,8 @@ namespace ORTS
             {
                 if (Cars[i].IsDriveable)
                 {
+					//in multiplayer, only wants to change locomotive starts with my name (i.e. original settings of my locomotives)
+					if (MPManager.IsMultiPlayer() && !Cars[i].CarID.StartsWith(MPManager.GetUserName() + " ")) continue;
                     // Count the driveables
                     coud++;
 
@@ -230,40 +539,173 @@ namespace ORTS
                 }
             }
 
+            TrainCar prevLead = LeadLocomotive;
+
             // If found one after the current
             if (nextLead != -1)
                 LeadLocomotiveIndex = nextLead;
             // If not, and have more than one, set the first
             else if (coud > 1)
                 LeadLocomotiveIndex = firstLead;
+            Orient();
+            TrainCar newLead = LeadLocomotive;
+            if (prevLead != null && newLead != null && prevLead != newLead)
+                newLead.CopyControllerSettings(prevLead);
+            if (Program.Simulator.PlayerLocomotive != null && Program.Simulator.PlayerLocomotive.Train == this)
+            {
+                Program.Simulator.PlayerLocomotive = newLead;
+                Program.Simulator.AI.Dispatcher.ReversePlayerAuthorization();
+            }
         }
 
         /// <summary>
-		/// Someone is sending an event notification to all cars on this train.
-		/// ie doors open, pantograph up, lights on etc.
-		/// </summary>
-		public void SignalEvent(EventID eventID)
+        /// Flips the train if necessary so that the train orientation matches the lead locomotive cab direction
+        /// </summary>
+        public void Orient()
+        {
+            TrainCar lead = LeadLocomotive;
+            if (lead == null || !(lead.Flipped ^ lead.GetCabFlipped()))
+                return;
+            for (int i = Cars.Count - 1; i > 0; i--)
+                Cars[i].CopyCoupler(Cars[i - 1]);
+            for (int i = 0; i < Cars.Count / 2; i++)
+            {
+                int j = Cars.Count - i - 1;
+                TrainCar car = Cars[i];
+                Cars[i] = Cars[j];
+                Cars[j] = car;
+            }
+            if (LeadLocomotiveIndex >= 0)
+                LeadLocomotiveIndex = Cars.Count - LeadLocomotiveIndex - 1;
+            for (int i = 0; i < Cars.Count; i++)
+                Cars[i].Flipped = !Cars[i].Flipped;
+            Traveller t = FrontTDBTraveller;
+            FrontTDBTraveller = new Traveller(RearTDBTraveller, Traveller.TravellerDirection.Backward);
+            RearTDBTraveller = new Traveller(t, Traveller.TravellerDirection.Backward);
+            MUDirection = DirectionControl.Flip(MUDirection);
+            MUReverserPercent = -MUReverserPercent;
+            InitializeSignals(true);  // Initialize signals with existing speed information
+        }
+
+        /// <summary>
+        /// Someone is sending an event notification to all cars on this train.
+        /// ie doors open, pantograph up, lights on etc.
+        /// </summary>
+        public void SignalEvent(EventID eventID)
 		{
 			foreach (TrainCar car in Cars)
 				car.SignalEvent(eventID);
 		}
 
 
-		public void Update(float elapsedClockSeconds)
+		public virtual void Update(float elapsedClockSeconds)
 		{
+#if DUMP_DISPATCHER
+            CheckDump();
+#endif
+			if (TrainType == TRAINTYPE.REMOTE) {
+				//if a MSGMove is received
+				if (updateMSGReceived)
+				{
+					float move = 0.0f;
+					var requestedSpeed = SpeedMpS;
+					try
+					{
+						var x = travelled + SpeedMpS * elapsedClockSeconds + (SpeedMpS - lastSpeedMps) / 2 * elapsedClockSeconds;
+						this.MUDirection = (Direction)expectedDIr;
+
+						if (Math.Abs(x - expectedTravelled) < 0.2 || Math.Abs(x - expectedTravelled) > 10)
+						{
+							CalculatePositionOfCars(expectedTravelled - travelled);
+							//if something wrong with the switch
+							if (this.RearTDBTraveller.TrackNodeIndex != expectedTracIndex)
+							{
+								Traveller t = new Traveller(Simulator.TSectionDat, Simulator.TDB.TrackDB.TrackNodes, Simulator.TDB.TrackDB.TrackNodes[expectedTracIndex], expectedTileX, expectedTileZ, expectedX, expectedZ, (Traveller.TravellerDirection)expectedTDir);
+								
+								//move = SpeedMpS > 0 ? 0.001f : -0.001f;
+								this.travelled = expectedTravelled;
+								this.RearTDBTraveller = t;
+								CalculatePositionOfCars(0);
+
+							}
+							//}
+						}
+						else//if the predicted location and reported location are similar, will try to increase/decrease the speed to bridge the gap in 1 second
+						{
+							SpeedMpS += (expectedTravelled - x) / 1;
+							CalculatePositionOfCars(SpeedMpS * elapsedClockSeconds);
+						}
+					}
+					catch (Exception)
+					{
+						move = expectedTravelled - travelled;
+					}
+					/*if (Math.Abs(requestedSpeed) < 0.00001 && Math.Abs(SpeedMpS) > 0.01) updateMSGReceived = true; //if requested is stop, but the current speed is still moving
+					else*/ updateMSGReceived = false;
+
+				}
+				else//no message received, will move at the previous speed
+				{
+					CalculatePositionOfCars(SpeedMpS * elapsedClockSeconds);
+				}
+
+				//update speed for each car, so wheels will rotate
+				foreach (TrainCar car in Cars)
+				{
+					if (car != null)
+					{
+						if (car.IsDriveable && car is MSTSWagon) (car as MSTSWagon).WheelSpeedMpS = SpeedMpS;
+						car.SpeedMpS = SpeedMpS;
+						if (car.Flipped) car.SpeedMpS = -car.SpeedMpS;
+
+                        
+
+#if INDIVIDUAL_CONTROL
+						if (car is MSTSLocomotive && car.CarID.StartsWith(MPManager.GetUserName()))
+						{
+							car.Update(elapsedClockSeconds);
+						}
+#endif
+					}
+				}
+				lastSpeedMps = SpeedMpS;
+				//Orient();
+				if (MPManager.IsServer())
+				{
+					Program.Simulator.AI.Dispatcher.RequestAuth(this, true, 0);
+					UpdateSignalState();
+				}
+				return;
+			}
+		
 			PropagateBrakePressure(elapsedClockSeconds);
 
+            TrainCar uncoupleBehindCar = null;
 			foreach (TrainCar car in Cars)
 			{
 				car.MotiveForceN = 0;
+#if INDIVIDUAL_CONTROL
+				var canUpdate = true;
+				if (MPManager.IsMultiPlayer())
+				{
+					foreach (var p in MPManager.OnlineTrains.Players)
+					{
+						//if this car is a locomotive of another guy
+						if (car is MSTSLocomotive && car.CarID.StartsWith(p.Key)) canUpdate = false;
+					}
+				}
+				
+				if (canUpdate) 
+#endif
 				car.Update(elapsedClockSeconds);
-				//Console.WriteLine("update {0} {1} {2} {3} {4}", car.SpeedMpS, car.MotiveForceN, car.GravityForceN, car.FrictionForceN, car.BrakeSystem.GetStatus());
 				car.TotalForceN = car.MotiveForceN + car.GravityForceN;
 				if (car.Flipped)
 				{
 					car.TotalForceN = -car.TotalForceN;
 					car.SpeedMpS = -car.SpeedMpS;
 				}
+                if (car.CouplerOverloaded)
+                    uncoupleBehindCar = car;
 			}
 
 			AddCouplerImpuseForces();
@@ -303,14 +745,41 @@ namespace ORTS
                 {
                     Stop();
                     // Using FrontTDBTraveller if moving forward or RearTDBTraveller if moving backwards
-                    TDBTraveller t = (MUDirection == Direction.Forward) ? FrontTDBTraveller : RearTDBTraveller;
+                    Traveller t = (MUDirection == Direction.Forward) ? FrontTDBTraveller : RearTDBTraveller;
                     // Initiate a route edit
                     EditTrain.LaySection(t);
                 }
 			}
 
 			if (!spad) UpdateSignalState();
-			UpdateCrossingState(); //update crossings in viewing range
+
+            // Coupler breaker
+            if (uncoupleBehindCar != null)
+            {
+                if (uncoupleBehindCar.CouplerOverloaded)
+                {
+                    if (!numOfCouplerBreaksNoted)
+                    {
+                        NumOfCouplerBreaks++;
+                        Trace.WriteLine(String.Format("Num of coupler breaks: {0}", NumOfCouplerBreaks));
+                        numOfCouplerBreaksNoted = true;
+                    }
+                }
+                else
+                    numOfCouplerBreaksNoted = false;
+                if (Simulator.BreakCouplers)
+                {
+                    Simulator.UncoupleBehind(uncoupleBehindCar);
+                    uncoupleBehindCar.CouplerOverloaded = false;
+                    Simulator.Confirmer.Warning("Coupler broken!");
+                }
+                else
+                    Simulator.Confirmer.Warning("Coupler overloaded!");
+                uncoupleBehindCar = null; 
+            }
+            else
+                numOfCouplerBreaksNoted = false;
+
 
 		} // end Update
 
@@ -318,29 +787,363 @@ namespace ORTS
 		//
 		//  Update the distance to and aspect of next signal
 		//
-		private void UpdateSignalState()
+        private Direction _prevDirection = Direction.N;
+        private void UpdateSignalState()
 		{
-			float dist = nextSignal.DistanceToSignal(FrontTDBTraveller);
-			if (dist <= 0.0f)
+            ObjectItemInfo.ObjectItemFindState returnState = ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND;
+            bool listChanged = false;
+            int lastSignalObjectRef = -1;
+            bool signalFound = false;
+            bool speedlimFound = false;
+
+            ObjectItemInfo firstObject = null;
+
+            if (this.MUDirection != _prevDirection)
+            {
+                _prevDirection = MUDirection;
+                ResetSignal(false);
+            }
+
+        //
+        // get distance to first object
+        //
+
+            if (SignalObjectItems.Count > 0)
 			{
-				if (nextSignal.GetAspect() == SignalHead.SIGASP.STOP && nextSignal.HasPermissionToProceed() == Signal.PERMISSION.DENIED)
-				{
-					spad = true;
-					//Stop();             // Signal Passed At Danger so Stop train!
-					return;
-				}
-				nextSignal.NextSignal();
-				dist = nextSignal.DistanceToSignal(FrontTDBTraveller);
-			}
-			nextSignal.UpdateTrackOcupancy(RearTDBTraveller);
-			distanceToSignal = dist;
-			TMaspect = nextSignal.GetMonitorAspect();
-			CABAspect = nextSignal.GetAspect();     // By GeorgeS
-		}
+                    firstObject = SignalObjectItems[0];
+                    firstObject.distance_to_train = firstObject.ObjectDetails.DistanceTo(dFrontTDBTraveller);
+
+  //
+        // remember last signal index
+        //
+
+                    if (NextSignalObject != null)
+                    {
+                            lastSignalObjectRef = NextSignalObject.thisRef;
+        			}
+		        	nextSignal.UpdateTrackOcupancy(dRearTDBTraveller);
+        //
+        // check if passed object - if so, remove object
+        // if object is speed, set max allowed speed
+        //
+
+                    while (firstObject.distance_to_train < 0.0f && SignalObjectItems.Count > 0)
+                    {
+                            if (firstObject.actual_speed > 0)
+                            {
+                                    AllowedMaxSpeedMpS = firstObject.actual_speed;
+                                    if (firstObject.ObjectDetails.isSignal)
+                                    {
+                                            allowedMaxSpeedSignalMpS = AllowedMaxSpeedMpS;
+                                    }
+                                    else
+                                    {
+                                            allowedMaxSpeedLimitMpS = AllowedMaxSpeedMpS;
+                                    }
+                            }
+
+                            SignalObjectItems.RemoveAt(0);
+
+                            if (SignalObjectItems.Count > 0)
+                            {
+                                    firstObject = SignalObjectItems[0];
+                                    firstObject.distance_to_train = firstObject.ObjectDetails.DistanceTo(dFrontTDBTraveller);
+                            }
+
+                            listChanged = true;
+                    }
+
+        //
+        // if no objects left on list, find first object whatever the distance
+        //
+
+                    if (SignalObjectItems.Count <= 0)
+                    {
+                         firstObject = Simulator.Signals.getNextObject(dFrontTDBTraveller, ObjectItemInfo.ObjectItemType.ANY,
+                                            true, -1, ref returnState);
+                         if (returnState > 0)
+                         {
+                                 SignalObjectItems.Add(firstObject);
+                         }
+                    }
+            }
+
+        //
+        // process further if any object available
+        //
+
+            if (SignalObjectItems.Count > 0)
+            {
+
+        //
+        // Update state and speed of first object if signal
+        //
+
+                    if (firstObject.ObjectDetails.isSignal)
+                    {
+                            firstObject.signal_state = firstObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                            ObjectSpeedInfo thisSpeed = firstObject.ObjectDetails.this_lim_speed(SignalHead.SIGFN.NORMAL);
+                            firstObject.speed_passenger = thisSpeed.speed_pass;
+                            firstObject.speed_freight = thisSpeed.speed_freight;
+                            firstObject.speed_flag = thisSpeed.speed_flag;
+                    }
+ 
+        //
+        // Update all objects in list (except first)
+        //
+
+                    float lastDistance = firstObject.distance_to_train;
+
+                    ObjectItemInfo prevObject = firstObject;
+
+                    for (int isig = 1; isig < SignalObjectItems.Count && !signalFound; isig++)
+                    {
+                            ObjectItemInfo nextObject = SignalObjectItems[isig];
+                            nextObject.distance_to_train = prevObject.distance_to_train + nextObject.distance_to_object;
+                            lastDistance = nextObject.distance_to_train;
+
+                            if (nextObject.ObjectDetails.isSignal)
+                            {
+                                    nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                                    ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_lim_speed(SignalHead.SIGFN.NORMAL);
+                                    nextObject.speed_passenger = thisSpeed.speed_pass;
+                                    nextObject.speed_freight = thisSpeed.speed_freight;
+                                    nextObject.speed_flag = thisSpeed.speed_flag;
+                            }
+
+                            prevObject = nextObject;
+                    }
+
+        //
+        // check if next signal aspect is STOP. 
+        // If so, no check on list is required
+        //
+
+                    SignalHead.SIGASP nextAspect = SignalHead.SIGASP.UNKNOWN;
+
+                    for (int isig = 0; isig < SignalObjectItems.Count && !signalFound; isig++)
+                    {
+                            ObjectItemInfo nextObject = SignalObjectItems[isig];
+                            if (nextObject.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                            {
+                                    signalFound = true;
+                                    nextAspect = nextObject.signal_state;
+                            }
+                    }
+
+        //
+        // read next items if last item within max distance
+        //
+            
+                    float maxDistance = Math.Max(AllowedMaxSpeedMpS * maxTimeS, minCheckDistanceM);
+
+                    while (lastDistance < maxDistance && returnState > 0 && nextAspect != SignalHead.SIGASP.STOP)
+                    {
+                            ObjectItemInfo nextObject = Simulator.Signals.getNextObject(prevObject.ObjectDetails, ObjectItemInfo.ObjectItemType.ANY,
+                                null, -1, ref returnState);
+
+                            if (returnState > 0)
+                            {
+                                    nextObject.distance_to_train = prevObject.distance_to_train + nextObject.distance_to_object;
+                                    lastDistance = nextObject.distance_to_train;
+                                    SignalObjectItems.Add(nextObject);
+
+                                    if (nextObject.ObjectDetails.isSignal)
+                                    {
+                                            nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                                            ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_lim_speed(SignalHead.SIGFN.NORMAL);
+                                            nextObject.speed_passenger = thisSpeed.speed_pass;
+                                            nextObject.speed_freight = thisSpeed.speed_freight;
+                                            nextObject.speed_flag = thisSpeed.speed_flag;
+                                    }
+
+                                    prevObject = nextObject;
+
+                                    listChanged = true;
+                            }
+                    }
+
+        //
+        // if list is changed, get new indices to first signal and speedpost
+        //
+
+                    if (listChanged)
+                    {
+                            signalFound = false;
+                            speedlimFound = false;
+
+                            IndexNextSignal = -1;
+                            IndexNextSpeedlimit = -1;
+                            NextSignalObject = null;
+
+                            for (int isig = 0; isig < SignalObjectItems.Count && (!signalFound || !speedlimFound); isig++)
+                            {
+                                    ObjectItemInfo nextObject = SignalObjectItems[isig];
+                                    if (!signalFound && nextObject.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                                    {
+                                            signalFound = true;
+                                            IndexNextSignal = isig;
+                                    }
+                                    else if (!speedlimFound && nextObject.ObjectType == ObjectItemInfo.ObjectItemType.SPEEDLIMIT)
+                                    {
+                                            speedlimFound = true;
+                                            IndexNextSpeedlimit = isig;
+                                    }
+                            }
+
+        //
+        // check if any signal in list, if not get direct from train
+        // get state and details
+        //
+
+                            if (IndexNextSignal < 0)
+                            {
+                                    ObjectItemInfo firstSignalObject = 
+                                              Simulator.Signals.getNextObject(dFrontTDBTraveller, ObjectItemInfo.ObjectItemType.SIGNAL,
+                                            true, -1, ref returnState);
+
+                                    if (returnState > 0)
+                                    {
+                                            NextSignalObject = firstSignalObject.ObjectDetails;
+                                    }
+                            }
+                            else
+                            {
+                                    NextSignalObject = SignalObjectItems[IndexNextSignal].ObjectDetails;
+                            }
+                    }
+
+        //
+        // update distance of signal if out of list
+        // get state of next signal
+        //
+
+                    SignalHead.SIGASP thisState = SignalHead.SIGASP.UNKNOWN;
+
+                    if (IndexNextSignal >= 0)
+                    {
+                            distanceToSignal = SignalObjectItems[IndexNextSignal].distance_to_train;
+                            thisState = SignalObjectItems[IndexNextSignal].signal_state;
+                    }
+                    else if (NextSignalObject != null)
+                    {
+                            distanceToSignal = NextSignalObject.DistanceTo(dFrontTDBTraveller);
+                            thisState = NextSignalObject.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                    }
+
+                    CABAspect = thisState;
+                    SignalObject dummyObject = new SignalObject();
+                    TMaspect  = dummyObject.TranslateTMAspect(thisState);
+
+        //
+        // update track occupancy
+        //
+
+                    nextSignal.nextSigRef = NextSignalObject == null ? -1 : NextSignalObject.thisRef;
+
+                    if (lastSignalObjectRef != nextSignal.nextSigRef)
+                    {
+                            nextSignal.rearSigRef = lastSignalObjectRef;
+                            nextSignal.prevSigRef = lastSignalObjectRef;
+                    }
+
+			        nextSignal.UpdateTrackOcupancy(dRearTDBTraveller);
+		    }
+
+            else if (this is AITrain)
+            {
+                NextSignalObject = null;
+                distanceToSignal = 50000;
+            }
+
+ //
+ // determine actual speed limits depending on overall speed and type of train
+ //
+
+            updateSpeedInfo();
+
+        }
+
+ //
+ // set actual speed limit for all objects depending on state and type of train
+ //
+
+        public void updateSpeedInfo()
+        {
+                float validSpeedMpS  = AllowedMaxSpeedMpS;
+                float validSpeedSignalMpS = allowedMaxSpeedSignalMpS;
+                float validSpeedLimitMpS  = allowedMaxSpeedLimitMpS;
+
+                foreach (ObjectItemInfo thisObject in SignalObjectItems)
+                {
+
+ //
+ // select speed on type of train - not yet implemented as type is not yet available
+ //
+
+                        float actualSpeedMpS = IsFreight ? thisObject.speed_freight : thisObject.speed_passenger;
+
+                        if (thisObject.ObjectDetails.isSignal)
+                        {
+                                if (actualSpeedMpS > 0 && thisObject.speed_flag == 0)
+                                {
+                                        validSpeedSignalMpS = actualSpeedMpS;
+                                        if (validSpeedSignalMpS > validSpeedLimitMpS)
+                                        {
+                                                actualSpeedMpS = -1;
+                                        }
+                                }
+                                else
+                                {
+                                        validSpeedSignalMpS = RouteMaxSpeedMpS;
+                                        float newSpeedMpS = Math.Min(validSpeedSignalMpS, validSpeedLimitMpS);
+
+                                        if (newSpeedMpS != validSpeedMpS)
+                                        {
+                                                actualSpeedMpS = newSpeedMpS;
+                                        }
+                                        else
+                                        {
+                                                actualSpeedMpS = -1;
+                                        }
+                                }
+                                thisObject.actual_speed = actualSpeedMpS;
+                                if (actualSpeedMpS > 0)
+                                {
+                                        validSpeedMpS = actualSpeedMpS;
+                                }
+                        }
+                        else
+			            {
+				                if (actualSpeedMpS > 998f)
+				                {
+					                actualSpeedMpS = RouteMaxSpeedMpS;
+				                }
+
+                                if (actualSpeedMpS > 0)
+                                {
+                                        validSpeedMpS = actualSpeedMpS;
+                                        validSpeedLimitMpS = actualSpeedMpS;
+                                }
+                                thisObject.actual_speed = actualSpeedMpS;
+                        }
+                }
+        }
+
+ //
+ // get aspect of next signal ahead
+ //
+ 
 		public SignalHead.SIGASP GetNextSignalAspect()
 		{
-			return nextSignal.GetAspect();
-		}
+            SignalHead.SIGASP thisAspect = SignalHead.SIGASP.STOP;
+            if (NextSignalObject != null)
+            {
+                    thisAspect = NextSignalObject.this_sig_lr(SignalHead.SIGFN.NORMAL);
+		    }
+
+            return thisAspect;
+        }
 		/// <summary>
 		/// Returns true if (forward == 1) and front of train on TrEndNode
 		/// or if (forward == 0) and rear of train on TrEndNode.
@@ -352,21 +1155,10 @@ namespace ORTS
 			// progresses beyond an unterminated section (no bumper).
 
 			// Using FrontTDBTraveller if moving forward or RearTDBTraveller if moving backwards
-			TDBTraveller t = (forward == Direction.Forward) ? FrontTDBTraveller : RearTDBTraveller;
-			if (!t.TN.TrEndNode) return false;
+			Traveller t = (forward == Direction.Forward) ? FrontTDBTraveller : RearTDBTraveller;
+			if (!t.IsEnd) return false;
 			else return true; // Signal end-of-route
 		} // end IsEndOfRoute
-
-		//
-		//  the train moves, so all crossings should be updated. 
-		//  To save time, simulator.LevelCrossings.UpdateCrossings only updates crossings in
-		//  the viewing range, and only 1/20 of those were indeeded updated each frame
-		//
-		private void UpdateCrossingState()
-		{
-			Simulator.LevelCrossings.UpdateCrossings(this, SpeedMpS);
-			return;
-		}
 
 		/// <summary>
 		/// Stops the train ASAP
@@ -389,8 +1181,15 @@ namespace ORTS
 
 		public void InitializeBrakes()
 		{
-			if (SpeedMpS != 0)
-				return;
+            if( Math.Abs(SpeedMpS) >= 0.01 ) {
+                if( Simulator.Confirmer != null ) // As Confirmer may not be created until after a restore.
+                    Simulator.Confirmer.Warning( CabControl.InitializeBrakes, CabSetting.Warn );
+                return;
+            }
+			if (Program.Simulator.PlayerLocomotive != null && this == Program.Simulator.PlayerLocomotive.Train)
+				if( Simulator.Confirmer != null ) // As Confirmer may not be created until after a restore.
+                    Simulator.Confirmer.Confirm( CabControl.InitializeBrakes, CabSetting.Off );
+
 			float maxPressurePSI = 90;
 			if (LeadLocomotiveIndex >= 0)
 			{
@@ -409,12 +1208,8 @@ namespace ORTS
 				BrakeLine1PressurePSI = BrakeLine3PressurePSI = BrakeLine4PressurePSI = 0;
 			}
 			BrakeLine2PressurePSI = maxPressurePSI;
-			//Console.WriteLine("init {0} {1} {2}", BrakeLine1PressurePSI, BrakeLine2PressurePSI, BrakeLine3PressurePSI);
 			foreach (TrainCar car in Cars)
 			{
-				car.BrakeSystem.BrakeLine1PressurePSI = BrakeLine1PressurePSI;
-				car.BrakeSystem.BrakeLine2PressurePSI = BrakeLine2PressurePSI;
-				car.BrakeSystem.BrakeLine3PressurePSI = 0;
 				car.BrakeSystem.Initialize(LeadLocomotiveIndex < 0, maxPressurePSI);
 				if (LeadLocomotiveIndex < 0)
 					car.BrakeSystem.BrakeLine1PressurePSI = -1;
@@ -432,7 +1227,7 @@ namespace ORTS
 			if (SpeedMpS < -.1 || SpeedMpS > .1)
 				return;
 			foreach (TrainCar car in Cars)
-				car.BrakeSystem.BrakeLine1PressurePSI = BrakeLine1PressurePSI;
+				car.BrakeSystem.Connect();
 		}
 		public void DisconnectBrakes()
 		{
@@ -446,11 +1241,7 @@ namespace ORTS
 				if (first <= i && i <= last)
 					continue;
 				TrainCar car = Cars[i];
-				car.BrakeSystem.BrakeLine1PressurePSI = 0;
-				car.BrakeSystem.BrakeLine2PressurePSI = 0;
-				car.BrakeSystem.BrakeLine3PressurePSI = 0;
-				car.BrakeSystem.Initialize(false, 0);
-				car.BrakeSystem.BrakeLine1PressurePSI = -1;
+                car.BrakeSystem.Disconnect();
 			}
 		}
 		public void SetRetainers(bool increase)
@@ -484,10 +1275,9 @@ namespace ORTS
 				if (j <= last)
 					break;
 				Cars[j].BrakeSystem.SetRetainer(i % step == 0 ? RetainerSetting : RetainerSetting.Exhaust);
-				//Console.WriteLine("setretainer {0} {1}", j + 1, i % step);
 			}
 		}
-		private void FindLeadLocomotives(ref int first, ref int last)
+		public void FindLeadLocomotives(ref int first, ref int last)
 		{
 			first = last = -1;
 			if (LeadLocomotiveIndex >= 0)
@@ -508,129 +1298,7 @@ namespace ORTS
 					lead.TrainBrakeController.UpdatePressure(ref BrakeLine1PressurePSI, elapsedClockSeconds, ref BrakeLine4PressurePSI);
 				if (lead.EngineBrakeController != null)
 					lead.EngineBrakeController.UpdateEngineBrakePressure(ref BrakeLine3PressurePSI, elapsedClockSeconds);
-				if (lead.BrakePipeChargingRatePSIpS < 1000)
-				{
-					float serviceTimeFactor = lead.BrakeServiceTimeFactorS;
-					if (lead.TrainBrakeController != null && lead.TrainBrakeController.GetIsEmergency())
-						serviceTimeFactor = lead.BrakeEmergencyTimeFactorS;
-					int nSteps = (int)(elapsedClockSeconds * 2 / lead.BrakePipeTimeFactorS + 1);
-					float dt = elapsedClockSeconds / nSteps;
-					for (int i = 0; i < nSteps; i++)
-					{
-						if (lead.BrakeSystem.BrakeLine1PressurePSI < BrakeLine1PressurePSI)
-						{
-							float dp = dt * lead.BrakePipeChargingRatePSIpS;
-							if (lead.BrakeSystem.BrakeLine1PressurePSI + dp > BrakeLine1PressurePSI)
-								dp = BrakeLine1PressurePSI - lead.BrakeSystem.BrakeLine1PressurePSI;
-							if (lead.BrakeSystem.BrakeLine1PressurePSI + dp > lead.MainResPressurePSI)
-								dp = lead.MainResPressurePSI - lead.BrakeSystem.BrakeLine1PressurePSI;
-							if (dp < 0)
-								dp = 0;
-							lead.BrakeSystem.BrakeLine1PressurePSI += dp;
-							lead.MainResPressurePSI -= dp * lead.BrakeSystem.BrakePipeVolumeFT3 / lead.MainResVolumeFT3;
-						}
-						else if (lead.BrakeSystem.BrakeLine1PressurePSI > BrakeLine1PressurePSI)
-							lead.BrakeSystem.BrakeLine1PressurePSI *= (1 - dt / serviceTimeFactor);
-						TrainCar car0 = Cars[0];
-						float p0 = car0.BrakeSystem.BrakeLine1PressurePSI;
-						foreach (TrainCar car in Cars)
-						{
-							float p1 = car.BrakeSystem.BrakeLine1PressurePSI;
-							if (p0 >= 0 && p1 >= 0)
-							{
-								float dp = dt * (p1 - p0) / lead.BrakePipeTimeFactorS;
-								car.BrakeSystem.BrakeLine1PressurePSI -= dp;
-								car0.BrakeSystem.BrakeLine1PressurePSI += dp;
-							}
-							p0 = p1;
-							car0 = car;
-						}
-					}
-				}
-				else
-				{
-					foreach (TrainCar car in Cars)
-						if (car.BrakeSystem.BrakeLine1PressurePSI >= 0)
-							car.BrakeSystem.BrakeLine1PressurePSI = BrakeLine1PressurePSI;
-				}
-				bool twoPipes = lead.BrakeSystem.GetType() == typeof(AirTwinPipe) || lead.BrakeSystem.GetType() == typeof(EPBrakeSystem);
-				int first = -1;
-				int last = -1;
-				FindLeadLocomotives(ref first, ref last);
-				float sumpv = 0;
-				float sumv = 0;
-				for (int i = 0; i < Cars.Count; i++)
-				{
-					BrakeSystem brakeSystem = Cars[i].BrakeSystem;
-					if (brakeSystem.BrakeLine1PressurePSI < 0)
-						continue;
-					if (i < first || i > last)
-					{
-						brakeSystem.BrakeLine3PressurePSI = 0;
-						if (twoPipes)
-						{
-							sumv += brakeSystem.BrakePipeVolumeFT3;
-							sumpv += brakeSystem.BrakePipeVolumeFT3 * brakeSystem.BrakeLine2PressurePSI;
-						}
-					}
-					else
-					{
-						float p = brakeSystem.BrakeLine3PressurePSI;
-						if (p > 1000)
-							p -= 1000;
-						AirSinglePipe.ValveState prevState = lead.EngineBrakeState;
-						if (p < BrakeLine3PressurePSI)
-						{
-							float dp = elapsedClockSeconds * lead.EngineBrakeApplyRatePSIpS / (last - first + 1);
-							if (p + dp > BrakeLine3PressurePSI)
-								dp = BrakeLine3PressurePSI - p;
-							p += dp;
-							lead.EngineBrakeState = AirSinglePipe.ValveState.Apply;
-						}
-						else if (p > BrakeLine3PressurePSI)
-						{
-							float dp = elapsedClockSeconds * lead.EngineBrakeReleaseRatePSIpS / (last - first + 1);
-							if (p - dp < BrakeLine3PressurePSI)
-								dp = p - BrakeLine3PressurePSI;
-							p -= dp;
-							lead.EngineBrakeState = AirSinglePipe.ValveState.Release;
-						}
-						else
-							lead.EngineBrakeState = AirSinglePipe.ValveState.Lap;
-						if (lead.EngineBrakeState != prevState)
-							switch (lead.EngineBrakeState)
-							{
-								case AirSinglePipe.ValveState.Release: lead.SignalEvent(EventID.EngineBrakeRelease); break;
-								case AirSinglePipe.ValveState.Apply: lead.SignalEvent(EventID.EngineBrakeApply); break;
-							}
-						if (lead.BailOff || (lead.DynamicBrakeAutoBailOff && MUDynamicBrakePercent > 0))
-							p += 1000;
-						brakeSystem.BrakeLine3PressurePSI = p;
-						sumv += brakeSystem.BrakePipeVolumeFT3;
-						sumpv += brakeSystem.BrakePipeVolumeFT3 * brakeSystem.BrakeLine2PressurePSI;
-						MSTSLocomotive eng = (MSTSLocomotive)Cars[i];
-						sumv += eng.MainResVolumeFT3;
-						sumpv += eng.MainResVolumeFT3 * eng.MainResPressurePSI;
-					}
-				}
-				if (sumv > 0)
-					sumpv /= sumv;
-				BrakeLine2PressurePSI = sumpv;
-				for (int i = 0; i < Cars.Count; i++)
-				{
-					if (Cars[i].BrakeSystem.BrakeLine1PressurePSI < 0)
-						continue;
-					if (i < first || i > last)
-					{
-						Cars[i].BrakeSystem.BrakeLine2PressurePSI = twoPipes ? sumpv : 0;
-					}
-					else
-					{
-						Cars[i].BrakeSystem.BrakeLine2PressurePSI = sumpv;
-						MSTSLocomotive eng = (MSTSLocomotive)Cars[i];
-						eng.MainResPressurePSI = sumpv;
-					}
-				}
+                lead.BrakeSystem.PropagateBrakePressure(elapsedClockSeconds);
 			}
 			else
 			{
@@ -650,8 +1318,7 @@ namespace ORTS
 		/// </summary>
 		public void RepositionRearTraveller()
 		{
-            var traveller = new TDBTraveller(FrontTDBTraveller);
-			traveller.ReverseDirection();
+            var traveller = new Traveller(FrontTDBTraveller, Traveller.TravellerDirection.Backward);
             // The traveller location represents the front of the train.
             var length = 0f;
 
@@ -712,6 +1379,18 @@ namespace ORTS
 
 
 		/// <summary>
+        /// Check if train is passenger or freight train
+        /// </summary>
+        public void CheckFreight()
+        {
+            IsFreight = false;
+            foreach (var car in Cars)
+            {
+                    if (car.IsFreight) IsFreight = true;
+            }
+        } // CheckFreight
+
+        /// <summary>
 		/// Distance is the signed distance the cars are moving.
 		/// </summary>
 		/// <param name="distance"></param>
@@ -720,9 +1399,9 @@ namespace ORTS
             var tn = RearTDBTraveller.TN;
 			RearTDBTraveller.Move(distance);
 			if (distance < 0 && tn != RearTDBTraveller.TN)
-				AlignTrailingPointSwitch(tn, RearTDBTraveller.TN);
+				AlignTrailingPointSwitch(tn, RearTDBTraveller.TN, this);
 
-			var traveller = new TDBTraveller(RearTDBTraveller);
+			var traveller = new Traveller(RearTDBTraveller);
 			// The traveller location represents the back of the train.
             var length = 0f;
 
@@ -778,13 +1457,14 @@ namespace ORTS
             }
 
 			if (distance > 0 && traveller.TN != FrontTDBTraveller.TN)
-				AlignTrailingPointSwitch(FrontTDBTraveller.TN, traveller.TN);
+				AlignTrailingPointSwitch(FrontTDBTraveller.TN, traveller.TN, this);
 			FrontTDBTraveller = traveller;
             Length = length;
+			travelled += distance;
 		} // CalculatePositionOfCars
 
 		// aligns a trailing point switch that was just moved over to match the track the train is on
-		public void AlignTrailingPointSwitch(TrackNode from, TrackNode to)
+		public void AlignTrailingPointSwitch(TrackNode from, TrackNode to, Train train)
 		{
 			if (from.TrJunctionNode != null)
 				return;
@@ -814,6 +1494,14 @@ namespace ORTS
 				if (to == Program.Simulator.TDB.TrackDB.TrackNodes[sw.TrPins[i + sw.Inpins].Link])
 				{
 					sw.TrJunctionNode.SelectedRoute = i;
+					//multiplayer mode will do some message to the server
+					if (Simulator.PlayerLocomotive != null && train == Simulator.PlayerLocomotive.Train 
+						&& MPManager.IsMultiPlayer() && !MPManager.IsServer())
+					{
+						MPManager.Notify((new MSGSwitch(MPManager.GetUserName(),
+							sw.TrJunctionNode.TN.UiD.TileX, sw.TrJunctionNode.TN.UiD.TileZ, sw.TrJunctionNode.TN.UiD.WorldID, sw.TrJunctionNode.SelectedRoute, false)).ToString());
+						//MPManager.Instance().ignoreSwitchStart = Simulator.GameTime;
+					}
 					return;
 				}
 			}
@@ -901,7 +1589,6 @@ namespace ORTS
 			car.CouplerForceA = car.CouplerForceC = 0;
 			car.CouplerForceB = 1;
 			car.CouplerForceR = forceN;
-			//Console.WriteLine("setf {0} {1}", forceN, car.CouplerForceU);
 		}
 
 		// removes equations if forces don't match faces in contact
@@ -995,7 +1682,6 @@ namespace ORTS
 			for (int i = 0; i < Cars.Count - 1; i++)
 			{
 				TrainCar car = Cars[i];
-				//Console.WriteLine("cforce {0} {1} {2}", i, car.CouplerForceU, car.SpeedMpS);
 				car.TotalForceN += car.CouplerForceU;
 				Cars[i + 1].TotalForceN -= car.CouplerForceU;
 				if (MaximumCouplerForceN < Math.Abs(car.CouplerForceU))
@@ -1019,7 +1705,6 @@ namespace ORTS
 					else
 						car.CouplerSlack2M = maxs;
 				}
-				//Console.WriteLine("{0} {1} {2}", car.CouplerSlackM, car.CouplerSlack2M, car.CouplerForceU);
 			}
 		}
 		void UpdateCarSpeeds(float elapsedTime)
@@ -1027,7 +1712,6 @@ namespace ORTS
 			int n = 0;
 			foreach (TrainCar car in Cars)
 			{
-				//Console.WriteLine("updatespeed {0} {1} {2} {3}", car.SpeedMpS, car.TotalForceN, car.MassKG, car.FrictionForceN);
 				if (car.SpeedMpS > 0)
 				{
 					car.SpeedMpS += car.TotalForceN / car.MassKG * elapsedTime;
@@ -1056,7 +1740,7 @@ namespace ORTS
 				float m = 0;
 				for (; ; )
 				{
-                    if(car.IsDriveable)
+                    if (car.IsDriveable)
                         f += car.TotalForceN - (car.FrictionForceN);
                     else
 					    f += car.TotalForceN - (car.FrictionForceN + car.BrakeForceN);
@@ -1079,14 +1763,14 @@ namespace ORTS
 			for (int i = Cars.Count - 1; i >= 0; i--)
 			{
 				TrainCar car = Cars[i];
-				if (car.SpeedMpS != 0 || car.TotalForceN > (-1.0f*(car.FrictionForceN + car.BrakeForceN)))
+                if (car.SpeedMpS != 0 || car.TotalForceN > (-1.0f * (car.FrictionForceN + car.BrakeForceN)))
 					continue;
 				int j = i;
 				float f = 0;
 				float m = 0;
 				for (; ; )
 				{
-                    if(car.IsDriveable)
+                    if (car.IsDriveable)
 					    f += car.TotalForceN + car.FrictionForceN;
                     else
                         f += car.TotalForceN + car.FrictionForceN + car.BrakeForceN;
@@ -1122,7 +1806,6 @@ namespace ORTS
 					NPull++;
 				else if (car.CouplerSlackM <= -max)
 					NPush++;
-				//Console.WriteLine("slack {0} {1} {2}", i, car.CouplerSlackM, car.CouplerSlack2M);
 			}
 			foreach (TrainCar car in Cars)
 				car.DistanceM += Math.Abs(car.SpeedMpS * elapsedTime);
@@ -1139,7 +1822,7 @@ namespace ORTS
 		{
 			TrackNode tn = RearTDBTraveller.TN;
 
-			TDBTraveller traveller = new TDBTraveller(RearTDBTraveller);
+			Traveller traveller = new Traveller(RearTDBTraveller);
 			// The traveller location represents the back of the train.
 
 			// process the cars last to first
@@ -1165,5 +1848,57 @@ namespace ORTS
 				traveller.Move(car.Length);
 			}
 		}
+
+		//used by remote train to update location based on message received
+		public int expectedTileX, expectedTileZ, expectedTracIndex, expectedDIr, expectedTDir;
+		public float expectedX, expectedZ, expectedTravelled;
+
+		public void ToDoUpdate(int tni, int tX, int tZ, float x, float z, float eT, float speed, int dir, int tDir)
+		{
+			SpeedMpS = speed;
+			expectedTileX = tX;
+			expectedTileZ = tZ;
+			expectedX = x;
+			expectedZ = z;
+			expectedTravelled = eT;
+			expectedTracIndex = tni;
+			expectedDIr = dir;
+			expectedTDir = tDir;
+			updateMSGReceived = true;
+		}
+
+        public static bool IsUnderObserving(int sigref)
+        {
+            int refc = 0;
+            foreach (ObjectItemInfo oi in Program.Simulator.PlayerLocomotive.Train.SignalObjectItems)
+            {
+                if (oi.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                {
+                    if (oi.ObjectDetails.thisRef == sigref)
+                        return true;
+                    refc++;
+                    if (refc == 4)
+                        break;
+                }
+            }
+
+            foreach (AITrain ai in Program.Simulator.AI.AITrainDictionary.Values)
+            {
+                refc = 0;
+                foreach (ObjectItemInfo oi in ai.SignalObjectItems)
+                {
+                    if (oi.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                    {
+                        if (oi.ObjectDetails.thisRef == sigref)
+                            return true;
+                        refc++;
+                        if (refc == 4)
+                            break;
+                    }
+                }
+            }
+
+            return false;
+        }
 	}// class Train
 }

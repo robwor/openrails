@@ -39,6 +39,16 @@ namespace MenuWPF
         private ProgressionWindow winProg;
         private ImageSource defaultImage;
         private bool closedSwitch = false;
+
+		//for multiplayers
+		string MPIP = "";
+		string MPPort = "30000";
+		bool MPHost = false;
+		string MPUserName = "";
+		string MPUserNameTmp = "";
+		string MPUserCode = "1234";
+		int MPUserNameLength = 0;
+
         #region ex-Program class
         const string RunActivityProgram = "runactivity.exe";
 
@@ -149,6 +159,7 @@ namespace MenuWPF
         public MainWindow()
 		{
 			this.InitializeComponent();
+			textBox1.Text = "30000";
             bgWork = new BackgroundWorker();
             bgWork.DoWork += new DoWorkEventHandler(bgWork_DoWork);
             bgWork.RunWorkerCompleted += new RunWorkerCompletedEventHandler(bgWork_RunWorkerCompleted);
@@ -161,15 +172,25 @@ namespace MenuWPF
             //Content = String.Format(Revision == "000" ? "{0} BUILD {2}" : "{0} V{1}", AppDomain.CurrentDomain.FriendlyName, Revision, Build);
             defaultImage = ((ImageBrush)this.Background).ImageSource;
             bgImage = ((ImageBrush)this.Background).ImageSource;
-            RegistryKey RK = Registry.CurrentUser.OpenSubKey(RegistryKey);
-            if (RK != null && RK.GetValue("BackgroundImage", "") != null)
+
+            // Restore retained settings
+            using (var RK = Registry.CurrentUser.OpenSubKey(RegistryKey))
             {
-                if (System.IO.File.Exists(RK.GetValue("BackgroundImage", "").ToString()))
+                if (RK != null)
                 {
-                    bgImage = new BitmapImage(new Uri(RK.GetValue("BackgroundImage", "").ToString(), UriKind.Absolute));
-                    ((ImageBrush)this.Background).ImageSource = bgImage;
+                    if (RK.GetValue("BackgroundImage", "") != null)
+                    {
+                        if (System.IO.File.Exists(RK.GetValue("BackgroundImage", "").ToString()))
+                        {
+                            bgImage = new BitmapImage(new Uri(RK.GetValue("BackgroundImage", "").ToString(), UriKind.Absolute));
+                            ((ImageBrush)this.Background).ImageSource = bgImage;
+                        }
+                    }
+                    // TODO: Can't load values because the code makes flow decisions based on presence/absence of values!
+                    //textBox3.Text = (string)RK.GetValue("Multiplayer_User", Environment.UserName);
+                    //textBox2.Text = (string)RK.GetValue("Multiplayer_Host", "127.0.0.1");
+                    //textBox1.Text = ((int)RK.GetValue("Multiplayer_Port", (int)30000)).ToString();
                 }
-                RK.Close();
             }
             
             FolderDataFile = UserDataFolder + @"\" + FolderDataFileName;
@@ -215,6 +236,7 @@ namespace MenuWPF
 
         private void btnStart_Click(object sender, System.Windows.RoutedEventArgs e)
 		{
+			MPHost = checkBox1.IsChecked.Value;
             if (SelectedFolder == null)
             {
                 MessageBox.Show("Please select a folder first!", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
@@ -235,14 +257,52 @@ namespace MenuWPF
             {
                 MessageBox.Show("Invalid heading direction!", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
             }
-            else
-            {
-                MainStart(false);
+			else if ((MPHost || MPIP != "") && (MPUserNameLength < 4 || MPUserNameLength > 10))
+			{
+				MessageBox.Show("The length of User Name must be between 4 and 10 characters!", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+			}
+			else if ((MPHost || MPIP != "") && (MPUserName != "" && char.IsDigit(MPUserName[0])))
+			{
+				MessageBox.Show("User Name cannot start with digits!", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+			}
+			else if ((MPHost || MPIP != "") && (MPUserName != "" && !checkUserName(MPUserName)))
+			{
+				MessageBox.Show("User Name cannot contain special characters!", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+			}
+			/*else if ((!MPHost && MPIP != "") && !(SelectedActivity is ExploreActivity))
+			{
+				MessageBox.Show("Being a client, you can only select the Explore Mode", "Error", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+			}*/
+			else
+			{
+                // Retain settings for convenience
+                using (var RK = Registry.CurrentUser.CreateSubKey(RegistryKey))
+                {
+                    RK.SetValue("Multiplayer_User", MPUserName);
+					RK.SetValue("Multiplayer_Host", textBox2.Text);
+					RK.SetValue("Multiplayer_Code", MPUserCode);
+					try
+                    {
+                        RK.SetValue("Multiplayer_Port", int.Parse(textBox1.Text));
+                    }
+                    catch { }
+                }
 
-            }
+                MainStart(false);
+			}
 		}
 
-        private void btnDescription_Click(object sender, System.Windows.RoutedEventArgs e)
+		bool checkUserName(string name)
+		{
+			var count = 0;
+			for (var i = 0; i < name.Length; i++)
+			{
+				if ((char) name[i] < 48 || name[i] == '\\') return false;
+			}
+			return true;
+		}
+
+		private void btnDescription_Click(object sender, System.Windows.RoutedEventArgs e)
         {
             if (cboEngine.SelectedItem != null)
             {
@@ -471,12 +531,10 @@ namespace MenuWPF
 
         private void btnMenuStyle_Click(object sender, System.Windows.RoutedEventArgs e)
         {
-            using (RegistryKey RK = Registry.CurrentUser.OpenSubKey(RegistryKey, true))
+            using (var RK = Registry.CurrentUser.CreateSubKey(RegistryKey))
             {
                 if (RK != null)
-                {
                     RK.SetValue("LauncherMenu", 1);
-                }
             }
             Process.Start(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(AppDomain.CurrentDomain.BaseDirectory), "Menu.exe"));
             closedSwitch = true;
@@ -488,6 +546,38 @@ namespace MenuWPF
         {
             MainStart(true);
         }
+
+		private void textBox3_TextChanged(object sender, TextChangedEventArgs e)
+		{
+
+			MPUserNameTmp = (sender as TextBox).Text;
+			MPUserNameTmp = MPUserNameTmp.Replace(" ", "");
+			MPUserNameTmp = MPUserNameTmp.Replace("\"", "");
+			MPUserNameTmp = MPUserNameTmp.Replace("\'", "");
+			MPUserNameTmp = MPUserNameTmp.Replace("\\", "");
+
+			MPUserNameLength = MPUserNameTmp.Length;
+			(sender as TextBox).Text = MPUserNameTmp;
+			MPUserName = MPUserNameTmp;
+		}
+
+		private void checkBox1_Checked(object sender, RoutedEventArgs e)
+		{
+			MPHost = (sender as CheckBox).IsChecked.Value;
+		}
+
+		private void textBox2_TextChanged(object sender, TextChangedEventArgs e)
+		{
+			MPIP = (sender as TextBox).Text;
+		}
+
+		private void textBox1_TextChanged(object sender, TextChangedEventArgs e)
+		{
+			MPPort = (sender as TextBox).Text;
+		}
+
+        
+
 
         #endregion
 
@@ -502,19 +592,27 @@ namespace MenuWPF
         {
             try
             {
-                string parameter;
-
+                var parameters = new List<string>();
                 if (resume)
                 {
-                    parameter = "-resume";
+                    parameters.Add("-resume");
+                    // TODO: Resume specific saves.
+                    //parameters.Add("\"" + Path.GetFileNameWithoutExtension(MainForm.SelectedSaveFile) + "\"");
                 }
                 else
                 {
+                    if (MPHost)
+                        parameters.Add("-multiplayerserver");
+                    else if (MPIP != "")
+                        parameters.Add("-multiplayerclient");
+                    else
+                        parameters.Add("-start");
+
                     if (SelectedActivity is ExploreActivity)
                     {
-                        int hour = 10;
-                        int mins = 0;
-                        Regex reg = new Regex("^([0-1][0-9]|[2][0-3]):([0-5][0-9])$"); //Match a string format of HH:MM
+                        var hour = 10;
+                        var mins = 0;
+                        var reg = new Regex("^([0-1][0-9]|[2][0-3]):([0-5][0-9])$"); //Match a string format of HH:MM
                         if (reg.IsMatch(cboStartingTime.Text))
                         {
                             int.TryParse(cboStartingTime.Text.Trim().Substring(0, cboStartingTime.Text.Trim().IndexOf(':')), out hour);
@@ -525,35 +623,41 @@ namespace MenuWPF
                             MessageBox.Show("Invalid starting time", "Warning", MessageBoxButton.OK, MessageBoxImage.Exclamation);
                             return;
                         }
-                        parameter = String.Format("\"{0}\" \"{1}\" {2}:{3} {4} {5}", GetPathFileName(cboPath.SelectedItem.ToString(), cboHeading.SelectedItem.ToString()), SelectedFolder.Path + @"\trains\consists\" + ((CONFile)cboConsist.SelectedItem).FileName + ".con", hour, mins, cboSeason.SelectedIndex, cboWeather.SelectedIndex);
+                        parameters.Add(String.Format("\"{0}\" \"{1}\" {2}:{3} {4} {5}", GetPathFileName(cboPath.SelectedItem.ToString(), cboHeading.SelectedItem.ToString()), SelectedFolder.Path + @"\trains\consists\" + ((CONFile)cboConsist.SelectedItem).FileName + ".con", hour, mins, cboSeason.SelectedIndex, cboWeather.SelectedIndex));
                     }
                     else
-                        parameter = String.Format("\"{0}\"", SelectedActivity.FileName);
+                    {
+                        parameters.Add(String.Format("\"{0}\"", SelectedActivity.FileName));
+                    }
                 }
 
-                // find the RunActivity program, normally in the startup path, 
-                //  but while debugging it will be in an adjacent directory
-                string RunActivityFolder = AppDomain.CurrentDomain.BaseDirectory.ToLower();
+                // Find the RunActivity program, normally in the startup path, 
+                // but while debugging it will be in an adjacent directory.
+                var programFolder = AppDomain.CurrentDomain.BaseDirectory.ToLower();
 
-                System.Diagnostics.ProcessStartInfo objPSI = new System.Diagnostics.ProcessStartInfo();
-                objPSI.FileName = System.IO.Path.Combine(RunActivityFolder, RunActivityProgram);
-                objPSI.Arguments = parameter;
-                objPSI.WindowStyle = System.Diagnostics.ProcessWindowStyle.Normal; // or Hidden, Maximized or Normal 
-                objPSI.WorkingDirectory = RunActivityFolder;
+                var processStartInfo = new System.Diagnostics.ProcessStartInfo();
+                processStartInfo.FileName = System.IO.Path.Combine(programFolder, RunActivityProgram);
+                processStartInfo.Arguments = String.Join(" ", parameters.ToArray());
+                processStartInfo.WindowStyle = System.Diagnostics.ProcessWindowStyle.Normal;
+                processStartInfo.WorkingDirectory = programFolder;
 
-                System.Diagnostics.Process objProcess = System.Diagnostics.Process.Start(objPSI);
-
-                while (objProcess.HasExited == false)
-                    System.Threading.Thread.Sleep(100);
-
-                int retVal = objProcess.ExitCode;
-                
+                try
+                {
+                    Hide();
+                    var process = Process.Start(processStartInfo);
+                    process.WaitForExit();
+                }
+                finally
+                {
+                    Show();
+                }
             }
             catch (Exception error)
             {
                 MessageBox.Show(error.ToString(), "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
         #endregion
 
         #region Utilities
@@ -602,8 +706,11 @@ namespace MenuWPF
         void CleanupPre021()
         {
             // Handle cleanup from pre version 0021
-            if (null != Registry.CurrentUser.OpenSubKey("SOFTWARE\\ORTS"))
-                Registry.CurrentUser.DeleteSubKeyTree("SOFTWARE\\ORTS");
+            using (var RK = Registry.CurrentUser.OpenSubKey("SOFTWARE\\ORTS"))
+            {
+                if (RK != null)
+                    Registry.CurrentUser.DeleteSubKeyTree("SOFTWARE\\ORTS");
+            }
 
             if (!File.Exists(FolderDataFile))
             {
@@ -625,13 +732,20 @@ namespace MenuWPF
 
         private void CheckBGImageChanged()
         {
-            RegistryKey RK = Registry.CurrentUser.OpenSubKey(RegistryKey);
-            if (RK.GetValue("BackgroundImage", "") != null)
+            using (var RK = Registry.CurrentUser.OpenSubKey(RegistryKey))
             {
-                if (System.IO.File.Exists(RK.GetValue("BackgroundImage", "").ToString()))
+                if (RK !=null && RK.GetValue("BackgroundImage", "") != null)
                 {
-                    bgImage = new BitmapImage(new Uri(RK.GetValue("BackgroundImage", "").ToString(), UriKind.Absolute));
-                    ((ImageBrush)this.Background).ImageSource = bgImage;
+                    if (System.IO.File.Exists(RK.GetValue("BackgroundImage", "").ToString()))
+                    {
+                        bgImage = new BitmapImage(new Uri(RK.GetValue("BackgroundImage", "").ToString(), UriKind.Absolute));
+                        ((ImageBrush)this.Background).ImageSource = bgImage;
+                    }
+                    else
+                    {
+                        bgImage = defaultImage;
+                        ((ImageBrush)this.Background).ImageSource = defaultImage;
+                    }
                 }
                 else
                 {
@@ -639,12 +753,6 @@ namespace MenuWPF
                     ((ImageBrush)this.Background).ImageSource = defaultImage;
                 }
             }
-            else
-            {
-                bgImage = defaultImage;
-                ((ImageBrush)this.Background).ImageSource = defaultImage;
-            }
-            RK.Close();
         }
         #endregion
 
@@ -1132,17 +1240,21 @@ namespace MenuWPF
                                 //Check if it contains a Cabview => player driveable engine
                                 if (engineContent.ToLower().Contains("cabview") && engineContent.ToLower().IndexOf("cabview") < engineContent.ToLower().IndexOf("description"))
                                 {
-                                    
-                                    if (EnginesWithConsists.ContainsKey(engKey))
+
+                                    try
                                     {
-                                        EnginesWithConsists[engKey].Add(new CONFile(file));
+                                        if (EnginesWithConsists.ContainsKey(engKey))
+                                        {
+                                            EnginesWithConsists[engKey].Add(new CONFile(file));
+                                        }
+                                        else
+                                        {
+                                            EnginesWithConsists.Add(engKey, new List<CONFile>());
+                                            EnginesWithConsists[engKey].Add(new CONFile(file));
+                                            //cboEngine.Items.Add(engKey.Name);
+                                        }
                                     }
-                                    else
-                                    {
-                                        EnginesWithConsists.Add(engKey, new List<CONFile>());
-                                        EnginesWithConsists[engKey].Add(new CONFile(file));
-                                        //cboEngine.Items.Add(engKey.Name);
-                                    }
+                                    catch { }
                                     
                                 }
                                 srEngine.Close();
@@ -1308,7 +1420,6 @@ namespace MenuWPF
 
         #endregion
 
-        
 
     }
 }

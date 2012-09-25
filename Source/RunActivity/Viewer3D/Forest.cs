@@ -37,7 +37,7 @@ namespace ORTS
             Viewer = viewer;
             worldPosition = position;
 
-            forestMaterial = Materials.Load(Viewer.RenderProcess, "ForestMaterial", Helpers.GetForestTextureFile(viewer.Simulator, forest.TreeTexture), 0, 0);
+            forestMaterial = viewer.MaterialManager.Load("Forest", Helpers.GetForestTextureFile(viewer.Simulator, forest.TreeTexture), 0, 0);
 
             // Instantiate classes
             forestMesh = new ForestMesh(Viewer.RenderProcess, Viewer.Tiles, this, forest);
@@ -52,9 +52,15 @@ namespace ORTS
 			var xnaTranslation = worldPosition.XNAMatrix.Translation;
 			Vector3 mstsLocation = new Vector3(xnaTranslation.X + dTileX * 2048, forestMesh.refElevation, -xnaTranslation.Z + dTileZ * 2048);
 			Matrix xnaPatchMatrix = Matrix.CreateTranslation(mstsLocation.X, mstsLocation.Y, -mstsLocation.Z);
-            float viewingDistance = 2000; // Arbitrary, but historically in MSTS it was only 1000.
+            float viewingDistance = Viewer.Settings.ViewingDistance; // Arbitrary, but historically in MSTS it was only 1000.
 			frame.AddAutoPrimitive(mstsLocation, forestMesh.objectRadius, viewingDistance + forestMesh.objectRadius, forestMaterial, forestMesh, 
                 RenderPrimitiveGroup.World, ref xnaPatchMatrix, Viewer.Settings.ShadowAllShapes ? ShapeFlags.ShadowCaster : ShapeFlags.None);
+        }
+
+        [CallOnThread("Loader")]
+        internal void Mark()
+        {
+            forestMaterial.Mark();
         }
     }
     #endregion
@@ -86,7 +92,7 @@ namespace ORTS
         /// <summary>
         /// Constructor.
         /// </summary>
-        public ForestMesh(RenderProcess renderProcess, Tiles tiles, ForestDrawer drawer, ForestObj forest)
+        public ForestMesh(RenderProcess renderProcess, TileManager tiles, ForestDrawer drawer, ForestObj forest)
         {
             Drawer = drawer;
 
@@ -96,7 +102,7 @@ namespace ORTS
             scaleRange2 = forest.scaleRange.scaleRange2;
             if (scaleRange1 > scaleRange2)
             {
-                Trace.TraceWarning("Forest " + forest.TreeTexture + " in tile " + drawer.worldPosition.TileX + "," + drawer.worldPosition.TileZ + " has scale range with minimum greater than maximum");
+                Trace.TraceWarning("{0} forest {1} has scale range with minimum greater than maximum", drawer.worldPosition, forest.TreeTexture);
                 float scaleRangeSwap = scaleRange2;
                 scaleRange2 = scaleRange1;
                 scaleRange1 = scaleRangeSwap;
@@ -127,7 +133,7 @@ namespace ORTS
         /// <summary>
         /// Forest tree array intialization. 
         /// </summary>
-        private void InitForestVertices(Tiles tiles, VertexPositionNormalTexture[] trees)
+        private void InitForestVertices(TileManager tiles, VertexPositionNormalTexture[] trees)
         {
             // Create the tree position and size arrays.
             Vector3[] treePosition = new Vector3[population];

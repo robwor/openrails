@@ -21,6 +21,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -269,9 +270,9 @@ namespace ORTS
         Vector3 ShadowMapY;
         Vector3[] ShadowMapCenter;
 
-        static readonly Material DummyBlendedMaterial = new EmptyMaterial();
-
         readonly RenderProcess RenderProcess;
+        readonly Material DummyBlendedMaterial;
+        readonly ShadowMapMaterial ShadowMapMaterial;
         readonly Dictionary<Material, RenderItemCollection>[] RenderItems = new Dictionary<Material, RenderItemCollection>[(int)RenderPrimitiveSequence.Sentinel];
         readonly RenderItemCollection[] RenderShadowItems;
 
@@ -281,6 +282,8 @@ namespace ORTS
         public RenderFrame(RenderProcess owner)
         {
             RenderProcess = owner;
+            DummyBlendedMaterial = new EmptyMaterial(owner.Viewer);
+            ShadowMapMaterial = (ShadowMapMaterial)owner.Viewer.MaterialManager.Load("ShadowMap");
 
             for (int i = 0; i < RenderItems.Length; i++)
                 RenderItems[i] = new Dictionary<Material, RenderItemCollection>();
@@ -314,6 +317,8 @@ namespace ORTS
             for (int i = 0; i < RenderItems.Length; i++)
                 foreach (Material mat in RenderItems[i].Keys)
                     RenderItems[i][mat].Clear();
+            for (int i = 0; i < RenderItems.Length; i++)
+                RenderItems[i].Clear();
             if (RenderProcess.Viewer.Settings.DynamicShadows)
                 for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
                     RenderShadowItems[shadowMapIndex].Clear();
@@ -334,7 +339,7 @@ namespace ORTS
 
             if (RenderProcess.Viewer.Settings.DynamicShadows && (RenderProcess.ShadowMapCount > 0) && !LockShadows)
             {
-                var solarDirection = RenderProcess.Viewer.SkyDrawer.solarDirection;
+                var solarDirection = RenderProcess.Viewer.World.Sky.solarDirection;
                 solarDirection.Normalize();
                 if (Vector3.Dot(SteppedSolarDirection, solarDirection) < 0.99999)
                     SteppedSolarDirection = solarDirection;
@@ -516,11 +521,7 @@ namespace ORTS
             return RenderPrimitive.SequenceForOpaque[(int)group];
         }
 
-        /// <summary>
-        /// Draw 
-        /// Executed in the RenderProcess thread 
-        /// </summary>
-        /// <param name="graphicsDevice"></param>
+        [CallOnThread("Render")]
         public void Draw(GraphicsDevice graphicsDevice)
         {
 #if DEBUG_RENDER_STATE
@@ -534,7 +535,7 @@ namespace ORTS
                 Console.WriteLine("Draw {");
             }
 
-            Materials.UpdateShaders(RenderProcess, graphicsDevice);
+            RenderProcess.Viewer.MaterialManager.UpdateShaders();
 
             if (RenderProcess.Viewer.Settings.DynamicShadows && (RenderProcess.ShadowMapCount > 0))
                 DrawShadows(graphicsDevice, logging);
@@ -552,19 +553,50 @@ namespace ORTS
 
             if (UserInput.IsPressed(UserCommands.GameScreenshot))
             {
-                using (var screenshot = new ResolveTexture2D(graphicsDevice, graphicsDevice.PresentationParameters.BackBufferWidth, graphicsDevice.PresentationParameters.BackBufferHeight, 1, SurfaceFormat.Color))
-                {
-                    graphicsDevice.ResolveBackBuffer(screenshot);
-                    if (!Directory.Exists(RenderProcess.Viewer.Settings.ScreenshotPath))
-                        Directory.CreateDirectory(RenderProcess.Viewer.Settings.ScreenshotPath);
-                    var fileName = Path.Combine(RenderProcess.Viewer.Settings.ScreenshotPath, Application.ProductName + " " + DateTime.Now.ToString("yyyy-MM-dd hh-mm-ss") + ".png");
-                    screenshot.Save(fileName, ImageFileFormat.Png);
-                    RenderProcess.Viewer.MessagesWindow.AddMessage(String.Format("Screenshot saved to '{0}'.", fileName), 10);
-                }
+                if (!Directory.Exists(RenderProcess.Viewer.Settings.ScreenshotPath))
+                    Directory.CreateDirectory(RenderProcess.Viewer.Settings.ScreenshotPath);
+                var fileName = Path.Combine(RenderProcess.Viewer.Settings.ScreenshotPath, Application.ProductName + " " + DateTime.Now.ToString("yyyy-MM-dd hh-mm-ss")) + ".png";
+                SaveScreenshot(graphicsDevice, fileName);
+                RenderProcess.Viewer.MessagesWindow.AddMessage(String.Format("Saving screenshot to '{0}'.", fileName), 10);
+            }
+            // Boolean and FileStem set by Viewer3D
+            // <CJ comment> Intended to save a thumbnail-sized image but can't find a way to do this.
+            // Currently saving a full screen image and then showing it in Menu.exe at a thumbnail size.
+            // </CJ comment>
+            if (RenderProcess.Viewer.SaveActivityThumbnail)
+            {
+                RenderProcess.Viewer.SaveActivityThumbnail = false;
+                SaveScreenshot(graphicsDevice, Path.Combine(Program.UserDataFolder, RenderProcess.Viewer.SaveActivityFileStem + ".png"));
+                RenderProcess.Viewer.MessagesWindow.AddMessage("Game saved", 5);
             }
         }
 
-        void DrawShadows(GraphicsDevice graphicsDevice, bool logging)
+        [CallOnThread("Render")]
+        public void SaveScreenshot(GraphicsDevice graphicsDevice, string fileName)
+        {
+            var screenshot = new ResolveTexture2D(graphicsDevice, graphicsDevice.PresentationParameters.BackBufferWidth, graphicsDevice.PresentationParameters.BackBufferHeight, 1, SurfaceFormat.Color);
+            graphicsDevice.ResolveBackBuffer(screenshot);
+            new Thread(() =>
+            {
+                try
+                {
+                    // Unfortunately, the back buffer includes an alpha channel. Although saving this might seem okay,
+                    // it actually ruins the picture - nothing in the back buffer is seen on-screen according to its
+                    // alpha, it's only used for blending (if at all). We'll remove the alpha here.
+                    var data = new uint[screenshot.Width * screenshot.Height];
+                    screenshot.GetData(data);
+                    for (var i = 0; i < data.Length; i++)
+                        data[i] |= 0xFF000000;
+                    screenshot.SetData(data);
+                    // Now save the modified image.
+                    screenshot.Save(fileName, ImageFileFormat.Png);
+                    screenshot.Dispose();
+                }
+                catch { }
+            }).Start();
+        }
+
+        void DrawShadows( GraphicsDevice graphicsDevice, bool logging )
         {
             if (logging) Console.WriteLine("  DrawShadows {");
             for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
@@ -584,37 +616,37 @@ namespace ORTS
             graphicsDevice.Clear(ClearOptions.DepthBuffer, Color.Black, 1, 0);
 
             // Prepare for normal (non-blocking) rendering of scenery.
-            Materials.ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Normal);
+            ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Normal);
 
             // Render non-terrain, non-forest shadow items first.
             if (logging) Console.WriteLine("      {0,-5} * SceneryMaterial (normal)", RenderShadowItems[shadowMapIndex].Count(ri => ri.Material is SceneryMaterial));
-            Materials.ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is SceneryMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
+            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is SceneryMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
 
             // Prepare for normal (non-blocking) rendering of forests.
-            Materials.ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Forest);
+            ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Forest);
 
             // Render forest shadow items next.
             if (logging) Console.WriteLine("      {0,-5} * ForestMaterial (forest)", RenderShadowItems[shadowMapIndex].Count(ri => ri.Material is ForestMaterial));
-            Materials.ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is ForestMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
+            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is ForestMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
 
             // Prepare for normal (non-blocking) rendering of terrain.
-            Materials.ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Normal);
+            ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Normal);
 
             // Render terrain shadow items now, with their magic.
             if (logging) Console.WriteLine("      {0,-5} * TerrainMaterial (normal)", RenderShadowItems[shadowMapIndex].Count(ri => ri.Material is TerrainMaterial));
-            Materials.ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
+            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
 
             // Prepare for blocking rendering of terrain.
-            Materials.ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Blocker);
+            ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Blocker);
 
             // Render terrain shadow items in blocking mode.
             if (logging) Console.WriteLine("      {0,-5} * TerrainMaterial (blocker)", RenderShadowItems[shadowMapIndex].Count(ri => ri.Material is TerrainMaterial));
-            Materials.ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
+            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
 
             // All done.
-            Materials.ShadowMapMaterial.ResetState(graphicsDevice);
+            ShadowMapMaterial.ResetState(graphicsDevice);
 #if DEBUG_RENDER_STATE
-			DebugRenderState(graphicsDevice.RenderState, Materials.ShadowMapMaterial.ToString());
+            DebugRenderState(graphicsDevice.RenderState, ShadowMapMaterial.ToString());
 #endif
             graphicsDevice.DepthStencilBuffer = NormalStencilBuffer;
             graphicsDevice.SetRenderTarget(0, null);
@@ -623,9 +655,9 @@ namespace ORTS
             // Blur the shadow map.
             if (RenderProcess.Viewer.Settings.ShadowMapBlur)
             {
-                ShadowMap[shadowMapIndex] = Materials.ShadowMapMaterial.ApplyBlur(graphicsDevice, ShadowMap[shadowMapIndex], ShadowMapRenderTarget[shadowMapIndex], ShadowMapStencilBuffer, NormalStencilBuffer);
+                ShadowMap[shadowMapIndex] = ShadowMapMaterial.ApplyBlur(graphicsDevice, ShadowMap[shadowMapIndex], ShadowMapRenderTarget[shadowMapIndex], ShadowMapStencilBuffer, NormalStencilBuffer);
 #if DEBUG_RENDER_STATE
-				DebugRenderState(graphicsDevice.RenderState, Materials.ShadowMapMaterial.ToString() + " ApplyBlur()");
+                DebugRenderState(graphicsDevice.RenderState, ShadowMapMaterial.ToString() + " ApplyBlur()");
 #endif
             }
 
@@ -640,7 +672,7 @@ namespace ORTS
         void DrawSimple(GraphicsDevice graphicsDevice, bool logging)
         {
             if (logging) Console.WriteLine("  DrawSimple {");
-            graphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, Materials.FogColor, 1, 0);
+            graphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, SharedMaterialManager.FogColor, 1, 0);
             DrawSequences(graphicsDevice, logging);
             if (logging) Console.WriteLine("  }");
         }
@@ -649,7 +681,7 @@ namespace ORTS
         {
             if (RenderProcess.Viewer.Settings.DynamicShadows && (RenderProcess.ShadowMapCount > 0))
             {
-                Materials.SceneryShader.SetShadowMap(ShadowMapLightViewProjShadowProj, ShadowMap, RenderProcess.ShadowMapLimit);
+                RenderProcess.Viewer.MaterialManager.SceneryShader.SetShadowMap(ShadowMapLightViewProjShadowProj, ShadowMap, RenderProcess.ShadowMapLimit);
             }
 
             var renderItems = new List<RenderItem>();
