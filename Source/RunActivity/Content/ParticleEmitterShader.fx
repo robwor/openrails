@@ -1,10 +1,20 @@
 // COPYRIGHT 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -15,6 +25,8 @@
 
 float4x4 worldViewProjection;  // model -> world -> view -> projection
 float4x4 invView;				// inverse view
+
+float3 LightVector; // Direction vector to sun, used for day-night darkening
 
 float3 emitDirection;
 float emitSize;
@@ -118,6 +130,32 @@ VERTEX_OUTPUT VSParticles(in VERTEX_INPUT In)
 
 ////////////////////    P I X E L   S H A D E R S    ///////////////////////////
 
+// This function dims the lighting at night, with a transition period as the sun rises/sets.
+void _PSApplyDay2Night(inout float3 Color)
+{
+	// The following constants define the beginning and the end conditions of the day-night transition
+	const float startNightTrans = 0.1; // The "NightTrans" values refer to the Y postion of LightVector
+	const float finishNightTrans = -0.1;
+	const float minDarknessCoeff = 0.15;
+	
+	// Internal variables
+	// The following two are used to interpoate between day and night lighting (y = mx + b)
+	// Can't use lerp() here, as overall dimming action is too complex
+	float slope = (1.0 - minDarknessCoeff) / (startNightTrans - finishNightTrans); // "m"
+	float incpt = 1.0 - slope * startNightTrans; // "b"
+	// This is the return value used to darken scenery
+	float adjustment;
+	
+	if (LightVector.y < finishNightTrans)
+		adjustment = minDarknessCoeff;
+	else if (LightVector.y > startNightTrans)
+		adjustment = 1.0; // Scenery is fully lit during the day
+	else
+		adjustment = slope * LightVector.y + incpt;
+	
+	Color.rgb *= adjustment;
+}
+
 float4 PSParticles(in PIXEL_INPUT In) : COLOR0
 {
 	float normalizedAge = saturate(In.Color_Age.a / 12);
@@ -127,6 +165,7 @@ float4 PSParticles(in PIXEL_INPUT In) : COLOR0
 	tex.rgb += In.Color_Age.rgb;
 	tex.rgb /= 2;
 	tex.rgb = min(tex.rgb, In.Color_Age.rgb);
+	_PSApplyDay2Night(tex.rgb);
 	tex.a -= 0.033f;	// Get rid of the non zero edge on the texture. No idea why it's there.
 	tex.a *= alpha;
 	return tex;

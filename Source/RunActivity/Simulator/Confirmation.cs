@@ -1,9 +1,19 @@
-﻿// COPYRIGHT 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
+﻿// COPYRIGHT 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 
@@ -17,6 +27,7 @@ namespace ORTS {
 		MSG,
     };
 
+    // <CJComment> Some of these are not cab controls or even controls. However they all make good use of structured text. </CJComment>
     public enum CabControl {
         None
         // Power
@@ -27,6 +38,7 @@ namespace ORTS {
       , HelperDiesel
       , Reverser
       , Throttle
+      , Wheelslip
       // Steam power
       , Regulator
       , Injector1
@@ -56,7 +68,7 @@ namespace ORTS {
       , Headlight
       , CabLight
       , Wipers
-      , SwitchLocomotive
+      , ChangeCab
       // Train Devices
       , DoorsLeft
       , DoorsRight
@@ -65,6 +77,10 @@ namespace ORTS {
       , SwitchAhead
       , SwitchBehind
       , SimulationSpeed
+      , Uncouple
+      , Activity
+      , Replay
+      , Labels
     }
 
     public enum CabSetting {
@@ -73,7 +89,8 @@ namespace ORTS {
         , On        // 2 or 3 state control/apply/change
         , Decrease  // continuous control
         , Increase  // continuous control
-        , Warn
+        , Warn1
+        , Warn2
         , Range1    // sub-range
         , Range2
         , Range3
@@ -99,8 +116,9 @@ namespace ORTS {
             , new string [] { "Pantograph 2", "lower", null, "raise" }
             , new string [] { "Player Diesel Power", "off", null, "on", null, null, "locked. Close throttle then re-try." }
             , new string [] { "Helper Diesel Power", "off", null, "on" }
-            , new string [] { "Reverser",  "reverse", "neutral", "forward", null, null, "locked. Close throttle then re-try." } 
+            , new string [] { "Reverser",  "reverse", "neutral", "forward", null, null, "locked. Close throttle, stop train then re-try." } 
             , new string [] { "Throttle", null, null, null, "close", "open", "locked. Release dynamic brake then re-try." } 
+            , new string [] { "Wheelslip", "over", null, "occurring. Tractive power greatly reduced.", null, null, "warning" } 
             // Steam power
             , new string [] { "Regulator", null, null, null, "close", "open" }    // Throttle for steam locomotives
             , new string [] { "Injector 1", "off", null, "on", "close", "open" } 
@@ -114,12 +132,12 @@ namespace ORTS {
             // Braking
             , new string [] { "Train Brake", null, null, null, "release", "apply" } 
             , new string [] { "Engine Brake", null, null, null, "release", "apply" } 
-            , new string [] { "Dynamic Brake" } 
+            , new string [] { "Dynamic Brake", "off", null, "setup", "decrease", "increase" }
             , new string [] { "Emergency Brake", null, null, "apply" } 
             , new string [] { "Bail Off", "disengage", null, "engage" } 
             , new string [] { "Brakes", "initialize", null, null, null, null, "cannot initialize. Stop train then re-try." } 
             , new string [] { "Handbrake", "none", null, "full" } 
-            , new string [] { "Retainers", "off", null, "on", null, null, null, "Exhaust", "High Pressure", "Low Pressure", "Slow Direct" } 
+            , new string [] { "Retainers", "off", null, "on", null, null, null, null, "Exhaust", "High Pressure", "Low Pressure", "Slow Direct" } 
             , new string [] { "Brake Hose", "disconnect", null, "connect" } 
             // Cab Devices
             , new string [] { "Sander", "off", null, "on" } 
@@ -130,19 +148,23 @@ namespace ORTS {
             , new string [] { "Headlight", "off", "dim", "bright" } 
             , new string [] { "Cab Light", "off", null, "on" } 
             , new string [] { "Wipers", "off", null, "on" } 
-            , new string [] { "Locomotive", null, null, "switch" } 
+            , new string [] { "Cab", null, null, "change", null, null, "changing is not available", "changing disabled. Close throttle, set reverser to neutral, stop train then re-try." } 
             // Train Devices
             , new string [] { "Doors Left", "close", null, "open" } 
             , new string [] { "Doors Right", "close", null, "open" } 
             , new string [] { "Mirror", "retract", null, "extend" } 
             // Track Devices
-            , new string [] { "Switch Ahead", null, null, "change" } 
-            , new string [] { "Switch Behind", null, null, "change" } 
+            , new string [] { "Switch Ahead", null, null, "change", null, null, "is occupied and cannot change" } 
+            , new string [] { "Switch Behind", null, null, "change", null, null, "is occupied and cannot change" } 
             // Simulation
             , new string [] { "Simulation Speed", "reset", null, null, "decrease", "increase" } 
+            , new string [] { "Uncouple After" } 
+            , new string [] { "Activity", "quit", null, "resume" } 
+            , new string [] { "Replay", null, null, null, null, null, "Overriding camera replay. Press Esc to resume camera replay." } 
+            , new string [] { "Location labels", "none", "sidings", "stations", "stations and sidings" } 
             };
 
-        readonly Viewer3D Viewer;
+        public readonly Viewer3D Viewer;
         readonly double DefaultDurationS;
 
         public Confirmer(Viewer3D viewer, double defaultDurationS)
@@ -153,9 +175,13 @@ namespace ORTS {
 
         #region Control confirmation
 
-        public void Confirm(CabControl control, CabSetting setting)
+        public void Confirm(CabControl control, string text)
         {
-            Message(control, "{0}", ConfirmText[(int)control][(int)setting]);
+            Message(control, "{0} {1}", ConfirmText[(int)control][0], text);
+        }
+
+        public void Confirm( CabControl control, CabSetting setting ) {
+            Message( control, "{0}", ConfirmText[(int)control][(int)setting] );
         }
 
         public void Confirm(CabControl control, CabSetting setting, string text)
@@ -211,7 +237,7 @@ namespace ORTS {
 
         public void Warning(CabControl control, CabSetting setting)
         {
-            if (Viewer.World.GameSounds != null) Viewer.World.GameSounds.HandleEvent(10);
+            if (Viewer.World.GameSounds != null) Viewer.World.GameSounds.HandleEvent(Event.ControlError);
             Message(control, ConfirmLevel.Warning, ConfirmText[(int)control][(int)setting]);
         }
 
@@ -228,7 +254,7 @@ namespace ORTS {
 			Message(CabControl.None, ConfirmLevel.MSG, message);
 		}
 		
-		public void Warning(string message)
+        public void Warning(string message)
         {
             Message(CabControl.None, ConfirmLevel.Warning, message);
         }
@@ -247,10 +273,13 @@ namespace ORTS {
 
         void Message(CabControl control, ConfirmLevel level, string message)
         {
+            // User can suppress levels None and Information but not Warning, Error and MSGs.
+            // Cab control confirmations have level None.
             if (level < ConfirmLevel.Information && Viewer.Settings.SuppressConfirmations)
                 return;
 
             var format = "{2}";
+            // Skip control name if not a control
             if (control != CabControl.None)
                 format = "{0}: " + format;
             if (level >= ConfirmLevel.Information)

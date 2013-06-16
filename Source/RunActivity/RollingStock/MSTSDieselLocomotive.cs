@@ -1,4 +1,21 @@
-﻿/* DIESEL LOCOMOTIVE CLASSES
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
+/* DIESEL LOCOMOTIVE CLASSES
  * 
  * The Locomotive is represented by two classes:
  *  MSTSDieselLocomotiveSimulator - defines the behaviour, ie physics, motion, power generated etc
@@ -10,21 +27,14 @@
  *  LocomotiveViewer - provides basic animation for running gear, wipers, etc
  * 
  */
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
 using MSTS;
-using System.Diagnostics; // needed for Debug
+// needed for Debug
 
 namespace ORTS
 {
@@ -41,9 +51,11 @@ namespace ORTS
         float MaxRPM = 0;
         float MaxRPMChangeRate = 0;
         float PercentChangePerSec = .2f;
-        float IdleExhaust = 10.0f;
+        public float IdleExhaust = 0.0f;
+        public float InitialExhaust = 0.0f;
+        float ExhaustMagnitude = 4.0f;
         float MaxExhaust = 50.0f;
-        float ExhaustDynamics = 1.5f;
+        public float ExhaustDynamics = 4.0f;
         float EngineRPMderivation = 0.0f;
         float EngineRPMold = 0.0f;
 
@@ -60,9 +72,10 @@ namespace ORTS
         public Color ExhaustColor = Color.Gray;
         Color ExhaustSteadyColor = Color.Gray;
         Color ExhaustTransientColor = Color.Black;
+        Color ExhaustDecelColor = Color.TransparentWhite;
 
-		public MSTSDieselLocomotive(Simulator simulator, string wagFile, TrainCar previousCar)
-            : base(simulator, wagFile, previousCar)
+        public MSTSDieselLocomotive(Simulator simulator, string wagFile)
+            : base(simulator, wagFile)
         {
             PowerOn = true;
             InitialMassKg = MassKG;
@@ -80,14 +93,15 @@ namespace ORTS
                 case "engine(dieselenginemaxrpmchangerate": MaxRPMChangeRate = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
 
                 case "engine(effects(dieselspecialeffects": ParseEffects(lowercasetoken, stf); break;
-                case "engine(or_diesel(idleexhaust": IdleExhaust = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
-                case "engine(or_diesel(maxexhaust": MaxExhaust = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
-                case "engine(or_diesel(exhaustdynamics": ExhaustDynamics = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "engine(dieselsmokeeffectinitialsmokerate": IdleExhaust = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "engine(dieselsmokeeffectinitialmagnitude": InitialExhaust = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "engine(dieselsmokeeffectmaxsmokerate": MaxExhaust = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
+                case "engine(dieselsmokeeffectmaxmagnitude": ExhaustMagnitude = stf.ReadFloatBlock(STFReader.UNITS.None, null); break;
                 case "engine(or_diesel(exhaustcolor": ExhaustSteadyColor.PackedValue = stf.ReadHexBlock(Color.Gray.PackedValue); break;
                 case "engine(or_diesel(exhausttransientcolor": ExhaustTransientColor.PackedValue = stf.ReadHexBlock(Color.Black.PackedValue); break;
-                case "engine(maxdiesellevel": MaxDieselLevelL = stf.ReadFloatBlock(STFReader.UNITS.Diesel, null); break;
-                case "engine(dieselusedperhouratmaxpower": DieselUsedPerHourAtMaxPowerL = stf.ReadFloatBlock(STFReader.UNITS.Diesel, null); break;
-                case "engine(dieselusedperhouratidle": DieselUsedPerHourAtIdleL = stf.ReadFloatBlock(STFReader.UNITS.Diesel, null); break;
+                case "engine(maxdiesellevel": MaxDieselLevelL = stf.ReadFloatBlock(STFReader.UNITS.LiquidVolume, null); break;
+                case "engine(dieselusedperhouratmaxpower": DieselUsedPerHourAtMaxPowerL = stf.ReadFloatBlock(STFReader.UNITS.LiquidVolume, null); break;
+                case "engine(dieselusedperhouratidle": DieselUsedPerHourAtIdleL = stf.ReadFloatBlock(STFReader.UNITS.LiquidVolume, null); break;
                 // for example
                 //case "engine(sound": CabSoundFileName = stf.ReadStringBlock(); break;
                 //case "engine(cabview": CVFFileName = stf.ReadStringBlock(); break;
@@ -150,6 +164,7 @@ namespace ORTS
             // for example
             // outf.Write(Pan);
             base.Save(outf);
+            outf.Write(DieselLevelL);
         }
 
         /// <summary>
@@ -158,9 +173,8 @@ namespace ORTS
         /// </summary>
         public override void Restore(BinaryReader inf)
         {
-            // for example
-            //if (inf.ReadBoolean()) SignalEvent(EventID.PantographUp);
             base.Restore(inf);
+            DieselLevelL = inf.ReadSingle();
         }
 
         /// <summary>
@@ -200,10 +214,32 @@ namespace ORTS
 
             if ((DynamicBrakeController != null) && (DynamicBrakePercent >= 0))
             {
-                if (this.IsLeadLocomotive())
+                if (!DynamicBrake)
+                {
+                    if (DynamicBrakeController.CommandStartTime + DynamicBrakeDelayS < Simulator.ClockTime)
+                    {
+                        DynamicBrake = true; // Engage
+                        if (IsLeadLocomotive())
+                            Simulator.Confirmer.ConfirmWithPerCent(CabControl.DynamicBrake, DynamicBrakeController.CurrentValue * 100);
+                    }
+                    else if (IsLeadLocomotive())
+                        Simulator.Confirmer.Confirm(CabControl.DynamicBrake, CabSetting.On); // Keeping status string on screen so user knows what's happening
+                }
+                else if (this.IsLeadLocomotive())
                     DynamicBrakePercent = DynamicBrakeController.Update(elapsedClockSeconds) * 100.0f;
                 else
                     DynamicBrakeController.Update(elapsedClockSeconds);
+            }
+            else if ((DynamicBrakeController != null) && (DynamicBrakePercent < 0) && (DynamicBrake))
+            {
+                if (DynamicBrakeController.CommandStartTime + DynamicBrakeDelayS < Simulator.ClockTime)
+                {
+                    DynamicBrake = false; // Disengage
+                    if (IsLeadLocomotive())
+                        Simulator.Confirmer.Confirm(CabControl.DynamicBrake, CabSetting.Off);
+                }
+                else if (IsLeadLocomotive())
+                    Simulator.Confirmer.Confirm(CabControl.DynamicBrake, CabSetting.On); // Keeping status string on screen so user knows what's happening
             }
 
             //Currently the ThrottlePercent is global to the entire train
@@ -238,24 +274,39 @@ namespace ORTS
 #endif
 			
 			// TODO  this is a wild simplification for diesel electric
+            float e = (EngineRPM - IdleRPM) / (MaxRPM - IdleRPM); //
             float t = ThrottlePercent / 100f;
             float currentSpeedMpS = Math.Abs(SpeedMpS);
             float currentWheelSpeedMpS = Math.Abs(WheelSpeedMpS);
 
-            ExhaustParticles = ((MaxExhaust - IdleExhaust) * t + IdleExhaust);
-            if (ExhaustParticles < 5.0f)
-                ExhaustParticles = 5.0f;
+            //Initial smoke, when locomotive is started:
 
-            if (EngineRPMderivation > 0.0f)
+            ExhaustColor = ExhaustSteadyColor;
+            
+            if (EngineRPM == IdleRPM)
             {
-                ExhaustParticles *= ExhaustDynamics * MaxExhaust;
-                ExhaustColor = ExhaustTransientColor;
-            }
-            else
-            {
+                ExhaustParticles = IdleExhaust;
+                ExhaustDynamics = InitialExhaust;
                 ExhaustColor = ExhaustSteadyColor;
-                if (EngineRPMderivation < 0.0f)
-                    ExhaustParticles = 3.0f;
+            }
+            else if (EngineRPMderivation > 0.0f)
+            {
+                ExhaustParticles = IdleExhaust + (e * MaxExhaust);
+                ExhaustDynamics = InitialExhaust + (e * ExhaustMagnitude);
+                ExhaustColor = ExhaustTransientColor;               
+            }
+            else if (EngineRPMderivation < 0.0f)
+            {
+                    ExhaustParticles = IdleExhaust + (e * MaxExhaust);
+                    ExhaustDynamics = InitialExhaust + (e * ExhaustMagnitude);
+                if (t == 0f)
+                {
+                    ExhaustColor = ExhaustDecelColor;
+                }
+                else
+                {
+                    ExhaustColor = ExhaustSteadyColor;
+                }
             }
             if (PowerOn)
             {
@@ -267,7 +318,11 @@ namespace ORTS
                         currentWheelSpeedMpS = currentSpeedMpS;
                     if (maxForceN * currentWheelSpeedMpS > maxPowerW)
                         maxForceN = maxPowerW / currentWheelSpeedMpS;
-                    if (currentSpeedMpS > MaxSpeedMpS)
+                    //if (currentSpeedMpS > MaxSpeedMpS)
+                    //    maxForceN = 0;
+                    if (currentSpeedMpS > MaxSpeedMpS -0.05f)
+                        maxForceN = 20 * (MaxSpeedMpS - currentSpeedMpS) * maxForceN;
+                    if (currentSpeedMpS > (MaxSpeedMpS))
                         maxForceN = 0;
                     MotiveForceN = maxForceN;
                 }
@@ -298,6 +353,7 @@ namespace ORTS
                 AverageForceN = w * AverageForceN + (1 - w) * MotiveForceN;
             }
 
+#if !NEW_SIGNALLING
             if (this.IsLeadLocomotive())
             {
                 switch (Direction)
@@ -313,6 +369,7 @@ namespace ORTS
                         MotiveForceN *= 0;
                         break;
                 }
+                ConfirmWheelslip();
             }
             else
             {
@@ -351,9 +408,72 @@ namespace ORTS
                     break;
                 } // foreach
             } // end when not lead loco
+#else
+
+            if (Train.TrainType == Train.TRAINTYPE.PLAYER)
+            {
+                if (this.IsLeadLocomotive())
+                {
+                    switch (Direction)
+                    {
+                        case Direction.Forward:
+                            //MotiveForceN *= 1;     //Not necessary
+                            break;
+                        case Direction.Reverse:
+                            MotiveForceN *= -1;
+                            break;
+                        case Direction.N:
+                        default:
+                            MotiveForceN *= 0;
+                            break;
+                    }
+                    ConfirmWheelslip();
+                }
+                else
+                {
+                    // When not LeadLocomotive; check if lead is in Neutral
+                    // if so this loco will have no motive force
+
+                    var LeadLocomotive = Simulator.PlayerLocomotive;
+
+                    if (LeadLocomotive == null) { }
+                    else if (LeadLocomotive.Direction == Direction.N)
+                        MotiveForceN *= 0;
+                    else
+                    {
+                        switch (Direction)
+                        {
+                            case Direction.Forward:
+                                MotiveForceN *= 1;     //Not necessary
+                                break;
+                            case Direction.Reverse:
+                                MotiveForceN *= -1;
+                                break;
+                            case Direction.N:
+                            default:
+                                MotiveForceN *= 0;
+                                break;
+                        }
+                    }
+                } // end when not lead loco
+            }// end player locomotive
+
+            else // for AI locomotives
+            {
+                switch (Direction)
+                {
+                    case Direction.Reverse:
+                        MotiveForceN *= -1;
+                        break;
+                    default:
+                        break;
+                }
+            }// end AI locomotive
+#endif
 
             // Variable1 is wheel rotation in m/sec for steam locomotives
             //Variable2 = Math.Abs(MotiveForceN) / MaxForceN;   // force generated
+
             if (PowerOn)
                 Variable1 = ThrottlePercent / 100f;   // throttle setting
             else
@@ -370,12 +490,17 @@ namespace ORTS
                 if (f > 0)
                     MotiveForceN -= (SpeedMpS > 0 ? 1 : -1) * f;
             }
-
+            Variable3 = 0;
+            if ( DynamicBrakePercent > 0)
+                Variable3 -= MotiveForceN / MaxDynamicBrakeForceN;
             switch (this.Train.TrainType)
             {
                 case Train.TRAINTYPE.AI:
                     if (!PowerOn)
                         PowerOn = true;
+                    //LimitMotiveForce(elapsedClockSeconds);    //calls the advanced physics
+                    LimitMotiveForce();                         //let's call the basic physics instead for now
+                    WheelSpeedMpS = Flipped ? -currentSpeedMpS : currentSpeedMpS;            //make the wheels go round
                     break;
                 case Train.TRAINTYPE.STATIC:
                     break;
@@ -388,6 +513,13 @@ namespace ORTS
                             CabControl.Throttle,
                             ThrottleController.UpdateValue > 0 ? CabSetting.Increase : CabSetting.Decrease,
                             ThrottleController.CurrentValue * 100);
+                    }
+                    if (DynamicBrakeController != null && DynamicBrakeController.UpdateValue != 0.0)
+                    {
+                        Simulator.Confirmer.UpdateWithPerCent(
+                            CabControl.DynamicBrake,
+                            DynamicBrakeController.UpdateValue > 0 ? CabSetting.Increase : CabSetting.Decrease,
+                            DynamicBrakeController.CurrentValue * 100);
                     }
 
                     //Force is filtered due to inductance
@@ -436,29 +568,14 @@ namespace ORTS
                 EngineRPMold = EngineRPM;
             }
 
-            if (MainResPressurePSI < CompressorRestartPressurePSI && !CompressorOn)
-                SignalEvent(EventID.CompressorOn);
+            if ((MainResPressurePSI < CompressorRestartPressurePSI) && (!CompressorOn) && (PowerOn))
+                SignalEvent(Event.CompressorOn);
             else if (MainResPressurePSI > MaxMainResPressurePSI && CompressorOn)
-                SignalEvent(EventID.CompressorOff);
-            if (CompressorOn)
+                SignalEvent(Event.CompressorOff);
+            if ((CompressorOn)&&(PowerOn))
                 MainResPressurePSI += elapsedClockSeconds * MainResChargingRatePSIpS;
 
             base.UpdateParent(elapsedClockSeconds); // Calls the Update() method in the parent class MSTSLocomotive which calls Update() on its parent MSTSWagon which calls ...
-        }
-
-        /// <summary>
-        /// Used when someone want to notify us of an event
-        /// </summary>
-        public override void SignalEvent(EventID eventID)
-        {
-            do  // Like 'switch' (i.e. using 'break' is more efficient than a sequence of 'if's) but doesn't need constant EventID.<values>
-            {
-                // for example
-                // case EventID.BellOn: Bell = true; break;
-                // case EventID.BellOff: Bell = false; break;
-  			} while (false);  // Never repeats
-
-            base.SignalEvent(eventID);
         }
 
         public override string GetStatus()
@@ -550,6 +667,7 @@ namespace ORTS
     class MSTSDieselLocomotiveViewer : MSTSLocomotiveViewer
     {
         MSTSDieselLocomotive DieselLocomotive { get { return (MSTSDieselLocomotive)Car; } }
+        List<ParticleEmitterDrawer> Exhaust = new List<ParticleEmitterDrawer>();
 
         public MSTSDieselLocomotiveViewer(Viewer3D viewer, MSTSDieselLocomotive car)
             : base(viewer, car)
@@ -558,16 +676,17 @@ namespace ORTS
             // on what emitters we know about.
             string dieselTexture = viewer.Simulator.BasePath + @"\GLOBAL\TEXTURES\dieselsmoke.ace";
 
-            foreach (KeyValuePair<string, List<ParticleEmitterDrawer>> pair in ParticleDrawers)
+            foreach (var drawers in from drawer in ParticleDrawers
+                                    where drawer.Key.ToLowerInvariant().StartsWith("exhaust")
+                                    select drawer.Value)
             {
-                if (pair.Key == "Exhaust1")
-                {
-                    foreach (ParticleEmitterDrawer drawer in pair.Value)
-                    {
-                        drawer.SetTexture(viewer.TextureManager.Get(dieselTexture));
-                        drawer.SetEmissionRate(car.ExhaustParticles);
-                    }
-                }
+                Exhaust.AddRange(drawers);
+            }
+            foreach (var drawer in Exhaust)
+            {
+                drawer.SetTexture(viewer.TextureManager.Get(dieselTexture));
+                drawer.SetEmissionRate(car.ExhaustParticles);
+                drawer.SetParticleDuration(car.ExhaustDynamics);
             }
         }
 
@@ -583,7 +702,7 @@ namespace ORTS
                     DieselLocomotive.PowerOn = !DieselLocomotive.PowerOn;
                     Viewer.Simulator.Confirmer.Confirm( CabControl.PlayerDiesel, DieselLocomotive.PowerOn ? CabSetting.On : CabSetting.Off );
                 } else {
-                    Viewer.Simulator.Confirmer.Warning( CabControl.PlayerDiesel, CabSetting.Warn );
+                    Viewer.Simulator.Confirmer.Warning( CabControl.PlayerDiesel, CabSetting.Warn1 );
                 }
             }
             if (UserInput.IsPressed(UserCommands.ControlDieselHelper))
@@ -599,7 +718,7 @@ namespace ORTS
                     }
                 }
                 // One confirmation however many helper locomotives
-                // <CJ Comment> Couldn't make one confirmation per loco work correctly :-( </CJ Comment>
+                // <CJComment> Couldn't make one confirmation per loco work correctly :-( </CJComment>
                 if( helperLocos > 0 ) {
                     Viewer.Simulator.Confirmer.Confirm( CabControl.HelperDiesel, powerOn ? CabSetting.On : CabSetting.Off );
                 }
@@ -614,18 +733,12 @@ namespace ORTS
         /// </summary>
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-            foreach (KeyValuePair<string, List<ParticleEmitterDrawer>> pair in ParticleDrawers)
+            foreach (var drawer in Exhaust)
             {
-                if (pair.Key == "Exhaust1")
-                {
-                    foreach (ParticleEmitterDrawer drawer in pair.Value)
-                    {
-                        drawer.SetEmissionRate(((MSTSDieselLocomotive)this.Car).ExhaustParticles);
-                        drawer.SetEmissionColor(((MSTSDieselLocomotive)this.Car).ExhaustColor);
-                    }
-                }
+                drawer.SetEmissionRate(((MSTSDieselLocomotive)this.Car).ExhaustParticles);
+                drawer.SetEmissionColor(((MSTSDieselLocomotive)this.Car).ExhaustColor);
+                drawer.SetParticleDuration(((MSTSDieselLocomotive)this.Car).ExhaustDynamics);
             }
-
             base.PrepareFrame(frame, elapsedTime);
         }
 

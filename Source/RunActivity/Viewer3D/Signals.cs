@@ -1,10 +1,20 @@
-﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 // Prints out lots of diagnostic information about the construction of signals from shape data and their state changes.
@@ -32,7 +42,7 @@ namespace ORTS
             : base(viewer, path, position, flags)
         {
 #if DEBUG_SIGNAL_SHAPES
-			Console.WriteLine("{0} signal {1}:", Location.ToString(), mstsSignal.UID);
+            Console.WriteLine("{0} signal {1}:", Location.ToString(), mstsSignal.UID);
 #endif
             UID = mstsSignal.UID;
             var signalShape = Path.GetFileName(path).ToUpper();
@@ -77,20 +87,20 @@ namespace ORTS
             for (var i = 0; i < mstsSignal.SignalUnits.Units.Length; i++)
             {
 #if DEBUG_SIGNAL_SHAPES
-				Console.Write("  UNIT {0}: TrItem={1,-5} SubObj={2,-2}", i, mstsSignal.SignalUnits.Units[i].TrItem, mstsSignal.SignalUnits.Units[i].SubObj);
+                Console.Write("  UNIT {0}: TrItem={1,-5} SubObj={2,-2}", i, mstsSignal.SignalUnits.Units[i].TrItem, mstsSignal.SignalUnits.Units[i].SubObj);
 #endif
                 // Find the simulation SignalObject for this shape.
                 var signalAndHead = viewer.Simulator.Signals.FindByTrItem(mstsSignal.SignalUnits.Units[i].TrItem);
                 if (!signalAndHead.HasValue)
                 {
-                    Trace.TraceWarning("{0} signal {1} unit {2} has invalid TrItem {3}.", Location.ToString(), mstsSignal.UID, i, mstsSignal.SignalUnits.Units[i].TrItem);
+                    Trace.TraceWarning("Skipped {0} signal {1} unit {2} with invalid TrItem {3}", Location.ToString(), mstsSignal.UID, i, mstsSignal.SignalUnits.Units[i].TrItem);
                     continue;
                 }
                 // Get the signal sub-object for this unit (head).
                 var mstsSignalSubObj = mstsSignalShape.SignalSubObjs[mstsSignal.SignalUnits.Units[i].SubObj];
                 if (mstsSignalSubObj.SignalSubType != 1) // SIGNAL_HEAD
                 {
-                    Trace.TraceWarning("{0} signal {1} unit {2} has invalid SubObj {3}.", Location.ToString(), mstsSignal.UID, i, mstsSignal.SignalUnits.Units[i].SubObj);
+                    Trace.TraceWarning("Skipped {0} signal {1} unit {2} with invalid SubObj {3}", Location.ToString(), mstsSignal.UID, i, mstsSignal.SignalUnits.Units[i].SubObj);
                     continue;
                 }
                 SignalObject = signalAndHead.Value.Key;
@@ -102,10 +112,10 @@ namespace ORTS
                 }
                 catch (InvalidDataException error)
                 {
-                    Trace.WriteLine(error);
+                    Trace.TraceWarning(error.Message);
                 }
 #if DEBUG_SIGNAL_SHAPES
-				Console.WriteLine();
+                Console.WriteLine();
 #endif
             }
         }
@@ -132,60 +142,96 @@ namespace ORTS
             base.Mark();
         }
 
-        class SignalShapeHead
+        class SignalShapeHead : IDisposable
         {
             static readonly Dictionary<string, SignalTypeData> SignalTypes = new Dictionary<string, SignalTypeData>();
 
-#if DEBUG_SIGNAL_SHAPES
-			readonly Viewer3D Viewer;
-#endif
+            readonly Viewer3D Viewer;
             readonly SignalShape SignalShape;
             readonly int Index;
             readonly SignalHead SignalHead;
             readonly int MatrixIndex;
             readonly SignalTypeData SignalTypeData;
+            readonly SoundSource Sound;
             float CumulativeTime;
             float SemaphorePos;
             float SemaphoreTarget;
             float SemaphoreSpeed;
             float SemaphoreInfo;
+            AnimatedPart SemaphorePart;
             int DisplayState = -1;
 
             public SignalShapeHead(Viewer3D viewer, SignalShape signalShape, int index, SignalHead signalHead,
                         MSTS.SignalItem mstsSignalItem, MSTS.SignalShape.SignalSubObj mstsSignalSubObj)
             {
-#if DEBUG_SIGNAL_SHAPES
-				Viewer = viewer;
-#endif
+                Viewer = viewer;
                 SignalShape = signalShape;
                 Index = index;
                 SignalHead = signalHead;
                 MatrixIndex = signalShape.SharedShape.MatrixNames.IndexOf(mstsSignalSubObj.MatrixName);
+
+#if !NEW_SIGNALLING
                 if (MatrixIndex == -1)
-                    throw new InvalidDataException(String.Format("{0} signal {1} unit {2} has invalid sub-object node-name {3}.", signalShape.Location, signalShape.UID, index, mstsSignalSubObj.MatrixName));
+                    throw new InvalidDataException(String.Format("Skipped {0} signal {1} unit {2} with sub-object {3} which is missing from shape {4}", signalShape.Location, signalShape.UID, index, mstsSignalSubObj.MatrixName, signalShape.SharedShape.FilePath));
+#endif
 
                 if (!viewer.SIGCFG.SignalTypes.ContainsKey(mstsSignalSubObj.SignalSubSignalType))
-                    throw new InvalidDataException(String.Format("{0} signal {1} unit {2} has invalid SigSubSType {3}.", signalShape.Location, signalShape.UID, index, mstsSignalSubObj.SignalSubSignalType));
+#if !NEW_SIGNALLING
+                    throw new InvalidDataException(String.Format("Skipped {0} signal {1} unit {2} with SigSubSType {3} which is not defined in SignalTypes", signalShape.Location, signalShape.UID, index, mstsSignalSubObj.SignalSubSignalType));
+#else
+                    return;
+#endif
+
                 var mstsSignalType = viewer.SIGCFG.SignalTypes[mstsSignalSubObj.SignalSubSignalType];
 
                 SemaphoreInfo = mstsSignalType.SemaphoreInfo;
+                SemaphorePart = new AnimatedPart(signalShape);
 
                 if (SignalTypes.ContainsKey(mstsSignalType.Name))
                     SignalTypeData = SignalTypes[mstsSignalType.Name];
                 else
                     SignalTypeData = SignalTypes[mstsSignalType.Name] = new SignalTypeData(viewer, mstsSignalType);
 
+                if (SignalTypeData.Semaphore)
+                {
+                    SemaphorePart.AddMatrix(MatrixIndex);
+
+                    if (Viewer.Simulator.TRK.Tr_RouteFile.DefaultSignalSMS != null)
+                    {
+                        var soundPath = Viewer.Simulator.RoutePath + @"\\sound\\" + Viewer.Simulator.TRK.Tr_RouteFile.DefaultSignalSMS;
+                        try
+                        {
+                            Sound = new SoundSource(Viewer, SignalShape.Location.WorldLocation, Events.Source.MSTSSignal, soundPath);
+                            Viewer.SoundProcess.AddSoundSource(this, new List<SoundSourceBase>() { Sound });
+                        }
+                        catch (Exception error)
+                        {
+                            Trace.WriteLine(new FileLoadException(soundPath, error));
+                        }
+                    }
+                }
+
 #if DEBUG_SIGNAL_SHAPES
-				Console.Write("  HEAD type={0,-8} lights={1,-2}", SignalTypeData.Type, SignalTypeData.Lights.Count);
+                Console.Write("  HEAD type={0,-8} lights={1,-2} sem={2}", SignalTypeData.Type, SignalTypeData.Lights.Count, SignalTypeData.Semaphore);
 #endif
             }
 
+            #region IDisposable Members
+
+            public void Dispose()
+            {
+                if (Sound != null) Viewer.SoundProcess.RemoveSoundSource(Sound);
+            }
+
+            #endregion
+
             public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime, Matrix xnaTileTranslation)
             {
+                var initialise = DisplayState == -1;
                 if (DisplayState != SignalHead.draw_state)
                 {
 #if DEBUG_SIGNAL_SHAPES
-					Console.WriteLine("{5} {0} signal {1} unit {2} state: {3} --> {4}",
+                    Console.WriteLine("{5} {0} signal {1} unit {2} state: {3} --> {4}",
                         SignalShape.Location, SignalShape.UID, Index, DisplayState,
                         SignalHead.draw_state, InfoDisplay.FormattedTime(Viewer.Simulator.ClockTime));
 #endif
@@ -194,6 +240,7 @@ namespace ORTS
                     {
                         SemaphoreTarget = SignalTypeData.DrawAspects[DisplayState].SemaphorePos;
                         SemaphoreSpeed = SemaphoreTarget > SemaphorePos ? +1 : -1;
+                        if (Sound != null) Sound.HandleEvent(Event.SemaphoreArm);
                     }
                 }
 
@@ -208,7 +255,7 @@ namespace ORTS
                 {
                     // We reset the animation matrix before preparing the lights, because they need to be positioned
                     // based on the original matrix only.
-                    SignalShape.AnimateMatrix(MatrixIndex, 0);
+                    SemaphorePart.SetFrameWrap(0);
                 }
 
                 for (var i = 0; i < SignalTypeData.Lights.Count; i++)
@@ -221,7 +268,8 @@ namespace ORTS
                         continue;
 
                     var xnaMatrix = Matrix.Identity;
-                    Matrix.Multiply(ref xnaMatrix, ref SignalShape.XNAMatrices[MatrixIndex], out xnaMatrix);
+                    if (MatrixIndex >= 0)
+                        Matrix.Multiply(ref xnaMatrix, ref SignalShape.XNAMatrices[MatrixIndex], out xnaMatrix);
                     Matrix.Multiply(ref xnaMatrix, ref xnaTileTranslation, out xnaMatrix);
 
                     frame.AddPrimitive(SignalTypeData.Material, SignalTypeData.Lights[i], RenderPrimitiveGroup.Lights, ref xnaMatrix);
@@ -230,15 +278,15 @@ namespace ORTS
                 if (SignalTypeData.Semaphore)
                 {
                     // Now we update and re-animate the semaphore arm.
-                    // Set arm to final position immediately if semaphoreinfo = 0
-
-                    if (SemaphoreInfo == 0)
+                    if (SemaphoreInfo == 0 || initialise)
                     {
+                        // No timing (so instant switch) or we're initialising.
                         SemaphorePos = SemaphoreTarget;
                         SemaphoreSpeed = 0;
                     }
                     else
                     {
+                        // Animate slowly to target position.
                         SemaphorePos += SemaphoreSpeed * elapsedTime.ClockSeconds;
                         if (SemaphorePos * Math.Sign(SemaphoreSpeed) > SemaphoreTarget * Math.Sign(SemaphoreSpeed))
                         {
@@ -246,7 +294,7 @@ namespace ORTS
                             SemaphoreSpeed = 0;
                         }
                     }
-                    SignalShape.AnimateMatrix(MatrixIndex, SemaphorePos);
+                    SemaphorePart.SetFrameCycle(SemaphorePos);
                 }
             }
 

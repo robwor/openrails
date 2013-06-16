@@ -1,7 +1,19 @@
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections;
@@ -9,7 +21,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using MSTSMath;
+#if !NEW_SIGNALLING
 using ORTS.Interlocking;
+#endif
 
 namespace MSTS
 {
@@ -123,7 +137,7 @@ namespace MSTS
         private void AddSection(STFReader stf, TrackSection section)
         {
             if (ContainsKey(section.SectionIndex))
-                STFException.TraceWarning(stf, "Replaced SectionIndex " + section.SectionIndex);
+                STFException.TraceWarning(stf, "Replaced duplicate TrackSection " + section.SectionIndex);
             this[section.SectionIndex] = section;
         }
 
@@ -216,13 +230,15 @@ namespace MSTS
             MaxShapeIndex = stf.ReadUInt(STFReader.UNITS.None, null);
             stf.ParseBlock(new STFReader.TokenProcessor[] 
             {
-                new STFReader.TokenProcessor("trackshape", ()=>{ Add(new TrackShape(stf)); }),
+                new STFReader.TokenProcessor("trackshape", ()=>{ Add(stf, new TrackShape(stf)); }),
             });
 		}
 
-      private void Add(TrackShape trackShape)
+      private void Add(STFReader stf, TrackShape trackShape)
       {
-         Add(trackShape.ShapeIndex, trackShape);
+          if (ContainsKey(trackShape.ShapeIndex))
+              STFException.TraceWarning(stf, "Replaced duplicate TrackShape " + trackShape.ShapeIndex);
+          this[trackShape.ShapeIndex] = trackShape;
       }
 
 

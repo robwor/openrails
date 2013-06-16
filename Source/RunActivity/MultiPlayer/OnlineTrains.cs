@@ -1,17 +1,19 @@
-﻿// COPYRIGHT 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-
-/// 
-/// Additional Contributions
-/// Copyright (c) Jijun Tang
-/// Can only be used by the Open Rails Project.
-/// This file cannot be copied, modified or included in any software which is not distributed directly by the Open Rails project.
-/// 
-
+﻿// COPYRIGHT 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -130,10 +132,8 @@ namespace ORTS.MultiPlayer
 			{
 				p = new OnlinePlayer(null, null);
 			}
-			if (Program.Simulator.Settings.ShowAvatar) { p.url = player.url; }
-			else { p.url = "NA"; }
+			p.url = player.url; 
 			p.LeadingLocomotiveID = player.leadingID;
-			Players.Add(player.user, p);
 			p.con = Program.Simulator.BasePath + "\\TRAINS\\CONSISTS\\" + player.con;
 			p.path = Program.Simulator.RoutePath + "\\PATHS\\" + player.path;
 			Train train = new Train(Program.Simulator);
@@ -145,18 +145,32 @@ namespace ORTS.MultiPlayer
 			{
 				train.Number = player.num;
 			}
+            if (player.con.Contains("tilted")) train.tilted = true;
 			int direction = player.dir;
 			train.travelled = player.Travelled;
 
-
-			try
+			if (MPManager.IsServer())
 			{
-				PATFile patFile = new PATFile(p.path);
-				AIPath aiPath = new AIPath(patFile, Program.Simulator.TDB, Program.Simulator.TSectionDat, p.path);
+				try
+				{
+					PATFile patFile = new PATFile(p.path);
+					AIPath aiPath = new AIPath(patFile, Program.Simulator.TDB, Program.Simulator.TSectionDat, p.path);
+#if !NEW_SIGNALLING
+					train.Path = aiPath;
+#endif
 
-				train.Path = aiPath;
-			}
-			catch (Exception) { train.Path = null; MPManager.BroadCast((new MSGMessage(player.user, "Warning", "Server does not have path file provided, signals may always be red for you.")).ToString()); }
+				}
+#if !NEW_SIGNALLING
+                    catch (Exception) { train.Path = null; MPManager.BroadCast((new MSGMessage(player.user, "Warning", "Server does not have path file provided, signals may always be red for you.")).ToString()); }
+#else 
+                    catch (Exception) {MPManager.BroadCast((new MSGMessage(player.user, "Warning", "Server does not have path file provided, signals may always be red for you.")).ToString()); }
+#endif
+            }
+
+#if !NEW_SIGNALLING
+			else train.Path = null;
+#endif
+
 			try
 			{
 				train.RearTDBTraveller = new Traveller(Program.Simulator.TSectionDat, Program.Simulator.TDB.TrackDB.TrackNodes, player.TileX, player.TileZ, player.X, player.Z, direction == 1 ? Traveller.TravellerDirection.Forward : Traveller.TravellerDirection.Backward);
@@ -167,9 +181,8 @@ namespace ORTS.MultiPlayer
 				{
 					MPManager.BroadCast((new MSGMessage(player.user, "Error", "MultiPlayer Error：" + e.Message)).ToString());
 				}
-				throw new MultiPlayerError();
+				else throw new Exception();
 			}
-			TrainCar previousCar = null;
 			for (var i = 0; i < player.cars.Length; i++)// cars.Length-1; i >= 0; i--) {
 			{
 
@@ -177,13 +190,13 @@ namespace ORTS.MultiPlayer
 				TrainCar car = null;
 				try
 				{
-					car = RollingStock.Load(Program.Simulator, wagonFilePath, previousCar);
+                    car = RollingStock.Load(Program.Simulator, wagonFilePath);
 					car.Length = player.lengths[i];
 				}
 				catch (Exception error)
 				{
 					System.Console.WriteLine(error.Message);
-					car = MPManager.Instance().SubCar(wagonFilePath, player.lengths[i], previousCar);
+                    car = MPManager.Instance().SubCar(wagonFilePath, player.lengths[i]);
 				}
 				if (car == null) continue;
 				bool flip = true;
@@ -192,12 +205,11 @@ namespace ORTS.MultiPlayer
 				car.CarID = player.ids[i];
 				train.Cars.Add(car);
 				car.Train = train;
-				previousCar = car;
 				MSTSWagon w = (MSTSWagon)car;
 				if (w != null)
 				{
-					w.AftPanUp = player.pantofirst == 1 ? true : false;
-					w.FrontPanUp = player.pantosecond == 1 ? true : false;
+					w.Pan1Up = player.pantofirst == 1 ? true : false;
+					w.Pan2Up = player.pantosecond == 1 ? true : false;
 				}
 
 			}// for each rail car
@@ -208,33 +220,51 @@ namespace ORTS.MultiPlayer
 			}
 
 			p.Username = player.user;
-			train.CalculatePositionOfCars(0);
-			train.InitializeBrakes();
-			train.InitializeSignals(false);
-			train.CheckFreight();
+            train.ControlMode = Train.TRAIN_CONTROL.EXPLORER;
+            train.CheckFreight();
+            train.InitializeBrakes();
+            bool canPlace = true;
+            Train.TCSubpathRoute tempRoute = train.CalculateInitialTrainPosition(ref canPlace);
+            if (tempRoute.Count == 0 || !canPlace)
+            {
+                MPManager.BroadCast((new MSGMessage(p.Username, "Error", "Cannot be placed into the game")).ToString());//server will broadcast this error
+                throw new InvalidDataException("Remote train original position not clear");
+            }
+
+            train.SetInitialTrainRoute(tempRoute);
+            train.CalculatePositionOfCars(0);
+            train.ResetInitialTrainRoute(tempRoute);
+
+            train.CalculatePositionOfCars(0);
+            train.AITrainBrakePercent = 100;
+
+			//if (MPManager.Instance().AllowedManualSwitch) train.InitializeSignals(false);
 			foreach (var car in train.Cars) {
 				if (car.CarID == p.LeadingLocomotiveID) train.LeadLocomotive = car;
 			}
 			if (train.LeadLocomotive == null)
 			{
-				train.LeadNextLocomotive();
+                train.LeadNextLocomotive();
 				if (train.LeadLocomotive != null) p.LeadingLocomotiveID = train.LeadLocomotive.CarID;
 				else p.LeadingLocomotiveID = "NA";
 			}
 			p.Train = train;
-			/*
-			if (MPManager.IsServer())
+			
+			if (MPManager.IsServer() && MPManager.PreferGreen == false) //prefer red light always, thus need to have path included
 			{
+#if !NEW_SIGNALLING
 				if (train.Path != null)
 				{
 					train.TrackAuthority = new TrackAuthority(train, train.Number + 100000, 10, train.Path);
 					Program.Simulator.AI.Dispatcher.TrackAuthorities.Add(train.TrackAuthority);
 					Program.Simulator.AI.Dispatcher.RequestAuth(train, true, 0);
-					train.Path.AlignInitSwitches(train.RearTDBTraveller, -1, 500);
+					//train.Path.AlignInitSwitches(train.RearTDBTraveller, -1, 500);
 				}
 				else train.TrackAuthority = null;
+#endif
 			}
-			 */
+			 
+			Players.Add(player.user, p);
 			MPManager.Instance().AddOrRemoveTrain(train, true);
 
 		}

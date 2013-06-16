@@ -1,7 +1,19 @@
-﻿// COPYRIGHT 2012 by the Open Rails project.
-// This code is provided to enable you to contribute improvements to the open rails program.  
-// Use of the code for any other purpose or distribution of the code to anyone else
-// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -176,6 +188,10 @@ namespace ORTS
                     ClearedLogs = true;
                 }
 
+                var summaryFilePosition = 0L;
+                using (var reader = File.OpenText(SummaryFilePath))
+                    summaryFilePosition = reader.BaseStream.Length;
+
                 foreach (var item in items)
                 {
                     processStartInfo.Arguments = String.Format("{0} \"{1}\"", parameters, item.Activity.ActivityFilePath);
@@ -186,15 +202,21 @@ namespace ORTS
                     item.Activity.Passed = process.ExitCode == 0;
                     using (var reader = File.OpenText(SummaryFilePath))
                     {
-                        if (reader.BaseStream.Length > 256)
-                            reader.BaseStream.Seek(-256, SeekOrigin.End);
-                        string line = "";
-                        while (!reader.EndOfStream)
-                            line = reader.ReadLine();
-                        var csv = line.Split(',');
-                        item.Activity.Errors = String.Format("{0}/{1}/{2}", int.Parse(csv[3]), int.Parse(csv[4]), int.Parse(csv[5]));
-                        item.Activity.Load = String.Format("{0,6:F1}s", float.Parse(csv[6]));
-                        item.Activity.FPS = String.Format("{0,6:F1}", float.Parse(csv[7]));
+                        reader.BaseStream.Seek(summaryFilePosition, SeekOrigin.Begin);
+                        var line = reader.ReadLine();
+                        if (!String.IsNullOrEmpty(line) && reader.EndOfStream)
+                        {
+                            var csv = line.Split(',');
+                            item.Activity.Errors = String.Format("{0}/{1}/{2}", int.Parse(csv[3]), int.Parse(csv[4]), int.Parse(csv[5]));
+                            item.Activity.Load = String.Format("{0,6:F1}s", float.Parse(csv[6]));
+                            item.Activity.FPS = String.Format("{0,6:F1}", float.Parse(csv[7]));
+                        }
+                        else
+                        {
+                            reader.ReadToEnd();
+                            item.Activity.Passed = false;
+                        }
+                        summaryFilePosition = reader.BaseStream.Position;
                     }
                     if (runner.Cancelled)
                         break;

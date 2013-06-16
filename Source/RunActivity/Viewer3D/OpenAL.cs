@@ -1,11 +1,22 @@
-﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,13 +33,17 @@ namespace ORTS
     /// </summary>
     public class OpenAL
     {
+        public const int AL_FALSE = 0;
+        public const int AL_TRUE = 1;
         public const int AL_BUFFER = 0x1009;
+        public const int AL_BUFFERS_QUEUED = 0x1015;
         public const int AL_BUFFERS_PROCESSED = 0x1016;
         public const int AL_PLAYING = 0x1012;
         public const int AL_SOURCE_STATE = 0x1010;
         public const int AL_LOOPING = 0x1007;
         public const int AL_GAIN = 0x100a;
         public const int AL_VELOCITY = 0x1006;
+        public const int AL_ORIENTATION = 0x100f;
         public const int AL_DISTANCE_MODEL = 0xd000;
         public const int AL_INVERSE_DISTANCE = 0xd001;
         public const int AL_INVERSE_DISTANCE_CLAMPED = 0xd002;
@@ -42,58 +57,86 @@ namespace ORTS
         public const int AL_PITCH = 0x1003;
         public const int AL_POSITION = 0x1004;
         public const int AL_DIRECTION = 0x1005;
+        public const int AL_SOURCE_RELATIVE = 0x0202;
         public const int AL_FREQUENCY = 0x2001;
         public const int AL_BITS = 0x2002;
         public const int AL_CHANNELS = 0x2003;
         public const int AL_BYTE_OFFSET = 0x1026;
         public const int AL_MIN_GAIN = 0x100d;
         public const int AL_MAX_GAIN = 0x100e;
+        public const int AL_VENDOR = 0xb001;
+        public const int AL_VERSION = 0xb002;
+        public const int AL_RENDERER = 0xb003;
+        public const int AL_DOPPLER_FACTOR = 0xc000;
+        public const int AL_LOOP_POINTS_SOFT = 0x2015;
 
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        public const int ALC_DEFAULT_DEVICE_SPECIFIER = 0x1004;
+        public const int ALC_DEVICE_SPECIFIER = 0x1005;
+
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr alcOpenDevice(string deviceName);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr alcCreateContext(IntPtr device, int[] attribute);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern int alcMakeContextCurrent(IntPtr context);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern string alcGetString(IntPtr device, int attribute);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern int alcIsExtensionPresent(IntPtr device, string extensionName);
+
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern string AlInitialize(string devName);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGetBufferi(int buffer, int attribute, out int val);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern string alGetString(int state);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int alGetError();
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alDeleteBuffers(int number, [In] ref int buffer);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alDeleteBuffers(int number, int[] buffers);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alDeleteSources(int number, [In] int[] sources);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alDeleteSources(int number, [In] ref int sources);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alDistanceModel(int model);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGenSources(int number, out int source);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGetSourcei(int source, int attribute, out int val);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGetSourcef(int source, int attribute, out float val);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alListener3f(int attribute, float value1, float value2, float value3);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alListenerfv(int attribute, [In] float[] values);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alListenerf(int attribute, float value);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourcePlay(int source);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourceQueueBuffers(int source, int number, [In] ref int buffer);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourcei(int source, int attribute, int val);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourcef(int source, int attribute, float val);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSource3f(int source, int attribute, float value1, float value2, float value3);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alSourcefv(int source, int attribute, [In] float[] values);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourceStop(int source);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alSourceUnqueueBuffers(int source, int number, int[] buffers);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourceUnqueueBuffers(int source, int number, ref int buffers);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int alGetEnumValue(string enumName);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGenBuffers(int number, out int buffer);
-        [SuppressUnmanagedCodeSecurity, DllImport("wrap_oal.dll", CallingConvention = CallingConvention.Cdecl)]
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alBufferData(int buffer, int format, [In] byte[] data, int size, int frequency);
 
         public static int alSourceUnqueueBuffer(int SoundSourceID)
@@ -187,6 +230,52 @@ namespace ORTS
         public uint ulByteStart;
     }
 
+
+    /// <summary>
+    /// SMPLCHUNK binary structure
+    /// Describes the SMPL chunk list of a wave file
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit, Pack = 1)]
+    public struct SMPLCHUNK
+    {
+        [FieldOffset(0), MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
+        public char[] ChunkName;
+        [FieldOffset(4), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint ChunkSize;
+        [FieldOffset(8), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint Manufacturer;
+        [FieldOffset(12), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint Product;
+        [FieldOffset(16), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint SmplPeriod;
+        [FieldOffset(20), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint MIDIUnityNote;
+        [FieldOffset(24), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint MIDIPitchFraction;
+        [FieldOffset(28), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint SMPTEFormat;
+        [FieldOffset(32), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint SMPTEOffset;
+        [FieldOffset(36), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint NumSmplLoops;
+        [FieldOffset(40), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint SamplerData;
+    }
+
+    /// <summary>
+    /// SMPLLOOP binary structure
+    /// Describes one SMPL loop in loop list
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct SMPLLOOP
+    {
+        public uint ID;
+        public uint Type;
+        public uint ChunkStart;
+        public uint ChunkEnd;
+        public uint Fraction;
+        public uint PlayCount;
+    }
     public enum WAVEFORMATTYPE
     {
         WT_UNKNOWN,
@@ -233,9 +322,8 @@ namespace ORTS
         public ushort nBitsPerSample;
 
         public uint ulFormat;
-        public uint ulFirstCue;
-        public uint ulLastCue;
         public FileStream pFile;
+        public uint[] CuePoints;
 
         public WaveFileData()
         {
@@ -250,9 +338,6 @@ namespace ORTS
             nChannels = 0;
             nSamplesPerSec = 0;
             nBitsPerSample = 0;
-
-            ulFirstCue = 0xFFFFFFFF;
-            ulLastCue = 0xFFFFFFFF;
         }
 
         public void Dispose()
@@ -335,6 +420,7 @@ namespace ORTS
                             pFile.Seek(Marshal.SizeOf(riffChunk) * -1, SeekOrigin.Current);
                             CUECHUNK cueChunk;
                             GetNextStructureValue<CUECHUNK>(pFile, out cueChunk, -1);
+                            CuePoints = new uint[cueChunk.ulNumCuePts];
                             {
                                 CUEPT cuePt;
                                 uint pos;
@@ -348,11 +434,29 @@ namespace ORTS
                                         pos += cuePt.ulBlockStart;
                                         pos += cuePt.ulByteStart;
 
-                                        // Use only the first and last points
-                                        if (ulFirstCue == 0xFFFFFFFF)
-                                            ulFirstCue = pos;
-                                        else
-                                            ulLastCue = pos;
+                                        CuePoints[i] = pos;
+                                    }
+                                }
+                            }
+                        }
+                        else if (hdr == "smpl")
+                        {
+                            // Seek back and read SMPL header
+                            pFile.Seek(Marshal.SizeOf(riffChunk) * -1, SeekOrigin.Current);
+                            SMPLCHUNK smplChunk;
+                            GetNextStructureValue<SMPLCHUNK>(pFile, out smplChunk, -1);
+                            if (smplChunk.NumSmplLoops > 0)
+                            {
+                                CuePoints = new uint[smplChunk.NumSmplLoops * 2];
+                                {
+                                    SMPLLOOP smplLoop;
+                                    for (uint i = 0; i < smplChunk.NumSmplLoops; i++)
+                                    {
+                                        if (GetNextStructureValue<SMPLLOOP>(pFile, out smplLoop, -1))
+                                        {
+                                            CuePoints[i * 2] = smplLoop.ChunkStart;
+                                            CuePoints[i * 2 + 1] = smplLoop.ChunkEnd;
+                                        }
                                     }
                                 }
                             }
@@ -371,12 +475,8 @@ namespace ORTS
                     if (ulDataSize == 0 || ulDataOffset == 0)
                         return false;
 
-                    if (ulFirstCue > ulLastCue)
-                    {
-                        uint tmp = ulFirstCue;
-                        ulFirstCue = ulLastCue;
-                        ulLastCue = tmp;
-                    }
+                    if (CuePoints != null)
+                        Array.Sort(CuePoints);
 
                     return isKnownType;
                 }
@@ -562,10 +662,10 @@ namespace ORTS
 
             wfEXT.Format.nChannels = 1;
             ulDataSize = (uint)retval.Length;
-            if (ulFirstCue != 0xFFFFFFFF)
-                ulFirstCue /= 2;
-            if (ulLastCue != 0xFFFFFFFF)
-                ulLastCue /= 2;
+            if (CuePoints != null)
+                for (var i = 0; i < CuePoints.Length; i++)
+                    if (CuePoints[i] != 0xFFFFFFFF)
+                        CuePoints[i] /= 2;
 
             return retval;
         }
@@ -612,71 +712,62 @@ namespace ORTS
                 wfi.ulDataSize = (uint)buffer.Length;
             }
 
-            if ((int)wfi.ulFirstCue != -1 && (int)wfi.ulLastCue != -1)
+            if (wfi.CuePoints == null || wfi.CuePoints.Length == 1)
             {
-                uint adjPos1 = wfi.ulFirstCue * wfi.nBitsPerSample / 8 * wfi.nChannels;
-                uint adjPos2 = wfi.ulLastCue * wfi.nBitsPerSample / 8 * wfi.nChannels;
+                BufferIDs = new int[1];
+                BufferLens = new int[1];
 
-                if (adjPos1 > wfi.ulDataSize || adjPos2 > wfi.ulDataSize)
-                {
-                    Trace.TraceWarning("Invalid cue points in wave file; Length {1}, CUE1 {2}, CUE2 {3}, BitsPerSample {4}, Channels {5} in {0}", Name, wfi.ulDataSize, adjPos1, adjPos2, wfi.nBitsPerSample, wfi.nChannels);
-                    wfi.ulFirstCue = 0xFFFFFFFF;
-                    wfi.ulLastCue = 0xFFFFFFFF;
-                }
-            }
-
-            if (wfi.ulFirstCue == 0xFFFFFFFF || wfi.ulLastCue == 0xFFFFFFFF)
-            {
                 BufferLens[0] = (int)wfi.ulDataSize;
 
                 if (BufferLens[0] > 0)
+                {
                     OpenAL.alGenBuffers(1, out BufferIDs[0]);
+                    OpenAL.alBufferData(BufferIDs[0], fmt, buffer, (int)wfi.ulDataSize, (int)wfi.nSamplesPerSec);
+                }
                 else
                     BufferIDs[0] = 0;
-
-                {
-                    if (BufferLens[0] > 0)
-                        OpenAL.alBufferData(BufferIDs[0], fmt, buffer, (int)wfi.ulDataSize, (int)wfi.nSamplesPerSec);
-                }
-
-                BufferIDs[1] = 0;
-                BufferIDs[2] = 0;
             }
             else
             {
-                uint adjPos1 = wfi.ulFirstCue * wfi.nBitsPerSample / 8 * wfi.nChannels;
-                uint adjPos2 = wfi.ulLastCue * wfi.nBitsPerSample / 8 * wfi.nChannels;
-
-                BufferLens[0] = (int)adjPos1;
-                BufferLens[1] = (int)adjPos2 - (int)adjPos1;
-                BufferLens[2] = (int)wfi.ulDataSize - (int)adjPos2;
-
-                if (BufferLens[0] > 0)
-                    OpenAL.alGenBuffers(1, out BufferIDs[0]);
-                else
-                    BufferIDs[0] = 0;
-
-                if (BufferLens[1] > 0)
-                    OpenAL.alGenBuffers(1, out BufferIDs[1]);
-                else
-                    BufferIDs[1] = 0;
-
-                if (BufferLens[2] > 0)
-                    OpenAL.alGenBuffers(1, out BufferIDs[2]);
-                else
-                    BufferIDs[2] = 0;
-
-                if (BufferLens[0] > 0)
-                    OpenAL.alBufferData(BufferIDs[0], fmt, buffer, (int)adjPos1, (int)wfi.nSamplesPerSec);
-
-                if (BufferLens[1] > 0)
+                BufferIDs = new int[wfi.CuePoints.Length + 1];
+                BufferLens = new int[wfi.CuePoints.Length + 1];
+                
+                uint prevAdjPos = 0;
+                for (var i = 0; i < wfi.CuePoints.Length; i++)
                 {
-                    OpenAL.alBufferData(BufferIDs[1], fmt, GetFromArray(buffer, (int)adjPos1, BufferLens[1]), BufferLens[1], (int)wfi.nSamplesPerSec);
-                }
-
-                if (BufferLens[2] > 0)
-                {
-                    OpenAL.alBufferData(BufferIDs[2], fmt, GetFromArray(buffer, (int)adjPos2, BufferLens[2]), BufferLens[2], (int)wfi.nSamplesPerSec);
+                    uint adjPos = wfi.CuePoints[i] * wfi.nBitsPerSample / 8 * wfi.nChannels;
+                    if (adjPos > wfi.ulDataSize)
+                    {
+                        Trace.TraceWarning("Invalid cue point in wave file; Length {1}, CUE {2}, BitsPerSample {3}, Channels {4} in {0}", Name, wfi.ulDataSize, adjPos, wfi.nBitsPerSample, wfi.nChannels);
+                        wfi.CuePoints[i] = 0xFFFFFFFF;
+                        adjPos = prevAdjPos;
+                    }
+                    
+                    BufferLens[i] = (int)adjPos - (int)prevAdjPos;
+                    if (BufferLens[i] > 0)
+                    {
+                        OpenAL.alGenBuffers(1, out BufferIDs[i]);
+                        OpenAL.alBufferData(BufferIDs[i], fmt, GetFromArray(buffer, (int)prevAdjPos, BufferLens[i]), BufferLens[i], (int)wfi.nSamplesPerSec);
+                    }
+                    else
+                    {
+                        BufferIDs[i] = 0;
+                    }
+                    
+                    if (i == wfi.CuePoints.Length - 1)
+                    {
+                        BufferLens[i + 1] = (int)wfi.ulDataSize - (int)adjPos;
+                        if (BufferLens[i + 1] > 0)
+                        {
+                            OpenAL.alGenBuffers(1, out BufferIDs[i + 1]);
+                            OpenAL.alBufferData(BufferIDs[i + 1], fmt, GetFromArray(buffer, (int)adjPos, BufferLens[i + 1]), BufferLens[i + 1], (int)wfi.nSamplesPerSec);
+                        }
+                        else
+                        {
+                            BufferIDs[i + 1] = 0;
+                        }
+                    }
+                    prevAdjPos = adjPos;
                 }
             }
 

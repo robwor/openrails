@@ -1,10 +1,20 @@
-﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
@@ -42,6 +52,7 @@ namespace ORTS
         WorldLatLon worldLoc = null; // Access to latitude and longitude calcs (MSTS routes only)
         SunMoonPos skyVectors;
 
+		int seasonType; //still need to remember it as MP now can change it.
         #region Class variables
         // Latitude of current route in radians. -pi/2 = south pole, 0 = equator, pi/2 = north pole.
         // Longitude of current route in radians. -pi = west of prime, 0 = prime, pi = east of prime.
@@ -92,7 +103,7 @@ namespace ORTS
             skyVectors = new SunMoonPos();
 
             // Set default values
-            var seasonType = (int)Viewer.Simulator.Season;
+            seasonType = (int)Viewer.Simulator.Season;
             date.ordinalDate = 82 + seasonType * 91;
             // TODO: Set the following three externally from ORTS route files (future)
             date.month = 1 + date.ordinalDate / 30;
@@ -109,6 +120,15 @@ namespace ORTS
         /// </summary>
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
+			if (seasonType != (int)Viewer.Simulator.Season)
+			{
+				seasonType = (int)Viewer.Simulator.Season;
+				date.ordinalDate = 82 + seasonType * 91;
+				// TODO: Set the following three externally from ORTS route files (future)
+				date.month = 1 + date.ordinalDate / 30;
+				date.day = 21;
+				date.year = 2010;
+			}
             // Adjust dome position so the bottom edge is not visible
 			Vector3 ViewerXNAPosition = new Vector3(Viewer.Camera.Location.X, Viewer.Camera.Location.Y - 100, -Viewer.Camera.Location.Z);
             Matrix XNASkyWorldLocation = Matrix.CreateTranslation(ViewerXNAPosition);
@@ -117,8 +137,9 @@ namespace ORTS
             {
                 // First time around, initialize the following items:
                 worldLoc = new WorldLatLon();
-                oldClockTime = Viewer.Simulator.ClockTime;
-                step1 = step2 = (int)(Viewer.Simulator.ClockTime / 1200);
+                oldClockTime = Viewer.Simulator.ClockTime % 86400;
+                while (oldClockTime < 0) oldClockTime += 86400;
+                step1 = step2 = (int)(oldClockTime / 1200);
                 step2++;
                 // Get the current latitude and longitude coordinates
                 worldLoc.ConvertWTC(Viewer.Camera.TileX, Viewer.Camera.TileZ, Viewer.Camera.Location, ref latitude, ref longitude);
@@ -138,19 +159,25 @@ namespace ORTS
                 fogCoeff = Viewer.World.WeatherControl.fogCoeff;
             }
 
-			if (MultiPlayer.MPManager.IsMultiPlayer())
+			if (MultiPlayer.MPManager.IsClient() && MultiPlayer.MPManager.Instance().weatherChanged)
 			{
 				//received message about weather change
-				if (MultiPlayer.MPManager.Instance().weatherChanged && MultiPlayer.MPManager.Instance().overCast >= 0)
+				if ( MultiPlayer.MPManager.Instance().overCast >= 0)
 				{
 					overcast = MultiPlayer.MPManager.Instance().overCast;
-					try
-					{
-						MultiPlayer.MPManager.Instance().weatherChanged = false;
-					}
-					catch { }
 				}
-			}
+                //received message about weather change
+                if (MultiPlayer.MPManager.Instance().newFog > 0)
+                {
+                    fogCoeff = MultiPlayer.MPManager.Instance().newFog;
+                }
+                try
+                {
+                    MultiPlayer.MPManager.Instance().weatherChanged = false;
+                }
+                catch { }
+
+            }
 
 ////////////////////// T E M P O R A R Y ///////////////////////////
 
@@ -160,19 +187,23 @@ namespace ORTS
 
 			if (UserInput.IsDown(UserCommands.DebugOvercastIncrease) && !MultiPlayer.MPManager.IsClient())
 			{
-				overcast = MathHelper.Clamp(overcast + 0.005f, 0, 1);
-				if (MultiPlayer.MPManager.IsServer())
-				{
-					MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather(-1, overcast)).ToString());//server notify others the weather has changed
-				}
+                fogCoeff /= 1.02f;
+                if (fogCoeff < 0.002f) fogCoeff = 0.002f;
+                overcast = MathHelper.Clamp(overcast + 0.005f, 0, 1);
 			}
-			if (UserInput.IsDown(UserCommands.DebugOvercastDecrease) && !MultiPlayer.MPManager.IsClient())
+            if (UserInput.IsDown(UserCommands.DebugFogIncrease) && !MultiPlayer.MPManager.IsClient())
+            {
+                fogCoeff /= 1.05f;
+                if (fogCoeff < 0.002f) fogCoeff = 0.002f;
+            }
+            if (UserInput.IsDown(UserCommands.DebugFogDecrease) && !MultiPlayer.MPManager.IsClient())
+            {
+                fogCoeff *= 1.05f;
+            }
+            if (UserInput.IsDown(UserCommands.DebugOvercastDecrease) && !MultiPlayer.MPManager.IsClient())
 			{
 				overcast = MathHelper.Clamp(overcast - 0.005f, 0, 1);
-				if (MultiPlayer.MPManager.IsServer())
-				{
-					MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather(-1, overcast)).ToString());//server notify others the weather has changed
-				}
+                fogCoeff *= 1.02f;
 			}
 			if (UserInput.IsDown(UserCommands.DebugClockForwards) && !MultiPlayer.MPManager.IsMultiPlayer()) //dosen't make sense in MP mode
 			{
@@ -184,6 +215,15 @@ namespace ORTS
 				Viewer.Simulator.ClockTime -= 120;
                 if (Viewer.World.Precipitation != null) Viewer.World.Precipitation.Reset();
 			}
+            if (MultiPlayer.MPManager.IsServer())
+            {
+                if (UserInput.IsReleased(UserCommands.DebugFogDecrease) || UserInput.IsReleased(UserCommands.DebugFogIncrease)
+                    || UserInput.IsReleased(UserCommands.DebugOvercastDecrease) || UserInput.IsReleased(UserCommands.DebugOvercastIncrease))
+                {
+                    MultiPlayer.MPManager.Instance().SetEnvInfo(overcast, fogCoeff);
+                    MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather(-1, overcast, fogCoeff)).ToString());//server notify others the weather has changed
+                }
+            }
 
 ////////////////////////////////////////////////////////////////////
 

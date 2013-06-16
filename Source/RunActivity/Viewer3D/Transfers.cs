@@ -1,10 +1,20 @@
-﻿// COPYRIGHT 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
@@ -18,12 +28,14 @@ namespace ORTS
     {
         readonly Material Material;
         readonly TransferMesh Primitive;
+        readonly float Radius;
 
         public TransferShape(Viewer3D viewer, MSTS.TransferObj transfer, WorldPosition position)
             : base(viewer, null, RemoveRotation(position), ShapeFlags.AutoZBias)
         {
-            Material = viewer.MaterialManager.Load("Transfer", Helpers.GetRouteTextureFile(viewer.Simulator, Helpers.TextureFlags.None, transfer.FileName));
+            Material = viewer.MaterialManager.Load("Transfer", Helpers.GetTransferTextureFile(viewer.Simulator, transfer.FileName));
             Primitive = new TransferMesh(viewer, transfer.Width, transfer.Height, position);
+            Radius = (float)Math.Sqrt(transfer.Width * transfer.Width + transfer.Height * transfer.Height) / 2;
         }
 
         static WorldPosition RemoveRotation(WorldPosition position)
@@ -37,13 +49,13 @@ namespace ORTS
 
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-            // Locate relative to the camera
             var dTileX = Location.TileX - Viewer.Camera.TileX;
             var dTileZ = Location.TileZ - Viewer.Camera.TileZ;
+            var mstsLocation = Location.Location + new Vector3(dTileX * 2048, 0, dTileZ * 2048);
             var xnaTileTranslation = Matrix.CreateTranslation(dTileX * 2048, 0, -dTileZ * 2048);  // object is offset from camera this many tiles
             Matrix.Multiply(ref Location.XNAMatrix, ref xnaTileTranslation, out xnaTileTranslation);
 
-            frame.AddPrimitive(Material, Primitive, RenderPrimitiveGroup.World, ref xnaTileTranslation, Flags);
+            frame.AddAutoPrimitive(mstsLocation, Radius, Viewer.Settings.ViewingDistance, Material, Primitive, RenderPrimitiveGroup.World, ref xnaTileTranslation, Flags);
         }
 
         internal override void Mark()
@@ -147,7 +159,7 @@ namespace ORTS
         public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
         {
             var shader = Viewer.MaterialManager.SceneryShader;
-            shader.CurrentTechnique = shader.Techniques[Viewer.Settings.ShaderModel >= 3 ? "ImagePS3" : "ImagePS2"];
+            shader.CurrentTechnique = shader.Techniques[Viewer.Settings.ShaderModel >= 3 ? "TransferPS3" : "TransferPS2"];
             if (ShaderPasses == null) ShaderPasses = shader.CurrentTechnique.Passes.GetEnumerator();
             shader.ImageTexture = Texture;
 

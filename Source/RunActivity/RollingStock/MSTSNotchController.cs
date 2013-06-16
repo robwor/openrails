@@ -1,4 +1,21 @@
-﻿using MSTS;
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
+using MSTS;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,6 +25,102 @@ using System.Diagnostics;   // needed for Debug
 
 namespace ORTS
 {
+    public enum MSTSNotchType { Dummy, Release, Running, SelfLap, Lap, Apply, EPApply, GSelfLap, GSelfLapH, Suppression, ContServ, FullServ, Emergency };
+
+    public class MSTSNotch {
+        public float Value;
+        public bool Smooth;
+        public MSTSNotchType Type;
+        public MSTSNotch(float v, int s, string type, STFReader stf)
+        {
+            Value = v;
+            Smooth = s == 0 ? false : true;
+            Type = MSTSNotchType.Dummy;
+            string lower = type.ToLower();
+            if (lower.StartsWith("trainbrakescontroller"))
+                lower = lower.Substring(21);
+            if (lower.StartsWith("enginebrakescontroller"))
+                lower = lower.Substring(22);
+            switch (lower)
+            {
+                case "dummy": break;
+                case ")": break;
+                case "releasestart": Type = MSTSNotchType.Release; break;
+                case "fullquickreleasestart": Type = MSTSNotchType.Release; break;
+                case "runningstart": Type = MSTSNotchType.Running; break;
+                case "selflapstart": Type = MSTSNotchType.SelfLap; break;
+                case "holdstart": Type = MSTSNotchType.Lap; break;
+                case "holdlappedstart": Type = MSTSNotchType.Lap; break;
+                case "graduatedselflaplimitedstart": Type = MSTSNotchType.GSelfLap; break;
+                case "graduatedselflaplimitedholdingstart": Type = MSTSNotchType.GSelfLapH; break;
+                case "applystart": Type = MSTSNotchType.Apply; break;
+                case "continuousservicestart": Type = MSTSNotchType.ContServ; break;
+                case "suppressionstart": Type = MSTSNotchType.Suppression; break;
+                case "fullservicestart": Type = MSTSNotchType.FullServ; break;
+                case "emergencystart": Type = MSTSNotchType.Emergency; break;
+                case "epapplystart": Type = MSTSNotchType.EPApply; break;
+                case "epholdstart": Type = MSTSNotchType.Lap; break;
+                case "minimalreductionstart": Type = MSTSNotchType.Lap; break;
+                default:
+                    STFException.TraceInformation(stf, "Skipped unknown notch type " + type);
+                    break;
+            }
+        }
+        public MSTSNotch(float v, bool s, int t)
+        {
+            Value = v;
+            Smooth = s;
+            Type = (MSTSNotchType)t;
+        }
+
+        public MSTSNotch(MSTSNotch other)
+        {
+            Value = other.Value;
+            Smooth = other.Smooth;
+            Type = other.Type;
+        }
+
+        public MSTSNotch(BinaryReader inf)
+        {
+            Value = inf.ReadSingle();
+            Smooth = inf.ReadBoolean();
+            Type = (MSTSNotchType)inf.ReadInt32();
+        }
+
+        public MSTSNotch Clone()
+        {
+            return new MSTSNotch(this);
+        }
+
+        public string GetName()
+        {
+            switch (Type)
+            {
+                case MSTSNotchType.Dummy: return "";
+                case MSTSNotchType.Release: return "Release";
+                case MSTSNotchType.Running: return "Running";
+                case MSTSNotchType.Apply: return "Apply";
+                case MSTSNotchType.EPApply: return "EPApply";
+                case MSTSNotchType.Emergency: return "Emergency";
+                case MSTSNotchType.SelfLap: return "Lap";
+                case MSTSNotchType.GSelfLap: return "Service";
+                case MSTSNotchType.GSelfLapH: return "Service";
+                case MSTSNotchType.Lap: return "Lap";
+                case MSTSNotchType.Suppression: return "Suppresion";
+                case MSTSNotchType.ContServ: return "Cont. Service";
+                case MSTSNotchType.FullServ: return "Full Service";
+                default: return "";
+            }
+        }
+
+        public void Save(BinaryWriter outf)
+        {
+            outf.Write(Value);
+            outf.Write(Smooth);
+            outf.Write((int)Type);
+        }
+    }
+
     /**
      * This is the most used controller. The main use is for diesel locomotives' Throttle control.
      * 
@@ -29,7 +142,9 @@ namespace ORTS
 
         //Does not need to persist
         //this indicates if the controller is increasing or decreasing, 0 no changes
-        public float UpdateValue = 0;        
+        public float UpdateValue = 0;
+        private float? controllerTarget;
+        public double CommandStartTime;
 
         #region CONSTRUCTORS
 
@@ -180,34 +295,21 @@ namespace ORTS
             return 100 * CurrentValue;
         }
 
+        public void StartIncrease( float? target ) {
+            controllerTarget = target;
+            StartIncrease();
+        }
+
         public void StartIncrease()
         {
             UpdateValue = 1;
 
-            //If we have notches and the current Notch does not require smooth, we go directly to the next notch
+            // When we have notches and the current Notch does not require smooth, we go directly to the next notch
             if ((Notches.Count > 0) && (CurrentNotch < Notches.Count - 1) && (!Notches[CurrentNotch].Smooth))
             {
                 ++CurrentNotch;
                 IntermediateValue = CurrentValue = Notches[CurrentNotch].Value;
             }
-			//the following are added to cope with the combined notch/smooth control like this:
-			//      EngineControllers (
-            //			Throttle ( 0 1 0.01 0 
-            //			NumNotches ( 5 Notch ( 0    0 Dummy ) Notch ( 0.1  0 Dummy ) Notch ( 0.1  1 Dummy ) Notch ( 0.2  0 Dummy )Notch ( 0.3  1 Dummy ))
-			//		)
-			/*
-			else if ((Notches.Count > 0) && (CurrentNotch < Notches.Count - 1) && (Notches[CurrentNotch].Smooth))
-			{
-				IntermediateValue += StepSize;
-				if (IntermediateValue >= Notches[CurrentNotch + 1].Value) { ++CurrentNotch; IntermediateValue = CurrentValue = Notches[CurrentNotch].Value; }
-				else CurrentValue = IntermediateValue;
-			}
-			else if ((Notches.Count > 0) && (CurrentNotch == Notches.Count - 1) && (Notches[CurrentNotch].Smooth))
-			{
-				IntermediateValue += StepSize; 
-				if (IntermediateValue >= MaximumValue) IntermediateValue = MaximumValue;
-				CurrentValue = IntermediateValue;
-			}*/
 		}
 
         public void StopIncrease()
@@ -215,17 +317,22 @@ namespace ORTS
             UpdateValue = 0;
         }
 
+        public void StartDecrease( float? target ) {
+            controllerTarget = target;
+            StartDecrease();
+        }
+        
         public void StartDecrease()
         {
             UpdateValue = -1;
 
-            //If we have notches and the current Notch does not require smooth, we go directly to the next notch
-            if ((Notches.Count > 0) && (CurrentNotch > 0) && (!Notches[CurrentNotch].Smooth))
+            //If we have notches and the previous Notch does not require smooth, we go directly to the previous notch
+            if ((Notches.Count > 0) && (CurrentNotch > 0) && SmoothMin() == null)
             {
                 //Keep intermediate value with the "previous" notch, so it will take a while to change notches
                 //again if the user keep holding the key
                 IntermediateValue = Notches[CurrentNotch].Value;
-                CurrentNotch--;                
+                CurrentNotch--;
                 CurrentValue = Notches[CurrentNotch].Value;
             }
         }
@@ -237,12 +344,31 @@ namespace ORTS
 
         public float Update(float elapsedSeconds)
         {
-            if (UpdateValue > 0)
-                return this.UpdateValues(elapsedSeconds, 1);
-            else if (UpdateValue < 0)
-                return this.UpdateValues(elapsedSeconds, -1);
-            else 
-                return this.CurrentValue;
+            if (UpdateValue == 1 || UpdateValue == -1)
+            {
+                CheckControllerTargetAchieved();
+                UpdateValues(elapsedSeconds, UpdateValue);
+            }
+            return CurrentValue;
+        }
+
+        /// <summary>
+        /// If a target has been set, then stop once it's reached and also cancel the target.
+        /// </summary>
+        public void CheckControllerTargetAchieved() {
+            if( controllerTarget != null ) {
+                if( UpdateValue > 0.0 ) {
+                    if( CurrentValue >= controllerTarget ) {
+                        StopIncrease();
+                        controllerTarget = null;
+                    }
+                } else {
+                    if( CurrentValue <= controllerTarget ) {
+                        StopDecrease();
+                        controllerTarget = null;
+                    }
+                }
+            }
         }
 
         private float UpdateValues(float elapsedSeconds, float direction)
@@ -263,7 +389,12 @@ namespace ORTS
                 //decreasing, again check if the current notch has changed
                 else if((direction < 0) && (CurrentNotch > 0) && (IntermediateValue < Notches[CurrentNotch].Value))
                 {
-                    CurrentNotch--;
+                    if (Notches[CurrentNotch].Smooth && !Notches[CurrentNotch - 1].Smooth)
+                        IntermediateValue = Notches[CurrentNotch].Value;
+                    else
+                    {
+                        CurrentNotch--;
+                    }
                 }
 
                 //If the notch is smooth, we use intermediate value that is being update smooth thought the frames
@@ -294,6 +425,32 @@ namespace ORTS
             if (notch.Type == MSTSNotchType.Release)
                 x = 1 - x;
             return x;
+        }
+
+        public float? SmoothMin()
+        {
+            float? target = null;
+            if (Notches.Count > 0)
+            {
+                if (CurrentNotch > 0 && Notches[CurrentNotch - 1].Smooth)
+                    target = Notches[CurrentNotch - 1].Value;
+                else if (Notches[CurrentNotch].Smooth && CurrentValue > Notches[CurrentNotch].Value)
+                    target = Notches[CurrentNotch].Value;
+            }
+            else
+                target = MinimumValue;
+            return target;
+        }
+
+        public float? SmoothMax()
+        {
+            float? target = null;
+            if (Notches.Count > 0 && CurrentNotch < Notches.Count - 1 && Notches[CurrentNotch].Smooth)
+                target = Notches[CurrentNotch + 1].Value;
+            else if (Notches.Count == 0
+                || (Notches.Count == 1 && Notches[CurrentNotch].Smooth))
+                target = MaximumValue;
+            return target;
         }
 
         public virtual string GetStatus()

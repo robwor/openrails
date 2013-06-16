@@ -1,17 +1,30 @@
-﻿// COPYRIGHT 2010, 2011, 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
+
+#define DOPPLER
 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+using Microsoft.Xna.Framework;
 
 namespace ORTS
 {
@@ -21,6 +34,9 @@ namespace ORTS
 		public readonly Profiler Profiler = new Profiler("Sound");
         readonly Viewer3D Viewer;
 		readonly Thread Thread;
+
+        private int UpdateCounter = -1;
+        private const int FULLUPDATECYCLE = 4; // Number of frequent updates needed till a full update
 
         public SoundProcess(Viewer3D viewer)
         {
@@ -100,7 +116,7 @@ namespace ORTS
             while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
             {
                 DoSound();
-                Thread.Sleep(200);
+                Thread.Sleep(50);
             }
         }
 
@@ -144,22 +160,54 @@ namespace ORTS
 						ActivityTask at = act.Current;
 						if (at != null)
 						{
-							if (at.SoundNotify != -1)
+							if (at.SoundNotify != Event.None)
 							{
 								if (Viewer.World.GameSounds != null) Viewer.World.GameSounds.HandleEvent(at.SoundNotify);
-								at.SoundNotify = -1;
+                                at.SoundNotify = Event.None;
 							}
 						}
 					}
 				}
-				// Update all sound in our list
+#if DOPPLER
+                if (Viewer != null || Viewer.Camera != null) // For sure we have a Camera
+                {
+                    float[] cameraPosition = new float[] {
+                        Viewer.Camera.CameraWorldLocation.Location.X + 2048 * Viewer.Camera.CameraWorldLocation.TileX,
+                        Viewer.Camera.CameraWorldLocation.Location.Y,
+                        Viewer.Camera.CameraWorldLocation.Location.Z + 2048 * Viewer.Camera.CameraWorldLocation.TileZ};
+
+                    float[] cameraVelocity = new float[] { 0, 0, 0 };
+
+                    if (!(Viewer.Camera is TracksideCamera) && !(Viewer.Camera is FreeRoamCamera) && Viewer.Camera.AttachedCar != null)
+                    {
+                        Vector3 directionVector = Vector3.Multiply(Viewer.Camera.AttachedCar.GetXNAMatrix().Forward, Viewer.Camera.AttachedCar.SpeedMpS);
+                        cameraVelocity = new float[] { directionVector.X, directionVector.Y, -directionVector.Z };
+                    }
+
+                    float[] cameraOrientation = new float[] { 
+                        Viewer.Camera.XNAView.Forward.X, Viewer.Camera.XNAView.Forward.Y, Viewer.Camera.XNAView.Forward.Z,
+                        Viewer.Camera.XNAView.Up.X, Viewer.Camera.XNAView.Up.Y, Viewer.Camera.XNAView.Up.Z };
+
+                    OpenAL.alListenerfv(OpenAL.AL_POSITION, cameraPosition);
+                    OpenAL.alListenerfv(OpenAL.AL_VELOCITY, cameraVelocity);
+                    OpenAL.alListenerfv(OpenAL.AL_ORIENTATION, cameraOrientation);
+                    OpenAL.alListenerf(OpenAL.AL_GAIN, Program.Simulator.Paused ? 0 : (float)Program.Simulator.Settings.SoundVolumePercent / 100f);
+                }
+#endif
+                // Update all sound in our list
 				lock (SoundSources)
 				{
+                    UpdateCounter++;
+                    UpdateCounter %= FULLUPDATECYCLE;
+
 					List<KeyValuePair<List<SoundSourceBase>, SoundSourceBase>> remove = null;
 					foreach (List<SoundSourceBase> src in SoundSources.Values)
 					{
 						foreach (SoundSourceBase ss in src)
 						{
+                            if (!ss.NeedsFrequentUpdate && UpdateCounter > 0)
+                                continue;
+
 							if (!ss.Update())
 							{
 								if (remove == null)

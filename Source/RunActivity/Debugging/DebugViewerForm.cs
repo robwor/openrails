@@ -1,8 +1,20 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-///
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 /// Principal Author:
 ///     Author: Charlie Salts / Signalsoft Rail Consultancy Ltd.
 /// Contributor:
@@ -22,7 +34,6 @@ using System.Net;
 using Microsoft.Xna.Framework;
 using System.Windows.Forms;
 using MSTS;
-using ORTS.Interlocking;
 namespace ORTS.Debugging
 {
 
@@ -48,35 +59,40 @@ namespace ORTS.Debugging
       private int IM_Width = 720;
       private int IM_Height = 720;
 
-	  private int X;
-	  private int Y; //X, Y of mouse
 	  /// <summary>
 	  /// True when the user is dragging the route view
 	  /// </summary>
 	  private bool Dragging = false;
 	  private WorldPosition worldPos;
+      float xScale = 1; 
+      float yScale = 1; 
+
 	  string name = "";
 	  List<SwitchWidget> switchItemsDrawn;
 	  List<SignalWidget> signalItemsDrawn;
 
 	  public SwitchWidget switchPickedItem = null;
 	  public SignalWidget signalPickedItem = null;
-	  bool switchPickedItemChanged = false;
-	  PointF switchPickedLocation = new PointF();
 	  public bool switchPickedItemHandled = false;
 	  public double switchPickedTime = 0.0f;
-	  bool signalPickedItemChanged = false;
-	  PointF signalPickedLocation = new PointF();
 	  public bool signalPickedItemHandled = false;
 	  public double signalPickedTime = 0.0f;
-
+	  public bool DrawPath = true; //draw train path
 	  ImageList imageList1 = null;
+	  public List<Train> selectedTrainList = null;
 	  /// <summary>
 	  /// contains the last position of the mouse
 	  /// </summary>
 	  private System.Drawing.Point LastCursorPosition = new System.Drawing.Point();
+	Pen redPen = new Pen(Color.Red);
+	Pen greenPen = new Pen(Color.Green);
+	Pen orangePen = new Pen(Color.Orange);
+	Pen trainPen = new Pen(Color.DarkGreen);
+	Pen pathPen = new Pen(Color.DeepPink);
+	Pen grayPen = new Pen(Color.Gray);
 
-
+	   //the train selected by leftclicking the mouse
+	public Train PickedTrain;
       /// <summary>
       /// True when the user has the "Move left" pressed.
       /// </summary>
@@ -147,12 +163,18 @@ namespace ORTS.Debugging
          // initialise the timer used to handle user input
          UITimer = new Timer();
          UITimer.Interval = 100;
-         UITimer.Tick += new EventHandler(UITimer_Tick);
+         UITimer.Tick += new System.EventHandler(UITimer_Tick);
          UITimer.Start();
 
          ViewWindow = new RectangleF(0, 0, 5000f, 5000f);
          windowSizeUpDown.Accelerations.Add(new NumericUpDownAcceleration(1, 100));
-
+		 boxSetSignal.Items.Add("System Controlled");
+		 boxSetSignal.Items.Add("Stop");
+		 boxSetSignal.Items.Add("Approach");
+		 boxSetSignal.Items.Add("Proceed");
+		 chkAllowUserSwitch.Checked = false;
+		 selectedTrainList = new List<Train>();
+		 if (MultiPlayer.MPManager.IsMultiPlayer()) { MultiPlayer.MPManager.AllowedManualSwitch = false; }
       
 
 		  InitData();
@@ -161,7 +183,8 @@ namespace ORTS.Debugging
 		if (!MultiPlayer.MPManager.IsMultiPlayer())//single player mode, make those unnecessary removed
 		{
 			msgAll.Visible = false; msgSelected.Visible = false; composeMSG.Visible = false; MSG.Visible = false; messages.Visible = false;
-			AvatarView.Visible = false; composeMSG.Visible = false; reply2Selected.Visible = false; chkShowAvatars.Visible = false;
+			AvatarView.Visible = false; composeMSG.Visible = false; reply2Selected.Visible = false; chkShowAvatars.Visible = false; chkAllowNew.Visible = false;
+			chkBoxPenalty.Visible = false; chkPreferGreen.Visible = false;
 			pictureBox1.Location = new System.Drawing.Point(pictureBox1.Location.X, label1.Location.Y + 18);
 			refreshButton.Text = "View Self";
 		}
@@ -218,8 +241,9 @@ namespace ORTS.Debugging
 		 lastUpdateTime = Program.Simulator.GameTime;
 
             GenerateView();
-      }
+	  }
 
+	  #region initData
 	  private void InitData()
 	  {
 		  if (!loaded)
@@ -301,7 +325,14 @@ namespace ORTS.Debugging
 			  }
 		  }
 
-		  foreach (TrItem item in simulator.TDB.TrackDB.TrItemTable)
+          var maxsize = maxX - minX > maxX - minX ? maxX - minX : maxX - minX;
+          maxsize = (int)maxsize / 100 * 100;
+          windowSizeUpDown.Maximum = (decimal)maxsize;
+          Inited = true;
+
+          if (simulator.TDB == null || simulator.TDB.TrackDB == null || simulator.TDB.TrackDB.TrItemTable == null) return;
+
+		  foreach (var item in simulator.TDB.TrackDB.TrItemTable)
 		  {
 			  if (item.ItemType == TrItem.trItemType.trSIGNAL)
 			  {
@@ -326,17 +357,15 @@ namespace ORTS.Debugging
 
 			  }
 		  }
-
-		  Inited = true;
+          return;
 	  }
+
 	  bool Inited = false;
 	  List<LineSegment> segments = new List<LineSegment>();
 	  List<SwitchWidget> switches;
 	  //List<PointF> buffers = new List<PointF>();
 	  List<SignalWidget> signals = new List<SignalWidget>();
 	  List<SidingWidget> sidings = new List<SidingWidget>();
-
-	  PointF PlayerLocation = new PointF();
 
 	   /// <summary>
       /// Initialises the picturebox and the image it contains. 
@@ -357,18 +386,21 @@ namespace ORTS.Debugging
 		 imageList1.ImageSize = new Size(64, 64);
 		 this.AvatarView.LargeImageList = this.imageList1;
 
-      }
+	  }
 
+	  #endregion
+
+	  #region avatar
 	  Dictionary<string, Image> avatarList = null;
 	  public void AddAvatar(string name, string url)
 	  {
 		  if (avatarList == null) avatarList = new Dictionary<string, Image>();
-
+		  bool FindDefault = false;
 		  try
 		  {
 			  if (Program.Simulator.Settings.ShowAvatar == false) throw new Exception();
+			  FindDefault = true;
 			  var request = WebRequest.Create(url);
-
 			  using (var response = request.GetResponse())
 			  using (var stream = response.GetResponseStream())
 			  {
@@ -388,15 +420,23 @@ namespace ORTS.Debugging
 		  }
 		  catch
 		  {
-			  byte[] imageBytes = Convert.FromBase64String(imagestring);
-			  MemoryStream ms = new MemoryStream(imageBytes, 0,
-				imageBytes.Length);
+			  if (FindDefault)
+			  {
+				  byte[] imageBytes = Convert.FromBase64String(imagestring);
+				  MemoryStream ms = new MemoryStream(imageBytes, 0,
+					imageBytes.Length);
 
-			  // Convert byte[] to Image
-			  ms.Write(imageBytes, 0, imageBytes.Length);
-			  Image newImage = Image.FromStream(ms, true);
-			  avatarList[name] = newImage;
+				  // Convert byte[] to Image
+				  ms.Write(imageBytes, 0, imageBytes.Length);
+				  Image newImage = Image.FromStream(ms, true);
+				  avatarList[name] = newImage;
+			  }
+			  else
+			  {
+				  avatarList[name] = null;
+			  }
 		  }
+
 
 		  /*
 		  imageList1.Images.Clear();
@@ -414,14 +454,17 @@ namespace ORTS.Debugging
 		  }*/
 	  }
 
+	  int LostCount = 0;//how many players in the lost list (quit)
 	  public void CheckAvatar()
 	  {
 		  if (!MultiPlayer.MPManager.IsMultiPlayer() || MultiPlayer.MPManager.OnlineTrains == null || MultiPlayer.MPManager.OnlineTrains.Players == null) return;
 		  var player = MultiPlayer.MPManager.OnlineTrains.Players;
-		  var username =MultiPlayer.MPManager.GetUserName(); 
+		  var username =MultiPlayer.MPManager.GetUserName();
+		  player = player.Concat(MultiPlayer.MPManager.Instance().lostPlayer).ToDictionary(x => x.Key, x => x.Value);
 		  if (avatarList == null) avatarList = new Dictionary<string, Image>();
-		  if (avatarList.Count == player.Count + 1) return;
+		  if (avatarList.Count == player.Count + 1 && LostCount == MultiPlayer.MPManager.Instance().lostPlayer.Count) return;
 
+		  LostCount = MultiPlayer.MPManager.Instance().lostPlayer.Count;
 		  //add myself
 		  if (!avatarList.ContainsKey(username))
 		  {
@@ -447,33 +490,100 @@ namespace ORTS.Debugging
 		  }
 		  imageList1.Images.Clear();
 		  AvatarView.Items.Clear();
-
-		  foreach (var pair in avatarList)
+		  var i = 0;
+		  if (!Program.Simulator.Settings.ShowAvatar)
 		  {
-			  if (pair.Key != username) continue;
-			  if (pair.Value == null) AvatarView.Items.Add(pair.Key).ImageIndex = -1;
-			  else
+			  this.AvatarView.View = View.List;
+			  foreach (var pair in avatarList)
 			  {
-				  AvatarView.Items.Add(pair.Key).ImageIndex = 0;
-				  imageList1.Images.Add(pair.Value);
+				  if (pair.Key != username) continue;
+				  AvatarView.Items.Add(pair.Key);
 			  }
-		  }
-
-		  var i = 1;
-		  foreach (var pair in avatarList)
-		  {
-			  if (pair.Key == username) continue;
-			  if (pair.Value == null) AvatarView.Items.Add(pair.Key).ImageIndex = -1;
-			  else
+			  i = 1;
+			  foreach (var pair in avatarList)
 			  {
-				  AvatarView.Items.Add(pair.Key).ImageIndex = i;
-				  imageList1.Images.Add(pair.Value);
+				  if (pair.Key == username) continue;
+				  if (MultiPlayer.MPManager.Instance().aiderList.Contains(pair.Key))
+				  {
+					  AvatarView.Items.Add(pair.Key + " (H)");
+				  }
+				  else if (MultiPlayer.MPManager.Instance().lostPlayer.ContainsKey(pair.Key))
+				  {
+					  AvatarView.Items.Add(pair.Key + " (Q)");
+				  }
+				  else AvatarView.Items.Add(pair.Key);
 				  i++;
 			  }
 		  }
-	  }
-	  public bool firstShow = true;
+		  else
+		  {
+			  this.AvatarView.View = View.LargeIcon;
+			  AvatarView.LargeImageList = imageList1;
+			  foreach (var pair in avatarList)
+			  {
+				  if (pair.Key != username) continue;
 
+				  if (pair.Value == null) AvatarView.Items.Add(pair.Key).ImageIndex = -1;
+				  else
+				  {
+					  AvatarView.Items.Add(pair.Key).ImageIndex = 0;
+					  imageList1.Images.Add(pair.Value);
+				  }
+			  }
+
+			  i = 1;
+			  foreach (var pair in avatarList)
+			  {
+				  if (pair.Key == username) continue;
+				  var text = pair.Key;
+				  if (MultiPlayer.MPManager.Instance().aiderList.Contains(pair.Key)) text = pair.Key + " (H)";
+
+				  if (pair.Value == null) AvatarView.Items.Add(name).ImageIndex = -1;
+				  else
+				  {
+					  AvatarView.Items.Add(text).ImageIndex = i;
+					  imageList1.Images.Add(pair.Value);
+					  i++;
+				  }
+			  }
+		  }
+	  }
+
+	  #endregion
+
+	  #region Draw
+	  public bool firstShow = true;
+	  public bool followTrain = false;
+	  float subX, subY;
+      float oldWidth = 0;
+      float oldHeight = 0;
+       //determine locations of buttons and boxes
+      void DetermineLocations()
+      {
+          if (this.Height < 600 || this.Width < 800) return;
+          if (oldHeight != this.Height || oldWidth != label1.Left)//use the label "Res" as anchor point to determine the picture size
+          {
+              oldWidth = label1.Left; oldHeight = this.Height;
+              IM_Width = label1.Left - 20;
+              IM_Height = this.Height - pictureBox1.Top;
+              pictureBox1.Width = IM_Width;
+              pictureBox1.Height = IM_Height;
+              if (pictureBox1.Image != null)
+              {
+                  pictureBox1.Image.Dispose();
+              }
+
+              pictureBox1.Image = new Bitmap(pictureBox1.Width, pictureBox1.Height);
+
+              if (btnAssist.Left - 10 < composeMSG.Right)
+              {
+                  var size = composeMSG.Width;
+                  composeMSG.Left = msgAll.Left = msgSelected.Left = reply2Selected.Left = btnAssist.Left - 10 - size;
+                  MSG.Width = messages.Width = composeMSG.Left - 20;
+              }
+              firstShow = true;
+          }
+      }
       /// <summary>
       /// Regenerates the 2D view. At the moment, examines the track network
       /// each time the view is drawn. Later, the traversal and drawing can be separated.
@@ -485,25 +595,33 @@ namespace ORTS.Debugging
 		  if (!Inited) return;
 
 		  if (pictureBox1.Image == null) InitImage();
+          DetermineLocations();
 
 		  if (firstShow)
 		  {
 			  if (!MultiPlayer.MPManager.IsServer())
 			  {
 				  this.chkAllowUserSwitch.Visible = false;
-				  this.chkAllowUserSwitch.Checked = true;
+				  this.chkAllowUserSwitch.Checked = false;
 				  this.rmvButton.Visible = false;
+				  this.btnAssist.Visible = false;
+				  this.btnNormal.Visible = false;
 				  this.msgAll.Text = "MSG to Server";
 			  }
 			  else
 			  {
 				  this.msgAll.Text = "MSG to All";
 			  }
+			  if (MultiPlayer.MPManager.IsServer()) { rmvButton.Visible = true; chkAllowNew.Visible = true; chkAllowUserSwitch.Visible = true; }
+			  else { rmvButton.Visible = false; chkAllowNew.Visible = false; chkAllowUserSwitch.Visible = false; chkBoxPenalty.Visible = false; chkPreferGreen.Visible = false; }
+		  }
+		  if (firstShow || followTrain) {
 			  WorldPosition pos;
 			  //see who should I look at:
 			  //if the player is selected in the avatar list, show the player, otherwise, show the one with the lowest index
 			  if (Program.Simulator.PlayerLocomotive != null) pos = Program.Simulator.PlayerLocomotive.WorldPosition;
 			  else pos = Program.Simulator.Trains[0].Cars[0].WorldPosition;
+			  bool hasSelectedTrain = false;
 			  if (AvatarView.SelectedIndices.Count > 0 && !AvatarView.SelectedIndices.Contains(0))
 			  {
 					  try
@@ -513,46 +631,54 @@ namespace ORTS.Debugging
 						  {
 							  if ((int)index < i) i = (int)index;
 						  }
-						  var name = AvatarView.Items[i].Text;
-						  pos = MultiPlayer.MPManager.OnlineTrains.Players[name].Train.Cars[0].WorldPosition;
+						  var name = AvatarView.Items[i].Text.Split(' ')[0].Trim() ;
+						  if (MultiPlayer.MPManager.OnlineTrains.Players.ContainsKey(name))
+						  {
+							  pos = MultiPlayer.MPManager.OnlineTrains.Players[name].Train.Cars[0].WorldPosition;
+						  }
+						  else if (MultiPlayer.MPManager.Instance().lostPlayer.ContainsKey(name))
+						  {
+							  pos = MultiPlayer.MPManager.Instance().lostPlayer[name].Train.Cars[0].WorldPosition;
+						  }
+						  hasSelectedTrain = true;
 					  }
 					  catch { }
 			  }
+			  if (hasSelectedTrain == false && PickedTrain != null && PickedTrain.Cars != null && PickedTrain.Cars.Count > 0)
+			  {
+				  pos = PickedTrain.Cars[0].WorldPosition;
+			  }
 			  var ploc = new PointF(pos.TileX * 2048 + pos.Location.X, pos.TileZ * 2048 + pos.Location.Z);
 			  ViewWindow.X = ploc.X - minX - ViewWindow.Width / 2; ViewWindow.Y = ploc.Y - minY - ViewWindow.Width / 2;
-			  if (MultiPlayer.MPManager.IsServer()) rmvButton.Visible = true;
-			  else rmvButton.Visible = false;
 			  firstShow = false;
 		  }
 
-
-		  //if (Program.Random.Next(100) == 0) AddAvatar("Test:"+Program.Random.Next(5), "http://trainsimchina.com/discuz/uc_server/avatar.php?uid=72965&size=middle");
 		  try
 		  {
 			  CheckAvatar();
 		  }
 		  catch {  } //errors for avatar, just ignore
          using(Graphics g = Graphics.FromImage(pictureBox1.Image))
-		 using (Pen redPen = new Pen(Color.Red))
-		 using (Pen greenPen = new Pen(Color.Green))
-		 using (Pen orangePen = new Pen(Color.Orange))
-		 using (Pen grayPen = new Pen(Color.Gray))
          {
-
+			 subX = minX + ViewWindow.X; subY = minY + ViewWindow.Y;
             g.Clear(Color.White);
 
             // this is the total size of the entire viewable route (xRange == width, yRange == height in metres)
             float xRange = maxX - minX;
             float yRange = maxY - minY;
 
-            float xScale = pictureBox1.Width / ViewWindow.Width;
-            float yScale = pictureBox1.Height/ ViewWindow.Height;
+            xScale = pictureBox1.Width / ViewWindow.Width;
+            yScale = pictureBox1.Height/ ViewWindow.Height;
 
 			PointF[] points = new PointF[3];
 			Pen p = grayPen;
 
-			p.Width = xScale;
+			p.Width = (int) xScale;
 			if (p.Width < 1) p.Width = 1;
+			else if (p.Width > 3) p.Width = 3;
+			greenPen.Width = orangePen.Width = redPen.Width = p.Width; pathPen.Width = 2 * p.Width;
+			trainPen.Width = p.Width*6;
+			var forwardDist = 100 / xScale; if (forwardDist < 5) forwardDist = 5;
 			//if (xScale > 3) p.Width = 3f;
 			//else if (xScale > 2) p.Width = 2f;
 			//else p.Width = 1f;
@@ -563,8 +689,8 @@ namespace ORTS.Debugging
 			foreach (var line in segments)
             {
 
-				scaledA.X = ((float)line.A.X - minX - ViewWindow.X) * xScale; scaledA.Y = pictureBox1.Height - ((float)line.A.Y - minY - ViewWindow.Y) * yScale;
-				scaledB.X = ((float)line.B.X - minX - ViewWindow.X) * xScale; scaledB.Y = pictureBox1.Height - ((float)line.B.Y - minY - ViewWindow.Y) * yScale;
+				scaledA.X = ((float)line.A.X - subX) * xScale; scaledA.Y = pictureBox1.Height - ((float)line.A.Y - subY) * yScale;
+				scaledB.X = ((float)line.B.X - subX) * xScale; scaledB.Y = pictureBox1.Height - ((float)line.B.Y - subY) * yScale;
 
 
 				if ((scaledA.X < 0 && scaledB.X < 0) || (scaledA.X > IM_Width && scaledB.X > IM_Width) || (scaledA.Y > IM_Height && scaledB.Y > IM_Height) || (scaledA.Y < 0 && scaledB.Y < 0)) continue;
@@ -580,29 +706,39 @@ namespace ORTS.Debugging
 
 			   if (line.isCurved == true)
 			   {
-				   scaledC.X = ((float)line.C.X - minX - ViewWindow.X) * xScale; scaledC.Y = pictureBox1.Height - ((float)line.C.Y - minY - ViewWindow.Y) * yScale;
+				   scaledC.X = ((float)line.C.X - subX) * xScale; scaledC.Y = pictureBox1.Height - ((float)line.C.Y - subY) * yScale;
 				   points[0] = scaledA; points[1] = scaledC; points[2] = scaledB;
 				   g.DrawCurve(p, points);
 			   }
                else g.DrawLine(p, scaledA, scaledB);
+
+               /*if (line.MySection != null)
+               {
+                   g.DrawString(""+line.MySection.StartElev+" "+line.MySection.EndElev, sidingFont, sidingBrush, scaledB);
+               }*/
             }
 			
 			switchItemsDrawn.Clear();
 			signalItemsDrawn.Clear();
 			 float x, y;
 			 PointF scaledItem = new PointF(0f, 0f);
+			 var width = 6f * p.Width; if (width > 15) width = 15;//not to make it too large
 			 for (var i = 0; i < switches.Count; i++)
 			 {
 				 SwitchWidget sw = switches[i];
 
-				 x = (sw.Location.X - minX - ViewWindow.X) * xScale; y = pictureBox1.Height - (sw.Location.Y - minY - ViewWindow.Y) * yScale;
+				 x = (sw.Location.X - subX) * xScale; y = pictureBox1.Height - (sw.Location.Y - subY) * yScale;
 
 				 if (x < 0 || x > IM_Width || y > IM_Height || y < 0) continue;
 
 				 scaledItem.X = x; scaledItem.Y = y;
 
 
-				 g.FillEllipse(Brushes.Black, GetRect(scaledItem, 5f * p.Width));
+				 if (sw.Item.TrJunctionNode.SelectedRoute == sw.main) g.FillEllipse(Brushes.Black, GetRect(scaledItem, width));
+				 else g.FillEllipse(Brushes.Gray, GetRect(scaledItem, width));
+
+                 //g.DrawString("" + sw.Item.TrJunctionNode.SelectedRoute, trainFont, trainBrush, scaledItem);
+
 				 sw.Location2D.X = scaledItem.X; sw.Location2D.Y = scaledItem.Y;
 #if false
 				 if (sw.main == sw.Item.TrJunctionNode.SelectedRoute)
@@ -617,7 +753,8 @@ namespace ORTS.Debugging
 
 			 foreach (var s in signals)
 			 {
-				 x = (s.Location.X - minX - ViewWindow.X) * xScale; y = pictureBox1.Height - (s.Location.Y - minY - ViewWindow.Y) * yScale;
+                 if (float.IsNaN(s.Location.X) || float.IsNaN(s.Location.Y)) continue;
+				 x = (s.Location.X - subX) * xScale; y = pictureBox1.Height - (s.Location.Y - subY) * yScale;
 				 if (x < 0 || x > IM_Width || y > IM_Height || y < 0) continue;
 				 scaledItem.X = x; scaledItem.Y = y;
 				 s.Location2D.X = scaledItem.X; s.Location2D.Y = scaledItem.Y;
@@ -638,12 +775,12 @@ namespace ORTS.Debugging
 						 color = Brushes.Red;
 						 pen = redPen;
 					 }
-					 g.FillEllipse(color, GetRect(scaledItem, 5f * p.Width));
-
+					 g.FillEllipse(color, GetRect(scaledItem, width));
+					 //if (s.Signal.enabledTrain != null) g.DrawString(""+s.Signal.enabledTrain.Train.Number, trainFont, Brushes.Black, scaledItem);
 					 signalItemsDrawn.Add(s);
 					 if (s.hasDir)
 					 {
-						 scaledB.X = (s.Dir.X - minX - ViewWindow.X) * xScale; scaledB.Y = pictureBox1.Height - (s.Dir.Y - minY - ViewWindow.Y) * yScale;
+						 scaledB.X = (s.Dir.X - subX) * xScale; scaledB.Y = pictureBox1.Height - (s.Dir.Y - subY) * yScale;
 						 g.DrawLine(pen, scaledItem, scaledB);
 					 }
 				 }
@@ -655,46 +792,141 @@ namespace ORTS.Debugging
 				CleanVerticalCells();//clean the drawing area for text of sidings
 				foreach (var s in sidings)
 				{
-					scaledItem.X = (s.Location.X - minX - ViewWindow.X) * xScale;
-					scaledItem.Y = DetermineSidingLocation(scaledItem.X, pictureBox1.Height - (s.Location.Y - minY - ViewWindow.Y) * yScale, s.Name);
+					scaledItem.X = (s.Location.X - subX) * xScale;
+					scaledItem.Y = DetermineSidingLocation(scaledItem.X, pictureBox1.Height - (s.Location.Y - subY) * yScale, s.Name);
 					if (scaledItem.Y >= 0f) //if we need to draw the siding names
 					{
 
 						g.DrawString(s.Name, sidingFont, sidingBrush, scaledItem);
 					}
 				}
-				foreach (Train t in simulator.Trains)
+				var margin = 30 * xScale;//margins to determine if we want to draw a train
+				var margin2 = 5000 * xScale;
+
+				//variable for drawing train path
+				var mDist = 5000f; var pDist = 50; //segment length when draw path
+
+				selectedTrainList.Clear();
+				foreach (var t in simulator.Trains) selectedTrainList.Add(t);
+
+				var redTrain = selectedTrainList.Count;
+
+				//choosen trains will be drawn later using blue, so it will overlap on the red lines
+				var chosen = AvatarView.SelectedItems;
+				if (chosen.Count > 0)
 				{
+					for (var i = 0; i < chosen.Count; i++)
+					{
+						var name = chosen[i].Text.Split(' ')[0].Trim(); //filter out (H) in the text
+						var train = MultiPlayer.MPManager.OnlineTrains.findTrain(name);
+						if (train != null) { selectedTrainList.Remove(train); selectedTrainList.Add(train); redTrain--; }
+						//if selected include myself, will show it as blue
+						if (MultiPlayer.MPManager.GetUserName() == name && Program.Simulator.PlayerLocomotive != null)
+						{
+							selectedTrainList.Remove(Program.Simulator.PlayerLocomotive.Train); selectedTrainList.Add(Program.Simulator.PlayerLocomotive.Train);
+							redTrain--;
+						}
+
+					}
+				}
+
+				//trains selected in the avatar view list will be drawn in blue, others will be drawn in red
+				pathPen.Color = Color.Red;
+				var drawRed = 0;
+				int ValidTrain = selectedTrainList.Count();
+				//add trains quit into the end, will draw them in gray
+				try
+				{
+					foreach (var lost in MultiPlayer.MPManager.Instance().lostPlayer)
+					{
+						if (lost.Value.Train != null && !selectedTrainList.Contains(lost.Value.Train)) selectedTrainList.Add(lost.Value.Train);
+					}
+				}
+				catch { }
+				foreach (Train t in selectedTrainList)
+				{
+					drawRed++;//how many red has been drawn
+					if (drawRed > redTrain) pathPen.Color = Color.Blue; //more than the red should be drawn, thus draw in blue
+
 					name = "";
+					TrainCar firstCar = null;
 					if (t.LeadLocomotive != null)
 					{
 						worldPos = t.LeadLocomotive.WorldPosition;
 						name = t.LeadLocomotive.CarID;
+						firstCar = t.LeadLocomotive;
 					}
 					else if (t.Cars != null && t.Cars.Count > 0)
 					{
 						worldPos = t.Cars[0].WorldPosition;
 						name = t.Cars[0].CarID;
+						firstCar = t.Cars[0];
 
 					}
 					else continue;
 
-					PlayerLocation = new PointF(
-					   worldPos.TileX * 2048 + worldPos.Location.X,
-					   worldPos.TileZ * 2048 + worldPos.Location.Z);
+					if (xScale < 0.3 || t.FrontTDBTraveller == null || t.RearTDBTraveller == null)
+					{
+						worldPos = firstCar.WorldPosition;
+						scaledItem.X = (worldPos.TileX * 2048 + worldPos.Location.X - subX) * xScale; scaledItem.Y = pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - subY) * yScale;
+						if (scaledItem.X < -margin2 || scaledItem.X > IM_Width + margin2 || scaledItem.Y > IM_Height + margin2 || scaledItem.Y < -margin2) continue;
+						if (drawRed > ValidTrain) g.FillRectangle(Brushes.Gray, GetRect(scaledItem, 15f));
+						else
+						{
+							if (t == PickedTrain) g.FillRectangle(Brushes.Red, GetRect(scaledItem, 15f));
+							else g.FillRectangle(Brushes.DarkGreen, GetRect(scaledItem, 15f));
+							scaledItem.Y -= 25;
+							DrawTrainPath(t, subX, subY, pathPen, g, scaledA, scaledB, pDist, mDist);
+						}
+						g.DrawString(GetTrainName(name), trainFont, trainBrush, scaledItem);
+						continue;
+					}
+					var loc = t.FrontTDBTraveller.WorldLocation;
+					x = (loc.TileX * 2048 + loc.Location.X - subX) * xScale; y = pictureBox1.Height - (loc.TileZ * 2048 + loc.Location.Z - subY) * yScale;
+					if (x < -margin2 || x > IM_Width + margin2 || y > IM_Height + margin2 || y < -margin2) continue;
+					
+					//train quit will not draw path, others will draw it
+					if (drawRed <= ValidTrain) DrawTrainPath(t, subX, subY, pathPen, g, scaledA, scaledB, pDist, mDist);
+					
+					trainPen.Color = Color.DarkGreen;
+					foreach (var car in t.Cars)
+					{
+						Traveller t1 = new Traveller(t.RearTDBTraveller);
+						worldPos = car.WorldPosition;
+						var dist = t1.DistanceTo(worldPos.WorldLocation.TileX, worldPos.WorldLocation.TileZ, worldPos.WorldLocation.Location.X, worldPos.WorldLocation.Location.Y, worldPos.WorldLocation.Location.Z);
+						if (dist > 0)
+						{
+							t1.Move(dist - 1 + car.Length / 2);
+							x = (t1.TileX * 2048 + t1.Location.X - subX) * xScale; y = pictureBox1.Height - (t1.TileZ * 2048 + t1.Location.Z - subY) * yScale;
+							//x = (worldPos.TileX * 2048 + worldPos.Location.X - minX - ViewWindow.X) * xScale; y = pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - minY - ViewWindow.Y) * yScale;
+							if (x < -margin || x > IM_Width + margin || y > IM_Height + margin || y < -margin) continue;
 
-					x = (PlayerLocation.X - minX - ViewWindow.X) * xScale; y = pictureBox1.Height - (PlayerLocation.Y - minY - ViewWindow.Y) * yScale;
-					if (x < 0 || x > IM_Width || y > IM_Height || y < 0) continue;
+							scaledItem.X = x; scaledItem.Y = y;
 
-					scaledItem.X = x; scaledItem.Y = y;
+							t1.Move(-car.Length);
+							x = (t1.TileX * 2048 + t1.Location.X - subX) * xScale; y = pictureBox1.Height - (t1.TileZ * 2048 + t1.Location.Z - subY) * yScale;
+							if (x < -margin || x > IM_Width + margin || y > IM_Height + margin || y < -margin) continue;
 
-					g.FillRectangle(Brushes.DarkGreen, GetRect(scaledItem, 15f));
-					scaledItem.Y -= 25;
+							scaledA.X = x; scaledA.Y = y;
+							
+							//if the train has quit, will draw in gray, if the train is selected by left click of the mouse, will draw it in red
+							if (drawRed > ValidTrain) trainPen.Color = Color.Gray;
+							else if (t == PickedTrain) trainPen.Color = Color.Red;
+							g.DrawLine(trainPen, scaledA, scaledItem);
+							
+							//g.FillEllipse(Brushes.DarkGreen, GetRect(scaledItem, car.Length * xScale));
+						}
+					}
+					worldPos = firstCar.WorldPosition;
+					scaledItem.X = (worldPos.TileX * 2048 + worldPos.Location.X - subX) * xScale; scaledItem.Y = -25 + pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - subY) * yScale;
+
 					g.DrawString(GetTrainName(name), trainFont, trainBrush, scaledItem);
+
 				}
 				if (switchPickedItemHandled) switchPickedItem = null;
 				if (signalPickedItemHandled) signalPickedItem = null;
 
+#if false
 				if (switchPickedItem != null /*&& switchPickedItemChanged == true*/ && !switchPickedItemHandled && simulator.GameTime - switchPickedTime < 5)
 				{
 					switchPickedLocation.X = switchPickedItem.Location2D.X + 150; switchPickedLocation.Y = switchPickedItem.Location2D.Y;
@@ -727,6 +959,7 @@ namespace ORTS.Debugging
 						g.DrawString(InputSettings.Commands[(int)UserCommands.GameSignalPicked] + " to change signal", trainFont, trainBrush, signalPickedLocation);
 					}
 				}
+#endif
 			}
 
          }
@@ -804,7 +1037,262 @@ namespace ORTS.Debugging
 		  if (location < 0) return ID;
 		  return ID.Substring(0, location - 1);
 	  }
-      /// <summary>
+
+	    const float SignalErrorDistance = 100;
+        const float SignalWarningDistance = 500;
+        const float DisplayDistance = 1000;
+        const float DisplaySegmentLength = 10;
+        const float MaximumSectionDistance = 10000;
+
+	  Dictionary<int, SignallingDebugWindow.TrackSectionCacheEntry> Cache = new Dictionary<int, SignallingDebugWindow.TrackSectionCacheEntry>();
+	  SignallingDebugWindow.TrackSectionCacheEntry GetCacheEntry(Traveller position)
+        {
+            SignallingDebugWindow.TrackSectionCacheEntry rv;
+            if (Cache.TryGetValue(position.TrackNodeIndex, out rv) && (rv.Direction == position.Direction))
+                return rv;
+            Cache[position.TrackNodeIndex] = rv = new SignallingDebugWindow.TrackSectionCacheEntry()
+            {
+                Direction = position.Direction,
+                Length = 0,
+                Objects = new List<SignallingDebugWindow.TrackSectionObject>(),
+            };
+            var nodeIndex = position.TrackNodeIndex;
+            var trackNode = new Traveller(position);
+            while (true)
+            {
+                rv.Length += MaximumSectionDistance - trackNode.MoveInSection(MaximumSectionDistance);
+                if (!trackNode.NextSection())
+                    break;
+                if (trackNode.IsEnd)
+                    rv.Objects.Add(new SignallingDebugWindow.TrackSectionEndOfLine() { Distance = rv.Length });
+                else if (trackNode.IsJunction)
+                    rv.Objects.Add(new SignallingDebugWindow.TrackSectionSwitch() { Distance = rv.Length, TrackNode = trackNode.TN, NodeIndex = nodeIndex });
+                else
+                    rv.Objects.Add(new SignallingDebugWindow.TrackSectionObject() { Distance = rv.Length }); // Always have an object at the end.
+                if (trackNode.TrackNodeIndex != nodeIndex)
+                    break;
+            }
+            trackNode = new Traveller(position);
+            var distance = 0f;
+
+#if !NEW_SIGNALLING
+            while (true)
+            {
+                var signal = Program.Simulator.Signals.FindNearestSignal(trackNode);
+                if (signal.GetAspect() == SignalHead.SIGASP.UNKNOWN)
+                    break;
+                var signalDistance = signal.DistanceToSignal(trackNode);
+                if (signalDistance > 0)
+                {
+                    distance += signalDistance;
+                    trackNode.Move(signalDistance);
+                    if (trackNode.TrackNodeIndex != nodeIndex)
+                        break;
+                    rv.Objects.Add(new SignallingDebugWindow.TrackSectionSignal() { Distance = distance, Signal = signal });
+                }
+                // TODO: This is a massive hack because the current signalling code is useless at finding the next signal in the face of changing switches.
+                trackNode.Move(0.001f);
+            }
+#endif
+
+            rv.Objects = rv.Objects.OrderBy(tso => tso.Distance).ToList();
+            return rv;
+        }
+
+#if !NEW_SIGNALLING
+	    ORTS.Popups.TrackMonitorSignalAspect GetAspect(Signal signal)
+        {
+            var aspect = signal.GetAspect();
+            if (aspect >= SignalHead.SIGASP.CLEAR_1)
+                return ORTS.Popups.TrackMonitorSignalAspect.Clear;
+            if (aspect >= SignalHead.SIGASP.STOP_AND_PROCEED)
+                return ORTS.Popups.TrackMonitorSignalAspect.Warning;
+            return ORTS.Popups.TrackMonitorSignalAspect.Stop;
+        }
+#endif
+
+	   //draw the train path if it is within the window
+		public void DrawTrainPath(Train train, float subX, float subY, Pen pathPen, Graphics g, PointF scaledA, PointF scaledB, float stepDist, float MaximumSectionDistance)
+		{
+			if (DrawPath != true) return;
+			bool ok = false;
+			if (train == Program.Simulator.PlayerLocomotive.Train) ok = true;
+			if (MultiPlayer.MPManager.IsMultiPlayer())
+			{
+				if (MultiPlayer.MPManager.OnlineTrains.findTrain(train)) ok = true;
+			}
+			if (train.FirstCar != null & train.FirstCar.CarID.Contains("AI")) ok = true; //AI train
+			if (Math.Abs(train.SpeedMpS) > 0.001) ok = true;
+			if (ok == false) return;
+
+			var DisplayDistance = MaximumSectionDistance;
+			var position = train.MUDirection != Direction.Reverse ? new Traveller(train.FrontTDBTraveller) : new Traveller(train.RearTDBTraveller, Traveller.TravellerDirection.Backward);
+			var caches = new List<SignallingDebugWindow.TrackSectionCacheEntry>();
+			// Work backwards until we end up on a different track section.
+			var cacheNode = new Traveller(position);
+			cacheNode.ReverseDirection();
+			var initialNodeOffsetCount = 0;
+			while (cacheNode.TrackNodeIndex == position.TrackNodeIndex && cacheNode.NextSection())
+				initialNodeOffsetCount++;
+			// Now do it again, but don't go the last track section (because it is from a different track node).
+			cacheNode = new Traveller(position);
+			cacheNode.ReverseDirection();
+			for (var i = 1; i < initialNodeOffsetCount; i++)
+				cacheNode.NextSection();
+			// Push the location right up to the end of the section.
+			cacheNode.MoveInSection(MaximumSectionDistance);
+			// Now back facing the right way, calculate the distance to the train location.
+			cacheNode.ReverseDirection();
+			var initialNodeOffset = cacheNode.DistanceTo(position.TileX, position.TileZ, position.X, position.Y, position.Z);
+			// Go and collect all the cache entries for the visible range of vector nodes (straights, curves).
+			var totalDistance = 0f;
+			while (!cacheNode.IsEnd && totalDistance - initialNodeOffset < DisplayDistance)
+			{
+				if (cacheNode.IsTrack)
+				{
+					var cache = GetCacheEntry(cacheNode);
+					cache.Age = 0;
+					caches.Add(cache);
+					totalDistance += cache.Length;
+				}
+				var nodeIndex = cacheNode.TrackNodeIndex;
+				while (cacheNode.TrackNodeIndex == nodeIndex && cacheNode.NextSection()) ;
+			}
+
+			var switchErrorDistance = initialNodeOffset + DisplayDistance + SignalWarningDistance;
+			var signalErrorDistance = initialNodeOffset + DisplayDistance + SignalWarningDistance;
+			var currentDistance = 0f;
+			foreach (var cache in caches)
+			{
+				foreach (var obj in cache.Objects)
+				{
+					var objDistance = currentDistance + obj.Distance;
+					if (objDistance < initialNodeOffset)
+						continue;
+
+					var switchObj = obj as SignallingDebugWindow.TrackSectionSwitch;
+					var signalObj = obj as SignallingDebugWindow.TrackSectionSignal;
+					if (switchObj != null)
+					{
+						for (var pin = switchObj.TrackNode.Inpins; pin < switchObj.TrackNode.Inpins + switchObj.TrackNode.Outpins; pin++)
+						{
+							if (switchObj.TrackNode.TrPins[pin].Link == switchObj.NodeIndex)
+							{
+								if (pin - switchObj.TrackNode.Inpins != switchObj.TrackNode.TrJunctionNode.SelectedRoute)
+									switchErrorDistance = objDistance;
+								break;
+							}
+						}
+						if (switchErrorDistance < DisplayDistance)
+							break;
+					}
+#if !NEW_SIGNALLING
+					else if (signalObj != null)
+					{
+						if (GetAspect(signalObj.Signal) == ORTS.Popups.TrackMonitorSignalAspect.Stop)
+						{
+							signalErrorDistance = objDistance;
+							break;
+						}
+					}
+#endif
+				}
+				if (switchErrorDistance < DisplayDistance || signalErrorDistance < DisplayDistance)
+					break;
+				currentDistance += cache.Length;
+			}
+
+			var currentPosition = new Traveller(position);
+			currentPosition.Move(-initialNodeOffset);
+			currentDistance = 0;
+
+			foreach (var cache in caches)
+			{
+				var lastObjDistance = 0f;
+				foreach (var obj in cache.Objects)
+				{
+					var objDistance = currentDistance + obj.Distance;
+
+					for (var step = lastObjDistance; step < obj.Distance; step += DisplaySegmentLength)
+					{
+						var stepDistance = currentDistance + step;
+						var stepLength = DisplaySegmentLength > obj.Distance - step ? obj.Distance - step : DisplaySegmentLength;
+						var previousLocation = currentPosition.WorldLocation;
+						currentPosition.Move(stepLength);
+						if (stepDistance + stepLength >= initialNodeOffset && stepDistance <= initialNodeOffset + DisplayDistance)
+						{
+							var currentLocation = currentPosition.WorldLocation;
+							scaledA.X = (previousLocation.TileX * 2048 + previousLocation.Location.X - subX) * xScale; scaledA.Y = pictureBox1.Height - (previousLocation.TileZ * 2048 + previousLocation.Location.Z - subY) * yScale;
+							scaledB.X = (currentLocation.TileX * 2048 + currentLocation.Location.X - subX) * xScale; scaledB.Y = pictureBox1.Height - (currentPosition.TileZ * 2048 + currentPosition.Location.Z - subY) * yScale;
+							g.DrawLine(pathPen, scaledA, scaledB);
+						}
+					}
+					lastObjDistance = obj.Distance;
+
+					if (objDistance >= switchErrorDistance)
+						break;
+				}
+				currentDistance += cache.Length;
+				if (currentDistance >= switchErrorDistance)
+					break;
+
+			}
+
+			currentPosition = new Traveller(position);
+			currentPosition.Move(-initialNodeOffset);
+			currentDistance = 0;
+			foreach (var cache in caches)
+			{
+				var lastObjDistance = 0f;
+				foreach (var obj in cache.Objects)
+				{
+					currentPosition.Move(obj.Distance - lastObjDistance);
+					lastObjDistance = obj.Distance;
+
+					var objDistance = currentDistance + obj.Distance;
+					if (objDistance < initialNodeOffset || objDistance > initialNodeOffset + DisplayDistance)
+						continue;
+
+					var eolObj = obj as SignallingDebugWindow.TrackSectionEndOfLine;
+					var switchObj = obj as SignallingDebugWindow.TrackSectionSwitch;
+					var signalObj = obj as SignallingDebugWindow.TrackSectionSignal;
+
+					if (switchObj != null)
+					{
+						for (var pin = switchObj.TrackNode.Inpins; pin < switchObj.TrackNode.Inpins + switchObj.TrackNode.Outpins; pin++)
+						{
+							if (switchObj.TrackNode.TrPins[pin].Link == switchObj.NodeIndex && pin - switchObj.TrackNode.Inpins != switchObj.TrackNode.TrJunctionNode.SelectedRoute)
+							{
+								foreach (var sw in switchItemsDrawn)
+								{
+									if (sw.Item.TrJunctionNode == switchObj.TrackNode.TrJunctionNode)
+									{
+										var r = 6 * greenPen.Width;
+										g.DrawLine(pathPen, new PointF(sw.Location2D.X - r, sw.Location2D.Y - r), new PointF(sw.Location2D.X + r, sw.Location2D.Y + r));
+										g.DrawLine(pathPen, new PointF(sw.Location2D.X - r, sw.Location2D.Y + r), new PointF(sw.Location2D.X + r, sw.Location2D.Y - r));
+										break;
+									}
+								}
+							}
+						}
+					}
+
+					if (objDistance >= switchErrorDistance)
+						break;
+				}
+				currentDistance += cache.Length;
+				if (currentDistance >= switchErrorDistance)
+					break;
+			}
+			// Clean up any cache entries who haven't been using for 30 seconds.
+			var oldCaches = Cache.Where(kvp => kvp.Value.Age > 30 * 4).ToArray();
+			foreach (var oldCache in oldCaches)
+				Cache.Remove(oldCache.Key);
+
+		}
+	  #endregion
+
+		/// <summary>
       /// Generates a rectangle representing a dot being drawn.
       /// </summary>
       /// <param name="p">Center point of the dot, in pixels.</param>
@@ -912,6 +1400,7 @@ namespace ORTS.Debugging
 
       private void refreshButton_Click(object sender, EventArgs e)
       {
+		  followTrain = false;
 		  firstShow = true;
          GenerateView();
       }
@@ -967,13 +1456,20 @@ namespace ORTS.Debugging
 	  private void rmvButton_Click(object sender, EventArgs e)
 	  {
 		  if (!MultiPlayer.MPManager.IsServer()) return;
+		  AvatarView.SelectedIndices.Remove(0);//remove myself is not possible.
 		  var chosen = AvatarView.SelectedItems;
 		  if (chosen.Count > 0)
 		  {
 			  for (var i =0; i < chosen.Count; i++)
 			  {
 				  var tmp = chosen[i];
-				  MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGMessage(tmp.Text, "Error", "Sorry the server has removed you")).ToString());
+				  var name = (tmp.Text.Split(' '))[0];//the name may have (H) in it, need to filter that out
+				  if (MultiPlayer.MPManager.OnlineTrains.Players.ContainsKey(name))
+				  {
+					  MultiPlayer.MPManager.OnlineTrains.Players[name].status = MultiPlayer.OnlinePlayer.Status.Removed;
+					  MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGMessage(name, "Error", "Sorry the server has removed you")).ToString());
+
+				  }
 			  }
 		  }
 
@@ -1043,15 +1539,29 @@ namespace ORTS.Debugging
 			  Zooming = false;
 		  }
 
-		  if (LeftClick == false)
-		  {
-			  if (LastCursorPosition.X == e.X && LastCursorPosition.Y == e.Y)
-			  {
-				  var temp = findItemFromMouse(e.X, e.Y, 5);
-				  if (temp != null)
-				  {
-					  if (temp is SwitchWidget) switchPickedItem = (SwitchWidget)temp; //read by MPManager
-					  if (temp is SignalWidget) signalPickedItem = (SignalWidget)temp;
+          if ((Control.ModifierKeys & Keys.Shift) == Keys.Shift)
+          {
+              PictureMoveAndZoomInOut(e.X, e.Y, 1200);
+          }
+          else if ((Control.ModifierKeys & Keys.Alt) == Keys.Alt)
+          {
+              PictureMoveAndZoomInOut(e.X, e.Y, 30000);
+          }
+          else if ((Control.ModifierKeys & Keys.Control) == Keys.Control)
+          {
+              PictureMoveAndZoomInOut(e.X, e.Y, windowSizeUpDown.Maximum);
+          }
+          else if (LeftClick == false)
+          {
+              if (LastCursorPosition.X == e.X && LastCursorPosition.Y == e.Y)
+              {
+                  var range = 5 * (int)xScale; if (range > 10) range = 10;
+                  var temp = findItemFromMouse(e.X, e.Y, range);
+                  if (temp != null)
+                  {
+                      //GenerateView();
+                      if (temp is SwitchWidget) { switchPickedItem = (SwitchWidget)temp; signalPickedItem = null; HandlePickedSwitch(); }
+                      if (temp is SignalWidget) { signalPickedItem = (SignalWidget)temp; switchPickedItem = null; HandlePickedSignal(); }
 #if false
 					  pictureBox1.ContextMenu.Show(pictureBox1, e.Location);
 					  pictureBox1.ContextMenu.MenuItems[0].Checked = pictureBox1.ContextMenu.MenuItems[1].Checked = false;
@@ -1061,11 +1571,11 @@ namespace ORTS.Debugging
 						  else pictureBox1.ContextMenu.MenuItems[1].Checked = true;
 					  }
 #endif
-				  }
-				  else { switchPickedItem = null; signalPickedItem = null; }
-			  }
+                  }
+                  else { switchPickedItem = null; signalPickedItem = null; UnHandleItemPick(); PickedTrain = null; }
+              }
 
-		  }
+          }
 
 	  }
 #if false
@@ -1102,27 +1612,126 @@ namespace ORTS.Debugging
 	  }
 #endif
 
-	  private ItemWidget findItemFromMouse(int x, int y, int range)
+	  private void UnHandleItemPick()
 	  {
-		  foreach (var item in switchItemsDrawn)
+		  boxSetSignal.Visible = false;
+		  //boxSetSignal.Enabled = false;
+		  //boxSetSwitch.Enabled = false;
+		  boxSetSwitch.Visible = false;
+	  }
+	  private void HandlePickedSignal()
+	  {
+		  if (MultiPlayer.MPManager.IsClient() && !MultiPlayer.MPManager.Instance().AmAider) return;//normal client not server or aider
+		  //boxSetSwitch.Enabled = false;
+		  boxSetSwitch.Visible = false;
+		  if (signalPickedItem == null) return;
+		  var y = LastCursorPosition.Y;
+		  if (LastCursorPosition.Y < 100) y = 100;
+		  if (LastCursorPosition.Y > pictureBox1.Size.Height - 100) y = pictureBox1.Size.Height - 100;
+		  boxSetSignal.Location = new System.Drawing.Point(LastCursorPosition.X + 2, y);
+		  boxSetSignal.Enabled = true;
+		  boxSetSignal.Focus();
+		  boxSetSignal.SelectedIndex = -1;
+		  boxSetSignal.Visible = true;
+		  return;
+	  }
+
+	  private void HandlePickedSwitch()
+	  {
+		  if (MultiPlayer.MPManager.IsClient() && !MultiPlayer.MPManager.Instance().AmAider) return;//normal client not server
+		  //boxSetSignal.Enabled = false;
+		  boxSetSignal.Visible = false;
+		  if (switchPickedItem == null) return;
+		  var y = LastCursorPosition.Y + 100;
+		  if (y < 140) y = 140;
+		  if (y > pictureBox1.Size.Height + 100) y = pictureBox1.Size.Height + 100;
+		  boxSetSwitch.Location = new System.Drawing.Point(LastCursorPosition.X + 2, y);
+		  boxSetSwitch.Enabled = true;
+		  boxSetSwitch.Focus();
+		  boxSetSwitch.SelectedIndex = -1;
+		  boxSetSwitch.Visible = true;
+		  return;
+	  }
+
+	   private ItemWidget findItemFromMouse(int x, int y, int range)
+	  {
+		  if (range < 5) range = 5;
+		  double closest = float.NaN;
+		  ItemWidget closestItem = null;
+		  if (chkPickSwitches.Checked == true)
 		  {
-			  //if out of range, continue
-			  if (item.Location2D.X < x - range || item.Location2D.X > x + range
-				 || item.Location2D.Y < y - range || item.Location2D.Y > y + range) continue;
+			  foreach (var item in switchItemsDrawn)
+			  {
+				  //if out of range, continue
+				  if (item.Location2D.X < x - range || item.Location2D.X > x + range
+					 || item.Location2D.Y < y - range || item.Location2D.Y > y + range) continue;
 
-			  if (true/*item != switchPickedItem*/) { switchPickedItemChanged = true; switchPickedItemHandled = false; switchPickedTime = simulator.GameTime; }
-			  return item;
+				  if (closestItem != null)
+				  {
+					  var dist = Math.Pow(item.Location2D.X - closestItem.Location2D.X, 2) + Math.Pow(item.Location2D.Y - closestItem.Location2D.Y, 2);
+					  if (dist < closest)
+					  {
+						  closest = dist; closestItem = item;
+					  }
+				  }
+				  else closestItem = item;
+			  }
+			  if (closestItem != null) { switchPickedTime = simulator.GameTime; return closestItem; }
 		  }
-		  foreach (var item in signalItemsDrawn)
+		  if (chkPickSignals.Checked == true)
 		  {
-			  //if out of range, continue
-			  if (item.Location2D.X < x - range || item.Location2D.X > x + range
-				 || item.Location2D.Y < y - range || item.Location2D.Y > y + range) continue;
+			  foreach (var item in signalItemsDrawn)
+			  {
+				  //if out of range, continue
+				  if (item.Location2D.X < x - range || item.Location2D.X > x + range
+					 || item.Location2D.Y < y - range || item.Location2D.Y > y + range) continue;
 
-			  if (true/*item != signalPickedItem*/) { signalPickedItemChanged = true; signalPickedItemHandled = false; signalPickedTime = simulator.GameTime; }
-			  return item;
+				  if (closestItem != null)
+				  {
+					  var dist = Math.Pow(item.Location2D.X - closestItem.Location2D.X, 2) + Math.Pow(item.Location2D.Y - closestItem.Location2D.Y, 2);
+					  if (dist < closest)
+					  {
+						  closest = dist; closestItem = item;
+					  }
+				  }
+				  else closestItem = item;
+			  }
+			  if (closestItem != null) { switchPickedTime = simulator.GameTime; return closestItem; }
 		  }
 
+		   //now check for trains (first car only)
+		  TrainCar firstCar;
+		  PickedTrain = null;  float tX, tY;
+		  closest = 100f;
+
+		  foreach (var t in Program.Simulator.Trains)
+		  {
+			  firstCar = null;
+			  if (t.LeadLocomotive != null)
+			  {
+				  worldPos = t.LeadLocomotive.WorldPosition;
+				  firstCar = t.LeadLocomotive;
+			  }
+			  else if (t.Cars != null && t.Cars.Count > 0)
+			  {
+				  worldPos = t.Cars[0].WorldPosition;
+				  firstCar = t.Cars[0];
+
+			  }
+			  else continue;
+
+			  worldPos = firstCar.WorldPosition;
+			  tX = (worldPos.TileX * 2048 + worldPos.Location.X - subX) * xScale; tY = pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - subY) * yScale;
+
+			  if (tX < x - range || tX > x + range || tY < y - range || tY > y + range) continue;
+			  if (PickedTrain == null) PickedTrain = t;
+		  }
+		   //if a train is picked, will clear the avatar list selection
+		  if (PickedTrain != null)
+		  {
+			  AvatarView.SelectedItems.Clear();
+			  return new TrainWidget(PickedTrain);
+		  }
 		  return null;
 	  }
 
@@ -1164,6 +1773,8 @@ namespace ORTS.Debugging
 					  messages.Items.RemoveAt(0);
 				  }
 				  messages.Items.Add(msg);
+				  messages.SelectedIndex = messages.Items.Count - 1;
+				  messages.SelectedIndex = -1;
 				  break;
 			  }
 			  catch { count++; }
@@ -1248,7 +1859,9 @@ namespace ORTS.Debugging
 
 	  private void chkAllowUserSwitch_CheckedChanged(object sender, EventArgs e)
 	  {
-		  MultiPlayer.MPManager.Instance().ClientAllowedSwitch = chkAllowUserSwitch.Checked;
+		  MultiPlayer.MPManager.AllowedManualSwitch = chkAllowUserSwitch.Checked;
+          if (chkAllowUserSwitch.Checked == true) { MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGMessage("All", "SwitchOK", "OK to switch")).ToString()); }
+          else { MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGMessage("All", "SwitchWarning", "Cannot switch")).ToString()); }
 	  }
 
 	  private void chkShowAvatars_CheckedChanged(object sender, EventArgs e)
@@ -1256,6 +1869,8 @@ namespace ORTS.Debugging
 		  Program.Simulator.Settings.ShowAvatar = chkShowAvatars.Checked;
 		  AvatarView.Items.Clear();
 		  if (avatarList != null) avatarList.Clear();
+		  if (chkShowAvatars.Checked) AvatarView.Font = new Font(FontFamily.GenericSansSerif, 12);
+		  else AvatarView.Font = new Font(FontFamily.GenericSansSerif, 16);
 		  try { CheckAvatar(); }
 		  catch { }
 	  }
@@ -1446,8 +2061,9 @@ namespace ORTS.Debugging
 			  var chosen = this.AvatarView.SelectedItems;
 			  for (var i = 0; i < chosen.Count; i++)
 			  {
-				  if (chosen[i].Text == MultiPlayer.MPManager.GetUserName()) continue;
-				  user += chosen[i].Text + "\r";
+				  var name = chosen[i].Text.Split(' ')[0]; //text may have (H) in it, so need to filter out
+				  if (name == MultiPlayer.MPManager.GetUserName()) continue;
+				  user += name + "\r";
 			  }
 			  user += "0END";
 
@@ -1471,11 +2087,237 @@ namespace ORTS.Debugging
 		  messages.SelectedItems.Clear();
 		  reply2Selected.Enabled = false;
 		  if (MSG.Enabled == true) msgSelected.Enabled = true;
+		  if (AvatarView.SelectedItems.Count <= 0) return;
+		  var name = AvatarView.SelectedItems[0].Text.Split(' ')[0].Trim();
+		  if (name == MultiPlayer.MPManager.GetUserName())
+		  {
+			  if (Program.Simulator.PlayerLocomotive != null) PickedTrain = Program.Simulator.PlayerLocomotive.Train;
+			  else if (Program.Simulator.Trains.Count > 0) PickedTrain = Program.Simulator.Trains[0];
+		  }
+		  else PickedTrain = MultiPlayer.MPManager.OnlineTrains.findTrain(name);
 
 	  }
 
+	  private void chkDrawPathChanged(object sender, EventArgs e)
+	  {
+		  this.DrawPath = chkDrawPath.Checked;
+	  }
+
+	  private void boxSetSignalChosen(object sender, EventArgs e)
+	  {
+		  if (signalPickedItem == null)
+		  {
+			  UnHandleItemPick(); return;
+		  }
+		  var signal = signalPickedItem.Signal;
+		  var type = boxSetSignal.SelectedIndex;
+		  if (MultiPlayer.MPManager.Instance().AmAider)
+		  {
+			  MultiPlayer.MPManager.Notify((new MultiPlayer.MSGSignalChange(signal, type)).ToString());
+			  UnHandleItemPick();
+			  return;
+		  }
+		  switch (type)
+		  {
+			  case 0:
+                  signal.clearHoldSignalDispatcher();
+#if !NEW_SIGNALLING
+				  signal.canUpdate = true;
+				  signal.forcedTime = 0;
+#endif
+				  break;
+			  case 1:
+                  signal.requestHoldSignalDispatcher(true);
+#if !NEW_SIGNALLING
+				  signal.enabled = false;
+				  signal.canUpdate = false;
+				  //signal.forcedTime = Program.Simulator.GameTime;
+				  foreach (var head in signal.SignalHeads)
+				  {
+					  head.SetMostRestrictiveAspect();
+					  head.Update();
+				  }
+				  signal.forcedTime = Program.Simulator.GameTime;
+#endif
+				  break;
+			  case 2:
+                  signal.holdState = SignalObject.HOLDSTATE.MANUAL_APPROACH;
+                  foreach (var sigHead in signal.SignalHeads)
+                  {
+                      var drawstate1 = sigHead.def_draw_state(SignalHead.SIGASP.APPROACH_1);
+                      var drawstate2 = sigHead.def_draw_state(SignalHead.SIGASP.APPROACH_2);
+                      var drawstate3 = sigHead.def_draw_state(SignalHead.SIGASP.APPROACH_3);
+                      if (drawstate1 > 0) { sigHead.state = SignalHead.SIGASP.APPROACH_1; }
+                      else if (drawstate2 > 0) { sigHead.state = SignalHead.SIGASP.APPROACH_2; }
+                      else { sigHead.state = SignalHead.SIGASP.APPROACH_3; }
+                      sigHead.draw_state = sigHead.def_draw_state(sigHead.state);
+                  }
+
+#if !NEW_SIGNALLING
+				  signal.canUpdate = false;
+				  //signal.
+				  foreach (var head in signal.SignalHeads)
+				  {
+					  //first try to set as approach, if not defined, set as the least
+					  var drawstate1 = head.def_draw_state(SignalHead.SIGASP.APPROACH_1);
+					  var drawstate2 = head.def_draw_state(SignalHead.SIGASP.APPROACH_2);
+					  var drawstate3 = head.def_draw_state(SignalHead.SIGASP.APPROACH_3);
+					  if (drawstate1 > 0) { head.state = SignalHead.SIGASP.APPROACH_1; }
+					  else if (drawstate2 > 0) { head.state = SignalHead.SIGASP.APPROACH_2; }
+					  else { head.state = SignalHead.SIGASP.APPROACH_3; }
+					  head.draw_state = head.def_draw_state(head.state);
+				  }
+				  signal.forcedTime = Program.Simulator.GameTime;
+#endif
+				  break;
+			  case 3:
+                  signal.holdState = SignalObject.HOLDSTATE.MANUAL_PASS;
+                  foreach (var sigHead in signal.SignalHeads)
+                  {
+                      sigHead.SetLeastRestrictiveAspect();
+                      sigHead.draw_state = sigHead.def_draw_state(sigHead.state);
+                  }
+#if !NEW_SIGNALLING
+				  signal.canUpdate = false;
+				  signal.enabled = true; //force it to be green,
+				  //signal.
+				  foreach (var head in signal.SignalHeads)
+				  {
+					  head.SetLeastRestrictiveAspect();
+					  head.draw_state = head.def_draw_state(head.state);
+				  }
+				  signal.forcedTime = Program.Simulator.GameTime;
+#endif
+				  break;
+		  }
+		  UnHandleItemPick();
+	  }
+
+	  private void boxSetSwitchChosen(object sender, EventArgs e)
+	  {
+		  if (switchPickedItem == null)
+		  {
+			  UnHandleItemPick(); return;
+		  }
+		  var sw = switchPickedItem.Item.TrJunctionNode;
+		  var type = boxSetSwitch.SelectedIndex;
+
+		  //aider can send message to the server for a switch
+		  if (MultiPlayer.MPManager.IsMultiPlayer() && MultiPlayer.MPManager.Instance().AmAider)
+		  {
+			  var nextSwitchTrack = sw;
+			  var Selected = 0;
+			  switch (type)
+			  {
+				  case 0:
+					  Selected = (int)switchPickedItem.main;
+					  break;
+				  case 1:
+					  Selected = 1 - (int)switchPickedItem.main;
+					  break;
+			  }
+			  //aider selects and throws the switch, but need to confirm by the dispatcher
+			  MultiPlayer.MPManager.Notify((new MultiPlayer.MSGSwitch(MultiPlayer.MPManager.GetUserName(),
+				  nextSwitchTrack.TN.UiD.WorldTileX, nextSwitchTrack.TN.UiD.WorldTileZ, nextSwitchTrack.TN.UiD.WorldID, Selected, true)).ToString());
+			  Program.Simulator.Confirmer.Information("Switching Request Sent to the Server");
+
+		  }
+		  //server throws the switch immediately
+		  else
+		  {
+			  switch (type)
+			  {
+				  case 0:
+                      Program.Simulator.Signals.RequestSetSwitch(sw.TN, (int)switchPickedItem.main);
+					  //sw.SelectedRoute = (int)switchPickedItem.main;
+					  break;
+				  case 1:
+                      Program.Simulator.Signals.RequestSetSwitch(sw.TN, 1 - (int)switchPickedItem.main);
+                      //sw.SelectedRoute = 1 - (int)switchPickedItem.main;
+					  break;
+			  }
+		  }
+		  UnHandleItemPick();
+
+	  }
+
+	  private void chkAllowNewCheck(object sender, EventArgs e)
+	  {
+		  MultiPlayer.MPManager.Instance().AllowNewPlayer = chkAllowNew.Checked;
+	  }
+
+	  private void AssistClick(object sender, EventArgs e)
+	  {
+		  AvatarView.SelectedIndices.Remove(0);
+		  if (AvatarView.SelectedIndices.Count > 0)
+		  {
+			  var tmp = AvatarView.SelectedItems[0].Text.Split(' ');
+			  var name = tmp[0].Trim();
+			  if (MultiPlayer.MPManager.Instance().aiderList.Contains(name)) return;
+			  if (MultiPlayer.MPManager.OnlineTrains.Players.ContainsKey(name))
+			  {
+				  MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGAider(name, true)).ToString());
+				  MultiPlayer.MPManager.Instance().aiderList.Add(name);
+			  }
+			  AvatarView.Items.Clear();
+			  if (avatarList != null) avatarList.Clear();
+		  }
+	  }
+
+	  private void btnNormalClick(object sender, EventArgs e)
+	  {
+		  if (AvatarView.SelectedIndices.Count > 0)
+		  {
+			  var tmp = AvatarView.SelectedItems[0].Text.Split(' ');
+			  var name = tmp[0].Trim();
+			  if (MultiPlayer.MPManager.OnlineTrains.Players.ContainsKey(name))
+			  {
+				  MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGAider(name, false)).ToString());
+				  MultiPlayer.MPManager.Instance().aiderList.Remove(name);
+			  }
+			  AvatarView.Items.Clear();
+			  if (avatarList != null) avatarList.Clear();
+		  }
+
+	  }
+
+	  private void btnFollowClick(object sender, EventArgs e)
+	  {
+		  followTrain = true;
+	  }
+
+	  private void chkOPenaltyHandle(object sender, EventArgs e)
+	  {
+		  MultiPlayer.MPManager.Instance().CheckSpad = chkBoxPenalty.Checked;
+		  if (this.chkBoxPenalty.Checked == false) { MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGMessage("All", "OverSpeedOK", "OK to go overspeed and pass stop light")).ToString()); }
+		  else { MultiPlayer.MPManager.BroadCast((new MultiPlayer.MSGMessage("All", "NoOverSpeed", "Penalty for overspeed and passing stop light")).ToString()); }
+
+	  }
+
+	  private void chkPreferGreenHandle(object sender, EventArgs e)
+	  {
+		  MultiPlayer.MPManager.PreferGreen = chkBoxPenalty.Checked;
+
+	  }
+
+	   public bool ClickedTrain = false;
+	  private void btnSeeInGameClick(object sender, EventArgs e)
+	  {
+		  if (PickedTrain != null) ClickedTrain = true;
+		  else ClickedTrain = false;
+	  }
+
+      private void PictureMoveAndZoomInOut(int x, int y, decimal scale)
+      {
+          int diffX = x -pictureBox1.Width/2;
+          int diffY = y -pictureBox1.Height/2;
+          ViewWindow.Offset(diffX / xScale, -diffY/yScale);
+          windowSizeUpDown.Value = scale;
+          GenerateView();
+      }
    }
 
+   #region SignalWidget
    /// <summary>
    /// Defines a signal being drawn in a 2D view.
    /// </summary>
@@ -1527,8 +2369,7 @@ namespace ORTS.Debugging
 		   Item = item;
 		   Signal = signal;
 		   hasDir = false;
-		   Location = new PointF(item.TileX * 2048 + item.X, item.TileZ * 2048 + item.Z);
-		   Location2D = new PointF(float.NegativeInfinity, float.NegativeInfinity);
+		   Location.X = item.TileX * 2048 + item.X; Location.Y = item.TileZ * 2048 + item.Z;
 		   try
 		   {
 			   var node = Program.Simulator.TDB.TrackDB.TrackNodes[signal.trackNode];
@@ -1536,16 +2377,22 @@ namespace ORTS.Debugging
 			   if (node.TrVectorNode != null) { var ts = node.TrVectorNode.TrVectorSections[0]; v2 = new Vector2(ts.TileX * 2048 + ts.X, ts.TileZ * 2048 + ts.Z); }
 			   else if (node.TrJunctionNode != null) { var ts = node.UiD; v2 = new Vector2(ts.TileX * 2048 + ts.X, ts.TileZ * 2048 + ts.Z); }
 			   else throw new Exception();
-			   var v1 = new Vector2(Location.X, Location.Y); var v3 = v1 - v2; v3.Normalize(); v2 = v1 - Vector2.Multiply(v3, signal.direction == 0 ? 10f : -10f);
+			   var v1 = new Vector2(Location.X, Location.Y); var v3 = v1 - v2; v3.Normalize(); v2 = v1 - Vector2.Multiply(v3, signal.direction == 0 ? 12f : -12f);
 			   Dir.X = v2.X; Dir.Y = v2.Y;
+               v2 = v1 - Vector2.Multiply(v3, signal.direction == 0 ? 1.5f : -1.5f);//shift signal along the dir for 2m, so signals will not be overlapped
+               Location.X = v2.X; Location.Y = v2.Y;
 			   hasDir = true;
+#if !NEW_SIGNALLING
 			   var pos = signal.WorldObject.Position;
 			   if (pos != null) { Location.X = item.TileX * 2048 + pos.X; Location.Y = item.TileZ * 2048 + pos.Z; }
+#endif
 		   }
 		   catch {  }
 	   }
    }
+   #endregion
 
+   #region SwitchWidget
    /// <summary>
    /// Defines a signal being drawn in a 2D view.
    /// </summary>
@@ -1591,11 +2438,13 @@ namespace ORTS.Debugging
 		   }
 		   catch { mainEnd = null; }
 #endif
-		   Location = new PointF(Item.UiD.TileX * 2048 + Item.UiD.X, Item.UiD.TileZ * 2048 + Item.UiD.Z);
-		   Location2D = new PointF(float.NegativeInfinity, float.NegativeInfinity);
+		   Location.X = Item.UiD.TileX * 2048 + Item.UiD.X; Location.Y = Item.UiD.TileZ * 2048 + Item.UiD.Z;
 	   }
    }
 
+   #endregion
+
+   #region BufferWidget
    public class BufferWidget : ItemWidget
    {
 	   public TrackNode Item;
@@ -1609,11 +2458,12 @@ namespace ORTS.Debugging
 	   {
 		   Item = item;
 
-		   Location = new PointF(Item.UiD.TileX * 2048 + Item.UiD.X, Item.UiD.TileZ * 2048 + Item.UiD.Z);
-		   Location2D = new PointF(float.NegativeInfinity, float.NegativeInfinity);
+		   Location.X = Item.UiD.TileX * 2048 + Item.UiD.X; Location.Y = Item.UiD.TileZ * 2048 + Item.UiD.Z;
 	   }
    }
+   #endregion
 
+   #region ItemWidget
    public class ItemWidget
    {
 	   public PointF Location;
@@ -1631,7 +2481,25 @@ namespace ORTS.Debugging
 	   }
 
    }
+   #endregion
 
+   #region TrainWidget
+   public class TrainWidget : ItemWidget
+   {
+	   public Train Train;
+
+	   /// <summary>
+	   /// 
+	   /// </summary>
+	   /// <param name="item"></param>
+	   public TrainWidget(Train t)
+	   {
+		   Train = t;
+	   }
+
+   }
+   #endregion
+   #region LineSegment
    /// <summary>
    /// Defines a geometric line segment.
    /// </summary>
@@ -1645,7 +2513,7 @@ namespace ORTS.Debugging
 
 	   public float angle1, angle2;
 	   //public SectionCurve curve = null;
-
+       //public TrVectorSection MySection;
 	   public LineSegment(dVector A, dVector B, bool Occupied, TrVectorSection Section)
 	   {
 		   this.A = A;
@@ -1653,7 +2521,7 @@ namespace ORTS.Debugging
 
 		   isCurved = false; 
 		   if (Section == null) return;
-
+           //MySection = Section;
 		   
 		   uint k = Section.SectionIndex;
 		   TrackSection ts = Program.Simulator.TSectionDat.TrackSections.Get(k);
@@ -1679,6 +2547,10 @@ namespace ORTS.Debugging
 
 	   }
    }
+
+   #endregion
+
+   #region SidingWidget
 
    /// <summary>
    /// Defines a siding name being drawn in a 2D view.
@@ -1706,6 +2578,7 @@ namespace ORTS.Debugging
 		   Location = new PointF(item.TileX * 2048 + item.X, item.TileZ * 2048 + item.Z);
 	   }
    }
+   #endregion
 
    public class dVector
    {

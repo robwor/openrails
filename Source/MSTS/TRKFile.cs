@@ -1,7 +1,19 @@
-﻿/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -70,6 +82,11 @@ namespace MSTS
 				new STFReader.TokenProcessor("electrified", ()=>{ Electrified = stf.ReadBoolBlock(false); }),
                 new STFReader.TokenProcessor("overheadwireheight", ()=>{ OverheadWireHeight = stf.ReadDoubleBlock(STFReader.UNITS.None, 6.0);}),
  				new STFReader.TokenProcessor("speedlimit", ()=>{ SpeedLimit = stf.ReadDoubleBlock(STFReader.UNITS.None, 500.0); }),
+                new STFReader.TokenProcessor("defaultcrossingsms", ()=>{ DefaultCrossingSMS = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("defaultcoaltowersms", ()=>{ DefaultCoalTowerSMS = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("defaultdieseltowersms", ()=>{ DefaultDieselTowerSMS = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("defaultwatertowersms", ()=>{ DefaultWaterTowerSMS = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("defaultsignalsms", ()=>{ DefaultSignalSMS = stf.ReadStringBlock(null); }),
            });
             //TODO This should be changed to STFException.TraceError() with defaults values created
             if (RouteID == null) throw new STFException(stf, "Missing RouteID");
@@ -89,7 +106,12 @@ namespace MSTS
 		public bool Electrified = true;
 		public double OverheadWireHeight = 6.0;
 		public double SpeedLimit = 500.0f; //global speed limit m/s.
-	}
+        public string DefaultCrossingSMS;
+        public string DefaultCoalTowerSMS;
+        public string DefaultDieselTowerSMS;
+        public string DefaultWaterTowerSMS;
+        public string DefaultSignalSMS;
+    }
 
 
     public class RouteStart

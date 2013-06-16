@@ -1,10 +1,20 @@
-﻿// COPYRIGHT 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
@@ -16,6 +26,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ORTS.Common;
 
 namespace ORTS.Popups
 {
@@ -137,7 +148,7 @@ namespace ORTS.Popups
                 table.Cells = newCells;
             }
             Debug.Assert(!format.Contains('\n'), "HUD table cells must not contain newlines. Use the table positioning instead.");
-            table.Cells[cellRow, cellColumn] = String.Format(format, args);
+            table.Cells[cellRow, cellColumn] = args.Length > 0 ? String.Format(format, args) : format;
         }
 
         void TableSetCells(TableData table, int startColumn, params string[] columns)
@@ -184,9 +195,17 @@ namespace ORTS.Popups
             var bunched = !stretched && playerTrain.Cars.Count > 1 && playerTrain.NPush == playerTrain.Cars.Count - 1;
 
             TableSetLabelValueColumns(table, 0, 2);
-            TableAddLabelValue(table, "Version", Program.Version.Length > 0 ? Program.Version : Program.Build);
+            TableAddLabelValue(table, "Version", VersionInfo.Version.Length > 0 ? VersionInfo.Version : VersionInfo.Build);
             TableAddLabelValue(table, "Time", InfoDisplay.FormattedTime(Viewer.Simulator.ClockTime));
+            if (Viewer.IsReplaying)
+            {
+                TableAddLabelValue(table, "Replay", InfoDisplay.FormattedTime(Viewer.Log.ReplayEndsAt - Viewer.Simulator.ClockTime));
+            }
+#if !NEW_SIGNALLING
             TableAddLabelValue(table, "Speed", TrackMonitorWindow.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+#else
+            TableAddLabelValue(table, "Speed", FormatStrings.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+#endif
             TableAddLabelValue(table, "Direction", showMUReverser ? "{1:F0} {0}" : "{0}", Viewer.PlayerLocomotive.Direction, Math.Abs(playerTrain.MUReverserPercent));
             TableAddLabelValue(table, "Throttle", "{0:F0}%", Viewer.PlayerLocomotive.ThrottlePercent);
             TableAddLabelValue(table, "Train brake", "{0}", Viewer.PlayerLocomotive.GetTrainBrakeStatus());
@@ -219,6 +238,7 @@ namespace ORTS.Popups
             TableAddLine(table);
             TableAddLabelValue(table, "FPS", "{0:F0}", Viewer.RenderProcess.FrameRate.SmoothedValue);
             TableAddLine(table);
+#if !NEW_SIGNALLING
             locomotiveStatus = Viewer.Simulator.AI.GetStatus();
             if (locomotiveStatus != null)
             {
@@ -227,6 +247,7 @@ namespace ORTS.Popups
                     if (line.Length > 0)
                         TableAddLine(table, line);
             }
+#endif
             if (Viewer.PlayerLocomotive.WheelSlip)
                 TableAddLine(table, "Wheel slip");
             else if ((mstsLocomotive != null) && mstsLocomotive.LocomotiveAxle.IsWheelSlipWarning)
@@ -234,15 +255,13 @@ namespace ORTS.Popups
             if (Viewer.PlayerLocomotive.GetSanderOn())
                 TableAddLine(table, "Sander on");
 
-			if (MultiPlayer.MPManager.IsMultiPlayer())
-			{
-				TableAddLine(table, "MultiPlayer Status");
-				var text = MultiPlayer.MPManager.Instance().GetOnlineUsersInfo();
-				string[] temp = text.Split('\t');
-				foreach(string t in temp) TableAddLabelValue(table, "", "{0}", t);
-
-
-			}
+            if (MultiPlayer.MPManager.IsMultiPlayer())
+            {
+                TableAddLine(table, "MultiPlayer Status");
+                var text = MultiPlayer.MPManager.Instance().GetOnlineUsersInfo();
+                var temp = text.Split('\t');
+                foreach (var t in temp) TableAddLabelValue(table, "", "{0}", t);
+            }
         }
 
         void TextPageBrakeInfo(TableData table)
@@ -271,7 +290,7 @@ namespace ORTS.Popups
             var mstsLocomotive = Viewer.PlayerLocomotive as MSTSLocomotive;
             if (mstsLocomotive != null)
             {
-                if ((mstsLocomotive.Simulator.UseAdvancedAdhesion)&&(!mstsLocomotive.AntiSlip))
+                if ((mstsLocomotive.Simulator.UseAdvancedAdhesion) && (!mstsLocomotive.AntiSlip))
                 {
                     TableAddLabelValue(table, "Wheel slip", "{0:F0}% ({1:F0}%/s)", mstsLocomotive.LocomotiveAxle.SlipSpeedPercent, mstsLocomotive.LocomotiveAxle.SlipDerivationPercentpS);
                     TableAddLabelValue(table, "Axle drive force", "{0:F0} N", mstsLocomotive.LocomotiveAxle.DriveForceN);
@@ -317,15 +336,41 @@ namespace ORTS.Popups
         {
             TextPageHeading(table, "DISPATCHER INFORMATION");
 
+#if NEW_SIGNALLING
+            TableSetCells(table, 0, "Train", "Travelled", "Speed", "Max", "AI mode", "AI data", "Mode", "Auth", "Distance", "Signal", "Distance", "Consist", "Path");
+#else	    
             TableSetCells(table, 0, "Train", "Speed", "Signal aspect", "", "Distance", "Path");
+#endif
             TableAddLine(table);
 
+#if !NEW_SIGNALLING
             foreach (var auth in Viewer.Simulator.AI.Dispatcher.TrackAuthorities)
             {
                 var status = auth.GetStatus();
                 TableSetCells(table, 0, status.TrainID.ToString(), TrackMonitorWindow.FormatSpeed(status.Train.SpeedMpS, Viewer.MilepostUnitsMetric), status.Train.GetNextSignalAspect().ToString(), "", TrackMonitorWindow.FormatDistance(status.Train.distanceToSignal, Viewer.MilepostUnitsMetric), status.Path);
                 TableAddLine(table);
             }
+#else
+            foreach (var thisTrain in Viewer.Simulator.Trains)
+            {
+                if (thisTrain.TrainType == Train.TRAINTYPE.PLAYER)
+                {
+                    var status = thisTrain.GetStatus(Viewer.MilepostUnitsMetric);
+                    for (var iCell = 0; iCell < status.Length; iCell++)
+                        TableSetCell(table, table.CurrentRow, iCell, status[iCell]);
+                    TableAddLine(table);
+                }
+            }
+
+            foreach (var thisTrain in Viewer.Simulator.AI.AITrains)
+            {
+                var status = thisTrain.GetStatus(Viewer.MilepostUnitsMetric);
+                status = thisTrain.AddMovementState(status, Viewer.MilepostUnitsMetric);
+                for (var iCell = 0; iCell < status.Length; iCell++)
+                    TableSetCell(table, table.CurrentRow, iCell, status[iCell]);
+                TableAddLine(table);
+            }
+#endif
         }
 
         void TextPageDebugInfo(TableData table)
@@ -333,7 +378,7 @@ namespace ORTS.Popups
             TextPageHeading(table, "DEBUG INFORMATION");
 
             TableAddLabelValue(table, "Logging enabled", "{0}", Viewer.Settings.DataLogger);
-            TableAddLabelValue(table, "Build", "{0}", Program.Build);
+            TableAddLabelValue(table, "Build", "{0}", VersionInfo.Build);
             TableAddLabelValue(table, "Memory", "{0:F0} MB ({5}, {6}, {7}, {8}, {1:F0} MB managed, {2:F0}/{3:F0}/{4:F0} GCs)", GetWorkingSetSize() / 1024 / 1024, GC.GetTotalMemory(false) / 1024 / 1024, GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), Viewer.TextureManager.GetStatus(), Viewer.MaterialManager.GetStatus(), Viewer.ShapeManager.GetStatus(), Viewer.World.Terrain.GetStatus());
             TableAddLabelValue(table, "CPU", "{0:F0}% ({1} logical processors)", (Viewer.RenderProcess.Profiler.CPU.SmoothedValue + Viewer.UpdaterProcess.Profiler.CPU.SmoothedValue + Viewer.LoaderProcess.Profiler.CPU.SmoothedValue + Viewer.SoundProcess.Profiler.CPU.SmoothedValue) / ProcessorCount, ProcessorCount);
             TableAddLabelValue(table, "GPU", "{0:F0} FPS ({1:F1} \u00B1 {2:F1} ms, shader model {3})", Viewer.RenderProcess.FrameRate.SmoothedValue, Viewer.RenderProcess.FrameTime.SmoothedValue * 1000, Viewer.RenderProcess.FrameJitter.SmoothedValue * 1000, Viewer.Settings.ShaderModel);

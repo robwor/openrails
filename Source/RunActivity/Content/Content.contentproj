@@ -131,13 +131,6 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Arial.spritefont">
-      <Name>Arial</Name>
-      <Importer>FontDescriptionImporter</Importer>
-      <Processor>FontDescriptionProcessor</Processor>
-    </Compile>
-  </ItemGroup>
-  <ItemGroup>
     <Compile Include="LightGlow.png">
       <Name>LightGlow</Name>
       <Importer>TextureImporter</Importer>
@@ -166,6 +159,13 @@
   <ItemGroup>
     <Compile Include="SignalAspects.png">
       <Name>SignalAspects</Name>
+      <Importer>TextureImporter</Importer>
+      <Processor>TextureProcessor</Processor>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="TrackMonitorImages.png">
+      <Name>TrackMonitorImages</Name>
       <Importer>TextureImporter</Importer>
       <Processor>TextureProcessor</Processor>
     </Compile>
@@ -241,8 +241,8 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="train_TM.png">
-      <Name>train_TM</Name>
+    <Compile Include="TrackMonitorImages.png">
+      <Name>TrackMonitorImages</Name>
       <Importer>TextureImporter</Importer>
       <Processor>TextureProcessor</Processor>
     </Compile>

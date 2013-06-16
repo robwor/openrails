@@ -1,8 +1,20 @@
-﻿// COPYRIGHT 2010 by the Open Rails project.
-// This code is provided to enable you to contribute improvements to the open rails program.  
-// Use of the code for any other purpose or distribution of the code to anyone else
-// is prohibited without specific written permission from admin@openrails.org.
-//  
+﻿// COPYRIGHT 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // INPUTSETTINGS
 // 
 // This module links the user keystrokes to their functions.
@@ -72,13 +84,23 @@ namespace ORTS
         GameSwitchAhead,
         GameSwitchBehind,
         GameSwitchPicked,
-		GameSignalPicked,
+        GameSignalPicked,
         GameSwitchWithMouse,
         GameUncoupleWithMouse,
-        GameLocomotiveSwap,
+        GameChangeCab,
         GameRequestControl,
         GameMultiPlayerDispatcher,
-		GameMultiPlayerTexting,
+        GameMultiPlayerTexting,
+
+#if NEW_SIGNALLING
+        GameSwitchManualMode,
+        GameShuntLockAOn,
+        GameShuntLockAOff,
+        GameShuntLockBOn,
+        GameShuntLockBOff,
+        GameResetSignalForward,
+        GameResetSignalBackward,
+#endif
 
         DisplayNextWindowTab,
         DisplayHelpWindow,
@@ -91,9 +113,10 @@ namespace ORTS
         DisplayNextStationWindow,
         DisplayCompassWindow,
 
-        DebugLocomotiveFlip,
+#if !NEW_SIGNALLING
         DebugResetSignal,
         DebugForcePlayerAuthorization,
+#endif
         DebugSpeedUp,
         DebugSpeedDown,
         DebugSpeedReset,
@@ -103,6 +126,8 @@ namespace ORTS
         DebugClockBackwards,
         DebugLogger,
         DebugWeatherChange,
+        DebugFogIncrease,
+        DebugFogDecrease,
         DebugLockShadows,
         DebugDumpKeymap,
         DebugLogRenderFrame,
@@ -118,18 +143,19 @@ namespace ORTS
         CameraPassenger,
         CameraBrakeman,
         CameraFree,
-        CameraPreviousFree, 
+        CameraPreviousFree,
         CameraHeadOutForward,
         CameraHeadOutBackward,
         CameraToggleShowCab,
+        CameraReset,
         CameraMoveFast,
         CameraMoveSlow,
         CameraPanLeft,
         CameraPanRight,
         CameraPanUp,
         CameraPanDown,
-        CameraPanIn,
-        CameraPanOut,
+        CameraZoomIn,
+        CameraZoomOut,
         CameraRotateLeft,
         CameraRotateRight,
         CameraRotateUp,
@@ -139,8 +165,9 @@ namespace ORTS
         CameraCarFirst,
         CameraCarLast,
         CameraJumpingTrains,
-		CameraJumpBackPlayer,
-		CameraJumpSeeSwitch,
+        CameraJumpBackPlayer,
+        CameraJumpSeeSwitch,
+        CameraVibrate,
 
         ControlForwards,
         ControlBackwards,
@@ -172,8 +199,8 @@ namespace ORTS
         ControlDoorRight,
         ControlMirror,
         ControlLight,
-        ControlPantographFirst,
-        ControlPantographSecond,
+        ControlPantograph1,
+        ControlPantograph2,
         ControlDieselPlayer,
         ControlDieselHelper,
         ControlHeadlightIncrease,
@@ -316,7 +343,7 @@ namespace ORTS
             }
         }
 
-        public static void DumpToText( string filePath )
+        public static void DumpToText(string filePath)
         {
             using (var writer = new StreamWriter(File.OpenWrite(filePath)))
             {
@@ -327,7 +354,7 @@ namespace ORTS
             }
         }
 
-        public static void DumpToGraphic( string filePath)
+        public static void DumpToGraphic(string filePath)
         {
             var keyWidth = 50;
             var keyHeight = 4 * keyWidth;
@@ -392,13 +419,13 @@ namespace ORTS
             Commands[(int)UserCommands.GameScreenshot] = new UserCommandKeyInput(Keys.PrintScreen);
             Commands[(int)UserCommands.GameFullscreen] = new UserCommandKeyInput(0x1C, KeyModifiers.Alt);
             Commands[(int)UserCommands.GameSwitchAhead] = new UserCommandKeyInput(0x22);
-			Commands[(int)UserCommands.GameSwitchBehind] = new UserCommandKeyInput(0x22, KeyModifiers.Shift);
-			Commands[(int)UserCommands.GameSwitchPicked] = new UserCommandKeyInput(0x22, KeyModifiers.Alt);
-			Commands[(int)UserCommands.GameSignalPicked] = new UserCommandKeyInput(0x22, KeyModifiers.Control);
-			Commands[(int)UserCommands.GameSwitchWithMouse] = new UserCommandModifierInput(KeyModifiers.Alt);
+            Commands[(int)UserCommands.GameSwitchBehind] = new UserCommandKeyInput(0x22, KeyModifiers.Shift);
+            Commands[(int)UserCommands.GameSwitchPicked] = new UserCommandKeyInput(0x22, KeyModifiers.Alt);
+            Commands[(int)UserCommands.GameSignalPicked] = new UserCommandKeyInput(0x22, KeyModifiers.Control);
+            Commands[(int)UserCommands.GameSwitchWithMouse] = new UserCommandModifierInput(KeyModifiers.Alt);
             Commands[(int)UserCommands.GameUncoupleWithMouse] = new UserCommandKeyInput(0x16);
-            Commands[(int)UserCommands.GameLocomotiveSwap] = new UserCommandKeyInput(0x12, KeyModifiers.Control);
-			Commands[(int)UserCommands.GameRequestControl] = new UserCommandKeyInput(0x12, KeyModifiers.Shift);
+            Commands[(int)UserCommands.GameChangeCab] = new UserCommandKeyInput(0x12, KeyModifiers.Control);
+            Commands[(int)UserCommands.GameRequestControl] = new UserCommandKeyInput(0x12, KeyModifiers.Shift);
 
             Commands[(int)UserCommands.DisplayNextWindowTab] = new UserCommandModifierInput(KeyModifiers.Shift);
             Commands[(int)UserCommands.DisplayHelpWindow] = new UserCommandModifiableKeyInput(0x3B, Commands[(int)UserCommands.DisplayNextWindowTab]);
@@ -411,9 +438,13 @@ namespace ORTS
             Commands[(int)UserCommands.DisplayNextStationWindow] = new UserCommandKeyInput(0x44);
             Commands[(int)UserCommands.DisplayCompassWindow] = new UserCommandKeyInput(0x0B);
 
-            Commands[(int)UserCommands.DebugLocomotiveFlip] = new UserCommandKeyInput(0x21, KeyModifiers.Shift | KeyModifiers.Control);
+#if !NEW_SIGNALLING
             Commands[(int)UserCommands.DebugResetSignal] = new UserCommandKeyInput(0x0F);
             Commands[(int)UserCommands.DebugForcePlayerAuthorization] = new UserCommandKeyInput(0x0F, KeyModifiers.Control);
+#else
+            Commands[(int)UserCommands.GameResetSignalForward] = new UserCommandKeyInput(0x0F);
+            Commands[(int)UserCommands.GameResetSignalBackward] = new UserCommandKeyInput(0x0F, KeyModifiers.Shift);
+#endif
             Commands[(int)UserCommands.DebugSpeedUp] = new UserCommandKeyInput(0x49, KeyModifiers.Control | KeyModifiers.Alt);
             Commands[(int)UserCommands.DebugSpeedDown] = new UserCommandKeyInput(0x51, KeyModifiers.Control | KeyModifiers.Alt);
             Commands[(int)UserCommands.DebugSpeedReset] = new UserCommandKeyInput(0x47, KeyModifiers.Control | KeyModifiers.Alt);
@@ -423,6 +454,8 @@ namespace ORTS
             Commands[(int)UserCommands.DebugClockBackwards] = new UserCommandKeyInput(0x0C);
             Commands[(int)UserCommands.DebugLogger] = new UserCommandKeyInput(0x58);
             Commands[(int)UserCommands.DebugWeatherChange] = new UserCommandKeyInput(0x19, KeyModifiers.Alt);
+            Commands[(int)UserCommands.DebugFogIncrease] = new UserCommandKeyInput(0x0D, KeyModifiers.Shift);
+            Commands[(int)UserCommands.DebugFogDecrease] = new UserCommandKeyInput(0x0C, KeyModifiers.Shift);
             Commands[(int)UserCommands.DebugLockShadows] = new UserCommandKeyInput(0x1F, KeyModifiers.Alt);
             Commands[(int)UserCommands.DebugDumpKeymap] = new UserCommandKeyInput(0x3B, KeyModifiers.Alt);
             Commands[(int)UserCommands.DebugLogRenderFrame] = new UserCommandKeyInput(0x58, KeyModifiers.Alt);
@@ -438,18 +471,19 @@ namespace ORTS
             Commands[(int)UserCommands.CameraPassenger] = new UserCommandKeyInput(0x06);
             Commands[(int)UserCommands.CameraBrakeman] = new UserCommandKeyInput(0x07);
             Commands[(int)UserCommands.CameraFree] = new UserCommandKeyInput(0x09);
-            Commands[(int)UserCommands.CameraPreviousFree] = new UserCommandKeyInput( 0x09, KeyModifiers.Shift );
-            Commands[(int)UserCommands.CameraHeadOutForward] = new UserCommandKeyInput( 0x47 );
+            Commands[(int)UserCommands.CameraPreviousFree] = new UserCommandKeyInput(0x09, KeyModifiers.Shift);
+            Commands[(int)UserCommands.CameraHeadOutForward] = new UserCommandKeyInput(0x47);
             Commands[(int)UserCommands.CameraHeadOutBackward] = new UserCommandKeyInput(0x4F);
-            Commands[(int)UserCommands.CameraToggleShowCab] = new UserCommandKeyInput(0x02, KeyModifiers.Shift );
+            Commands[(int)UserCommands.CameraToggleShowCab] = new UserCommandKeyInput(0x02, KeyModifiers.Shift);
+            Commands[(int)UserCommands.CameraReset] = new UserCommandKeyInput(0x09, KeyModifiers.Control);
             Commands[(int)UserCommands.CameraMoveFast] = new UserCommandModifierInput(KeyModifiers.Shift);
             Commands[(int)UserCommands.CameraMoveSlow] = new UserCommandModifierInput(KeyModifiers.Control);
             Commands[(int)UserCommands.CameraPanLeft] = new UserCommandModifiableKeyInput(0x4B, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
             Commands[(int)UserCommands.CameraPanRight] = new UserCommandModifiableKeyInput(0x4D, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
             Commands[(int)UserCommands.CameraPanUp] = new UserCommandModifiableKeyInput(0x48, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
             Commands[(int)UserCommands.CameraPanDown] = new UserCommandModifiableKeyInput(0x50, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
-            Commands[(int)UserCommands.CameraPanIn] = new UserCommandModifiableKeyInput(0x49, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
-            Commands[(int)UserCommands.CameraPanOut] = new UserCommandModifiableKeyInput(0x51, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
+            Commands[(int)UserCommands.CameraZoomIn] = new UserCommandModifiableKeyInput(0x49, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
+            Commands[(int)UserCommands.CameraZoomOut] = new UserCommandModifiableKeyInput(0x51, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
             Commands[(int)UserCommands.CameraRotateLeft] = new UserCommandModifiableKeyInput(0x4B, KeyModifiers.Alt, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
             Commands[(int)UserCommands.CameraRotateRight] = new UserCommandModifiableKeyInput(0x4D, KeyModifiers.Alt, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
             Commands[(int)UserCommands.CameraRotateUp] = new UserCommandModifiableKeyInput(0x48, KeyModifiers.Alt, Commands[(int)UserCommands.CameraMoveFast], Commands[(int)UserCommands.CameraMoveSlow]);
@@ -457,10 +491,11 @@ namespace ORTS
             Commands[(int)UserCommands.CameraCarNext] = new UserCommandKeyInput(0x49, KeyModifiers.Alt);
             Commands[(int)UserCommands.CameraCarPrevious] = new UserCommandKeyInput(0x51, KeyModifiers.Alt);
             Commands[(int)UserCommands.CameraCarFirst] = new UserCommandKeyInput(0x47, KeyModifiers.Alt);
-			Commands[(int)UserCommands.CameraCarLast] = new UserCommandKeyInput(0x4F, KeyModifiers.Alt);
-			Commands[(int)UserCommands.CameraJumpingTrains] = new UserCommandKeyInput(0x0A, KeyModifiers.Alt);
-			Commands[(int)UserCommands.CameraJumpBackPlayer] = new UserCommandKeyInput(0x0A);
-			Commands[(int)UserCommands.CameraJumpSeeSwitch] = new UserCommandKeyInput(0x22, KeyModifiers.Control | KeyModifiers.Alt);
+            Commands[(int)UserCommands.CameraCarLast] = new UserCommandKeyInput(0x4F, KeyModifiers.Alt);
+            Commands[(int)UserCommands.CameraJumpingTrains] = new UserCommandKeyInput(0x0A, KeyModifiers.Alt);
+            Commands[(int)UserCommands.CameraJumpBackPlayer] = new UserCommandKeyInput(0x0A);
+            Commands[(int)UserCommands.CameraJumpSeeSwitch] = new UserCommandKeyInput(0x22, KeyModifiers.Control | KeyModifiers.Alt);
+            Commands[(int)UserCommands.CameraVibrate] = new UserCommandKeyInput(0x2F, KeyModifiers.Control);
 
             Commands[(int)UserCommands.ControlForwards] = new UserCommandKeyInput(0x11);
             Commands[(int)UserCommands.ControlBackwards] = new UserCommandKeyInput(0x1F);
@@ -494,11 +529,11 @@ namespace ORTS
 
             Commands[(int)UserCommands.ControlMirror] = new UserCommandKeyInput(0x2F, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlLight] = new UserCommandKeyInput(0x26);
-			Commands[(int)UserCommands.ControlPantographFirst] = new UserCommandKeyInput(0x19);
-			Commands[(int)UserCommands.ControlPantographSecond] = new UserCommandKeyInput(0x19, KeyModifiers.Shift);
+            Commands[(int)UserCommands.ControlPantograph1] = new UserCommandKeyInput(0x19);
+            Commands[(int)UserCommands.ControlPantograph2] = new UserCommandKeyInput(0x19, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlDieselPlayer] = new UserCommandKeyInput(0x15);
             Commands[(int)UserCommands.ControlDieselHelper] = new UserCommandKeyInput(0x15, KeyModifiers.Shift);
-			Commands[(int)UserCommands.ControlHeadlightIncrease] = new UserCommandKeyInput(0x23);
+            Commands[(int)UserCommands.ControlHeadlightIncrease] = new UserCommandKeyInput(0x23);
             Commands[(int)UserCommands.ControlHeadlightDecrease] = new UserCommandKeyInput(0x23, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlInjector1Increase] = new UserCommandKeyInput(0x25);
             Commands[(int)UserCommands.ControlInjector1Decrease] = new UserCommandKeyInput(0x25, KeyModifiers.Shift);
@@ -514,9 +549,17 @@ namespace ORTS
             Commands[(int)UserCommands.ControlFiringRateDecrease] = new UserCommandKeyInput(0x13, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlFireShovelFull] = new UserCommandKeyInput(0x13, KeyModifiers.Control);
             Commands[(int)UserCommands.ControlCylinderCocks] = new UserCommandKeyInput(0x2E);
-			Commands[(int)UserCommands.ControlFiring] = new UserCommandKeyInput(0x21, KeyModifiers.Control);
-			Commands[(int)UserCommands.GameMultiPlayerDispatcher] = new UserCommandKeyInput(0x0A, KeyModifiers.Control);
-			Commands[(int)UserCommands.GameMultiPlayerTexting] = new UserCommandKeyInput(0x14);
+            Commands[(int)UserCommands.ControlFiring] = new UserCommandKeyInput(0x21, KeyModifiers.Control);
+            Commands[(int)UserCommands.GameMultiPlayerDispatcher] = new UserCommandKeyInput(0x0A, KeyModifiers.Control);
+            Commands[(int)UserCommands.GameMultiPlayerTexting] = new UserCommandKeyInput(0x14);
+
+#if NEW_SIGNALLING
+            Commands[(int)UserCommands.GameSwitchManualMode] = new UserCommandKeyInput(0x32, KeyModifiers.Control);
+            Commands[(int)UserCommands.GameShuntLockAOn] = new UserCommandKeyInput(0x26, KeyModifiers.Control);
+            Commands[(int)UserCommands.GameShuntLockAOff] = new UserCommandKeyInput(0x26, KeyModifiers.Control | KeyModifiers.Shift);
+            Commands[(int)UserCommands.GameShuntLockBOn] = new UserCommandKeyInput(0x26, KeyModifiers.Alt);
+            Commands[(int)UserCommands.GameShuntLockBOff] = new UserCommandKeyInput(0x26, KeyModifiers.Alt | KeyModifiers.Shift);
+#endif
 
             // for every user command
             foreach (var commandEnum in Enum.GetValues(typeof(UserCommands)))
@@ -593,27 +636,25 @@ namespace ORTS
         /// </summary>
         /// <param name="debug">In release mode, don't report problems with the default assignments or with Debug key assignments.</param>
         /// <returns></returns>
-        public static string CheckForErrors( bool debug)
+        public static string CheckForErrors(bool debug)
         {
-
-
-            StringBuilder errors = new StringBuilder();
+            var errors = new StringBuilder();
 
             // Check for conflicting modifiers
             foreach (var eCommand in Enum.GetValues(typeof(UserCommands)))
             {
-                UserCommandInput command = InputSettings.Commands[(int)eCommand];
-                if( command.GetType() == typeof( UserCommandModifiableKeyInput ) )
+                var command = InputSettings.Commands[(int)eCommand];
+                if (command.GetType() == typeof(UserCommandModifiableKeyInput))
                 {
-                    if( !debug )
-                        if (eCommand.ToString().ToUpper() == "DEBUG" ) continue;
+                    if (!debug)
+                        if (eCommand.ToString().ToUpper() == "DEBUG") continue;
 
-                    UserCommandModifiableKeyInput mc = (UserCommandModifiableKeyInput)command;
+                    var mc = (UserCommandModifiableKeyInput)command;
 
-                    bool conflict = (mc.Control && mc.IgnoreControl) || (mc.Alt && mc.IgnoreAlt) || (mc.Shift && mc.IgnoreShift);
+                    var conflict = (mc.Control && mc.IgnoreControl) || (mc.Alt && mc.IgnoreAlt) || (mc.Shift && mc.IgnoreShift);
 
-                    if( conflict )
-                        errors.AppendFormat("Command {0} conflicts with its CTRL,ALT,SHIFT modifiers.\n", eCommand.ToString() );
+                    if (conflict)
+                        errors.AppendFormat("Command {0} conflicts with its CTRL,ALT,SHIFT modifiers.\n", eCommand.ToString());
 
                 }
             }
@@ -708,7 +749,7 @@ namespace ORTS
 
         public static string KeyAssignmentAsString(bool ctrl, bool alt, bool shift, int scanCode, Keys vkey, bool ictrl, bool ialt, bool ishift)
         {
-            StringBuilder key = new StringBuilder();
+            var key = new StringBuilder();
 
             if (shift) key = key.Append("Shift + ");
             if (ctrl) key = key.Append("Control + ");
@@ -741,11 +782,11 @@ namespace ORTS
 
         public abstract void ToValue(out int scancode, out Keys vkey, out bool ctrl, out bool alt, out bool shift);
 
-        public abstract void ToValue(out int scancode, out Keys vkey, out bool ctrl, out bool alt, out bool shift,out bool ictrl, out bool ialt, out bool ishift);
+        public abstract void ToValue(out int scancode, out Keys vkey, out bool ctrl, out bool alt, out bool shift, out bool ictrl, out bool ialt, out bool ishift);
 
         public abstract string ToRegString(); // reverses of SetFrom ,ie produces string like "45,0,0,0,1"
 
-        public abstract string  ToEditString();  // this is how the command appears in the user configuration editor
+        public abstract string ToEditString();  // this is how the command appears in the user configuration editor
 
         public override string ToString()
         {
@@ -795,13 +836,13 @@ namespace ORTS
         }
 
         public override void SetFromRegString(string specifier) // ie 0,ctrl,alt,shift  "0,0,0,1,0"  
-        {               
-            int[] v = ((string)specifier).Split(',').Select(s => int.Parse(s)).ToArray();
-            if ( true || false )
-            if ( v[0] != 0  || v[1] != 0  )  throw new System.Exception("First two params of a CommandModifier must be 0");
-            Control = ( v[2] != 0 );
-            Alt = ( v[3] != 0 );
-            Shift = ( v[4] != 0 );
+        {
+            var v = ((string)specifier).Split(',').Select(s => int.Parse(s)).ToArray();
+            if (true || false)
+                if (v[0] != 0 || v[1] != 0) throw new System.Exception("First two params of a CommandModifier must be 0");
+            Control = (v[2] != 0);
+            Alt = (v[3] != 0);
+            Shift = (v[4] != 0);
         }
 
         public override void ToValue(out int scancode, out Keys vkey, out bool ctrl, out bool alt, out bool shift, out bool ictrl, out bool ialt, out bool ishift)
@@ -830,12 +871,12 @@ namespace ORTS
 
         public override string ToRegString()
         {
-            StringBuilder s = new StringBuilder();
+            var s = new StringBuilder();
 
-            s.Append( "0,0,");
-            s.Append( Control ? "1,": "0," );
-            s.Append( Alt ? "1,":"0," );
-            s.Append( Shift ? "1": "0" );
+            s.Append("0,0,");
+            s.Append(Control ? "1," : "0,");
+            s.Append(Alt ? "1," : "0,");
+            s.Append(Shift ? "1" : "0");
 
             return s.ToString();
         }
@@ -855,7 +896,7 @@ namespace ORTS
             return key.ToString();
         }
 
-        
+
     }
 
     // Activates when the key is pressed with the correct combo of CTRL ALT SHIFT or NONE
@@ -938,10 +979,10 @@ namespace ORTS
 
         public override void SetFromRegString(string specifier) // ie scanCode,(ctrl,alt,shift)  "45,0,0,1,0" or "67"
         {
-            int[] v = ((string)specifier).Split(',').Select(s => int.Parse(s)).ToArray();
+            var v = ((string)specifier).Split(',').Select(s => int.Parse(s)).ToArray();
             ScanCode = v[0];
-            VirtualKey = (Keys)( v[1] );
-            if( v.Length > 1 ) Control = (v[2] != 0);
+            VirtualKey = (Keys)(v[1]);
+            if (v.Length > 1) Control = (v[2] != 0);
             if (v.Length > 2) Alt = (v[3] != 0);
             if (v.Length > 3) Shift = (v[4] != 0);
         }
@@ -974,14 +1015,14 @@ namespace ORTS
 
         public override string ToRegString()  // ie scanCode,ctrl,alt,shift  ie "45,0,1,0"
         {
-            StringBuilder s = new StringBuilder();
+            var s = new StringBuilder();
 
             s.Append(ScanCode.ToString());
             s.Append(',');
             s.Append(((int)VirtualKey).ToString());
-            s.Append(Control ? ",1,":",0," );
-            s.Append(Alt ? "1,": "0," );
-            s.Append(Shift ? "1":"0" );
+            s.Append(Control ? ",1," : ",0,");
+            s.Append(Alt ? "1," : "0,");
+            s.Append(Shift ? "1" : "0");
 
             return s.ToString();
         }
@@ -1068,9 +1109,9 @@ namespace ORTS
         }
 
         public override void SetFromRegString(string specifier) // ie scanCode,vkey,(ctrl,alt,shift),(ignore ctrl, ignore alt ignore shift )
-                                                       // "45,0,0,1,0" or "67" or "33,0,0,0,0,0,1,1"
+        // "45,0,0,1,0" or "67" or "33,0,0,0,0,0,1,1"
         {
-            int[] v = ((string)specifier).Split(',').Select(s => int.Parse(s)).ToArray();
+            var v = ((string)specifier).Split(',').Select(s => int.Parse(s)).ToArray();
             ScanCode = v[0];
             VirtualKey = (Keys)v[1];
             if (v.Length > 1) Control = (v[2] != 0);
@@ -1084,18 +1125,18 @@ namespace ORTS
 
         public override string ToRegString()  // ie scanCode,vkey,ctrl,alt,shift, ignore ctrl, ignore alt, ignore shift  ie "45,0,0,1,0,1,1,0"
         {
-            StringBuilder s = new StringBuilder();
+            var s = new StringBuilder();
 
             Debug.Assert(VirtualKey == Keys.None);  // all user overrides are entered as scan codes
             s.Append(ScanCode.ToString());
             s.Append(',');
             s.Append(((int)VirtualKey).ToString());
-            s.Append(Control ? ",1,": ",0," );
-            s.Append(Alt ? "1,": "0," );
-            s.Append(Shift ? "1,": "0," );
-            s.Append(IgnoreControl ? "1,": "0,"  );
-            s.Append(IgnoreAlt ? "1,": "0,"  );
-            s.Append(IgnoreShift ? "1":"0" );
+            s.Append(Control ? ",1," : ",0,");
+            s.Append(Alt ? "1," : "0,");
+            s.Append(Shift ? "1," : "0,");
+            s.Append(IgnoreControl ? "1," : "0,");
+            s.Append(IgnoreAlt ? "1," : "0,");
+            s.Append(IgnoreShift ? "1" : "0");
 
             return s.ToString();
         }
@@ -1123,5 +1164,3 @@ namespace ORTS
         }
     }
 }
-
-

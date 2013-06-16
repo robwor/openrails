@@ -1,8 +1,19 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
+﻿// COPYRIGHT 2010, 2011, 2012 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -29,13 +40,11 @@ namespace ORTS
             AutumnSnow = 0x40,
             WinterSnow = 0x80,
             Night = 0x100,
-            // SPECIAL VALUE FOR OPEN RAILS!
-            TrainSet = 0x10000,
         }
 
         public static string GetForestTextureFile(Simulator simulator, string textureName)
         {
-            return GetTextureFile(simulator, Helpers.TextureFlags.Spring | Helpers.TextureFlags.Autumn | Helpers.TextureFlags.Winter | Helpers.TextureFlags.SpringSnow | Helpers.TextureFlags.AutumnSnow | Helpers.TextureFlags.WinterSnow, simulator.RoutePath + @"\Textures", textureName);
+            return GetRouteTextureFile(simulator, Helpers.TextureFlags.Spring | Helpers.TextureFlags.Autumn | Helpers.TextureFlags.Winter | Helpers.TextureFlags.SpringSnow | Helpers.TextureFlags.AutumnSnow | Helpers.TextureFlags.WinterSnow, textureName);
         }
 
         public static string GetNightTextureFile(Simulator simulator, string textureFilePath)
@@ -53,11 +62,9 @@ namespace ORTS
             return GetTextureFile(simulator, textureFlags, simulator.RoutePath + @"\Textures", textureName);
         }
 
-        public static string GetShapeTextureFile(Simulator simulator, TextureFlags textureFlags, string shapeFile, string textureName)
+        public static string GetTransferTextureFile(Simulator simulator, string textureName)
         {
-            if ((textureFlags & TextureFlags.TrainSet) != 0)
-                return GetTextureFile(simulator, textureFlags, Path.GetDirectoryName(shapeFile), textureName);
-            return GetTextureFile(simulator, textureFlags, simulator.RoutePath + @"\Textures", textureName);
+            return GetTextureFile(simulator, Helpers.TextureFlags.Snow, simulator.RoutePath + @"\Textures", textureName);
         }
 
         public static string GetTerrainTextureFile(Simulator simulator, string textureName)
@@ -65,7 +72,7 @@ namespace ORTS
             return GetTextureFile(simulator, Helpers.TextureFlags.Snow, simulator.RoutePath + @"\TerrTex", textureName);
         }
 
-        static string GetTextureFile(Simulator simulator, TextureFlags textureFlags, string texturePath, string textureName)
+        public static string GetTextureFile(Simulator simulator, TextureFlags textureFlags, string texturePath, string textureName)
         {
             var alternativePath = "";
             if ((textureFlags & TextureFlags.Snow) != 0 || (textureFlags & TextureFlags.SnowTrack) != 0)

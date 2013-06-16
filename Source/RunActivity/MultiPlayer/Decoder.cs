@@ -1,16 +1,20 @@
 ﻿// COPYRIGHT 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
-/// 
-/// Additional Contributions
-/// Copyright (c) Jijun Tang
-/// Can only be used by the Open Rails Project.
-/// This file cannot be copied, modified or included in any software which is not distributed directly by the Open Rails project.
-/// 
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -44,11 +48,28 @@ namespace ORTS.MultiPlayer
 			int index = msg.IndexOf(':');
 			if (index < 0)
 			{
-				msg = ""; //no ':', clear the messages, no way to recover anyway
+				if (msg.Length > 10) msg = msg.Remove(0); //no ':', clear the messages, no way to recover anyway, except the first few digits
 				throw new Exception("Parsing error, no : found");
 			}
 			try
 			{
+				int last = index - 1;
+				while (last >= 0)
+				{
+					if (!char.IsDigit(msg[last])) break;
+					last--;
+				} //shift back to get all digits
+				last += 1;
+				if (last < 0) last = 0;
+				string tmp = msg.Substring(last, index - last);
+				int len;
+				if (!int.TryParse(tmp, out len)) { msg = msg.Remove(0); return null; }
+				if (len < 0) return null;
+				if (index + 2 + len > msg.Length) return null;
+				tmp = msg.Substring(index + 2, len); //not taking ": "
+				msg = msg.Remove(0, index + 2 + len); //remove :
+				if (len > 1000000) return null;//a long message, will ignore it
+#if false
 				int last = index-1;
 				while (last >= 0 && char.IsDigit(msg[last--])) ; //shift back to get all digits
 				if (last < 0) last = 0;
@@ -58,6 +79,7 @@ namespace ORTS.MultiPlayer
 				if (index + 2 + len > msg.Length) return null;//not enough characters
 				tmp = msg.Substring(index+2, len); //not taking ": "
 				msg = msg.Remove(last, index+2+len); //remove :
+#endif
 				return tmp;
 			}
 			catch (Exception)

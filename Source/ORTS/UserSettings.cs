@@ -1,7 +1,19 @@
-﻿// COPYRIGHT 2010, 2011, 2012 by the Open Rails project.
-// This code is provided to enable you to contribute improvements to the open rails program.  
-// Use of the code for any other purpose or distribution of the code to anyone else
-// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -73,7 +85,7 @@ namespace ORTS
         public bool Logging { get; set; }
         [Default("OpenRailsLog.txt")]
         public string LoggingFilename { get; set; }
-        [Default("")]
+        [Default( "" )] // If left as "", OR will use the user's desktop folder
         public string LoggingPath { get; set; }
         [Default(false)]
         public bool MSTSBINSound { get; set; }
@@ -85,6 +97,10 @@ namespace ORTS
         public int ProfilingFrameCount { get; set; }
         [Default(0)]
         public int ProfilingTime { get; set; }
+        [Default( 0 )]
+        public int ReplayPauseBeforeEndS { get; set; }
+        [Default( true )]
+        public bool ReplayPauseBeforeEnd { get; set; }
         [Default("")]
         public string ScreenshotPath { get; set; }
         [Default(0)]
@@ -103,6 +119,8 @@ namespace ORTS
         public bool ShowErrorDialogs { get; set; }
         [Default(5)]
         public int SoundDetailLevel { get; set; }
+		[Default(100)]
+		public int SoundVolumePercent { get; set; }
         [Default(false)]
         public bool SuppressConfirmations { get; set; }
         [Default(false)]
@@ -121,8 +139,14 @@ namespace ORTS
         public bool Wire { get; set; }
         [Default(10)]
         public int WorldObjectDensity { get; set; }
+        [Default(0)]
+        public int UseSuperElevation{ get; set; }
         [Default(false)]
         public bool ViewDispatcher { get; set; }
+        [Default(50)]
+        public int SuperElevationMinLen { get; set; }
+        [Default(1435)]
+        public int SuperElevationGauge { get; set; }
 
         [Default(new string[0])]
         public string[] Menu_Selection { get; set; }
@@ -151,11 +175,27 @@ namespace ORTS
 		[Default(false)]
 		public bool ShowAvatar { get; set; }
 
+		[Default(false)]
+        public bool DistantMountains { get; set; }
+        [Default(0)]
+        public int CarVibratingLevel { get; set; }
+        [Default(20)]
+        public int DistantMountainsViewingTiles { get; set; }
+        [Default(5)]
+        public int DistantMountainsLoweringValue { get; set; }
         // Physics options
         [Default(true)]
         public bool UseAdvancedAdhesion { get; set; }
         [Default(false)]
         public bool BreakCouplers { get; set; }
+
+        // experimentel setting for LOD extention
+        [Default (false)]
+        public bool LODViewingExtention { get; set; }
+
+        // experimentel setting for LOD extention
+        [Default(false)]
+        public bool DoubleWire { get; set; }
 
         // Window position settings.
         [Default(new[] { 50, 50 })]

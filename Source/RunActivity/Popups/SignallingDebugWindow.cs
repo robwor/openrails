@@ -1,10 +1,20 @@
-﻿// COPYRIGHT 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
@@ -21,6 +31,16 @@ namespace ORTS
     [CallOnThread("Updater")]
     public class SignallingDebugWindow : LayeredWindow
     {
+
+#if NEW_SIGNALLING
+        public enum DebugWindowSignalAspect
+        {
+            Clear,
+            Warning,
+            Stop,
+        }
+#endif
+
         const float SignalErrorDistance = 100;
         const float SignalWarningDistance = 500;
         const float DisplayDistance = 1000;
@@ -125,7 +145,11 @@ namespace ORTS
                             }
                             else if (signalObj != null)
                             {
+#if !NEW_SIGNALLING
                                 if (GetAspect(signalObj.Signal) == TrackMonitorSignalAspect.Stop)
+#else
+                                if (GetAspect(signalObj.Signal) == DebugWindowSignalAspect.Stop)
+#endif
                                 {
                                     signalErrorDistance = objDistance;
                                     break;
@@ -194,7 +218,16 @@ namespace ORTS
                             }
                             else if (signalObj != null)
                             {
+#if !NEW_SIGNALLING
                                 primitives.Add(new DispatcherLabel(currentPosition.WorldLocation, GetAspect(signalObj.Signal) == TrackMonitorSignalAspect.Stop ? Color.Red : GetAspect(signalObj.Signal) == TrackMonitorSignalAspect.Warning ? Color.Yellow : Color.White, String.Format("Signal ({0}, {1})", signalObj.Signal.nextSigRef, signalObj.Signal.GetAspect()), Owner.TextFontDefaultOutlined));
+#else
+                                primitives.Add(new DispatcherLabel(currentPosition.WorldLocation,
+                                           GetAspect(signalObj.Signal) == DebugWindowSignalAspect.Stop ? Color.Red :
+                                               GetAspect(signalObj.Signal) == DebugWindowSignalAspect.Warning ? Color.Yellow :
+                                               Color.Green,
+                                           String.Format("Signal ({0})", signalObj.Signal.this_sig_lr(SignalHead.SIGFN.NORMAL)),
+                                           Owner.TextFontDefaultOutlined));
+#endif
                             }
 
                             if (objDistance >= switchErrorDistance || objDistance >= signalErrorDistance)
@@ -257,10 +290,32 @@ namespace ORTS
             var distance = 0f;
             while (true)
             {
+#if !NEW_SIGNALLING
                 var signal = Owner.Viewer.Simulator.Signals.FindNearestSignal(trackNode);
                 if (signal.GetAspect() == SignalHead.SIGASP.UNKNOWN)
                     break;
                 var signalDistance = signal.DistanceToSignal(trackNode);
+#else
+                Train.TCPosition thisPosition = new Train.TCPosition();
+                TrackNode tn = trackNode.TN;
+                float offset = trackNode.TrackNodeOffset;
+                int direction = (int)trackNode.Direction;
+
+                tn.TCCrossReference.GetTCPosition(offset, direction, ref thisPosition);
+                Train.TCSubpathRoute tempRoute = Owner.Viewer.Simulator.Signals.BuildTempRoute(null, thisPosition.TCSectionIndex,
+                    thisPosition.TCOffset, thisPosition.TCDirection, 5000.0f, true, true, false);
+
+                ObjectItemInfo thisInfo = Owner.Viewer.Simulator.Signals.GetNextObject_InRoute(null, tempRoute, 0,
+                    thisPosition.TCOffset, -1, ObjectItemInfo.ObjectItemType.SIGNAL, thisPosition);
+
+                var signal = thisInfo.ObjectDetails;
+                if (signal == null)
+                    break;
+                if (signal.this_sig_lr(SignalHead.SIGFN.NORMAL) == SignalHead.SIGASP.UNKNOWN)
+                    break;
+                var signalDistance = thisInfo.distance_found;
+#endif
+
                 if (signalDistance > 0)
                 {
                     distance += signalDistance;
@@ -269,13 +324,16 @@ namespace ORTS
                         break;
                     rv.Objects.Add(new TrackSectionSignal() { Distance = distance, Signal = signal });
                 }
+#if !NEW_SIGNALLING
                 // TODO: This is a massive hack because the current signalling code is useless at finding the next signal in the face of changing switches.
                 trackNode.Move(0.001f);
+#endif
             }
             rv.Objects = rv.Objects.OrderBy(tso => tso.Distance).ToList();
             return rv;
         }
 
+#if !NEW_SIGNALLING
         TrackMonitorSignalAspect GetAspect(Signal signal)
         {
             var aspect = signal.GetAspect();
@@ -285,6 +343,18 @@ namespace ORTS
                 return TrackMonitorSignalAspect.Warning;
             return TrackMonitorSignalAspect.Stop;
         }
+#else
+        DebugWindowSignalAspect GetAspect(SignalObject signal)
+        {
+            var aspect = signal.this_sig_lr(SignalHead.SIGFN.NORMAL);
+
+            if (aspect >= SignalHead.SIGASP.CLEAR_1)
+                return DebugWindowSignalAspect.Clear;
+            if (aspect >= SignalHead.SIGASP.STOP_AND_PROCEED)
+                return DebugWindowSignalAspect.Warning;
+            return DebugWindowSignalAspect.Stop;
+        }
+#endif
 
         enum DistanceToType
         {
@@ -294,31 +364,35 @@ namespace ORTS
             Signal,
         }
 
-        class TrackSectionCacheEntry {
+        public class TrackSectionCacheEntry {
             public int Age;
             public Traveller.TravellerDirection Direction;
             public float Length;
             public List<TrackSectionObject> Objects;
         }
 
-        class TrackSectionObject
+        public class TrackSectionObject
         {
             public float Distance;
         }
 
-        class TrackSectionEndOfLine : TrackSectionObject
+        public class TrackSectionEndOfLine : TrackSectionObject
         {
         }
 
-        class TrackSectionSwitch : TrackSectionObject
+        public class TrackSectionSwitch : TrackSectionObject
         {
             public TrackNode TrackNode;
             public int NodeIndex;
         }
 
-        class TrackSectionSignal : TrackSectionObject
+        public class TrackSectionSignal : TrackSectionObject
         {
+#if !NEW_SIGNALLING
             public Signal Signal;
+#else
+            public SignalObject Signal;
+#endif
         }
     }
 

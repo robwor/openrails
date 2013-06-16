@@ -1,10 +1,20 @@
-// COPYRIGHT 2009, 2010, 2011, 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 // Experimental code which collapses unnecessarily duplicated primitives when loading shapes.
@@ -60,8 +70,7 @@ namespace ORTS
                 }
                 catch (Exception error)
                 {
-                    Trace.TraceInformation(path);
-                    Trace.WriteLine(error);
+                    Trace.WriteLine(new FileLoadException(path, error));
                     Shapes.Add(path, EmptyShape);
                 }
             }
@@ -150,7 +159,11 @@ namespace ORTS
     /// </summary>
     public class PoseableShape : StaticShape
     {
+        static Dictionary<string, bool> SeenShapeAnimationError = new Dictionary<string, bool>();
+
         public Matrix[] XNAMatrices = new Matrix[0];  // the positions of the subobjects
+
+        public readonly int[] Hierarchy;
 
         public PoseableShape(Viewer3D viewer, string path, WorldPosition initialPosition, ShapeFlags flags)
             : base(viewer, path, initialPosition, flags)
@@ -158,6 +171,11 @@ namespace ORTS
             XNAMatrices = new Matrix[SharedShape.Matrices.Length];
             for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
                 XNAMatrices[iMatrix] = SharedShape.Matrices[iMatrix];
+
+            if (SharedShape.LodControls.Length > 0 && SharedShape.LodControls[0].DistanceLevels.Length > 0 && SharedShape.LodControls[0].DistanceLevels[0].SubObjects.Length > 0 && SharedShape.LodControls[0].DistanceLevels[0].SubObjects[0].ShapePrimitives.Length > 0)
+                Hierarchy = SharedShape.LodControls[0].DistanceLevels[0].SubObjects[0].ShapePrimitives[0].Hierarchy;
+            else
+                Hierarchy = new int[0];
         }
 
         public PoseableShape(Viewer3D viewer, string path, WorldPosition initialPosition)
@@ -175,43 +193,60 @@ namespace ORTS
         /// </summary>
         public void AnimateMatrix(int iMatrix, float key)
         {
-            if (SharedShape.Animations == null)
+            // Animate the given matrix.
+            AnimateOneMatrix(iMatrix, key);
+
+            // Animate all child nodes in the hierarchy too.
+            for (var i = 0; i < Hierarchy.Length; i++)
+                if (Hierarchy[i] == iMatrix)
+                    AnimateMatrix(i, key);
+        }
+
+        void AnimateOneMatrix(int iMatrix, float key)
+        {
+            if (SharedShape.Animations == null || SharedShape.Animations.Count == 0)
+            {
+                if (!SeenShapeAnimationError.ContainsKey(SharedShape.FilePath))
+                    Trace.TraceInformation("Ignored missing animations data in shape {0}", SharedShape.FilePath);
+                SeenShapeAnimationError[SharedShape.FilePath] = true;
                 return;  // animation is missing
+            }
 
-            if (iMatrix >= SharedShape.Animations[0].anim_nodes.Count)
+            if (iMatrix < 0 || iMatrix >= SharedShape.Animations[0].anim_nodes.Count || iMatrix >= XNAMatrices.Length)
+            {
+                if (!SeenShapeAnimationError.ContainsKey(SharedShape.FilePath))
+                    Trace.TraceInformation("Ignored out of bounds matrix {1} in shape {0}", SharedShape.FilePath, iMatrix);
+                SeenShapeAnimationError[SharedShape.FilePath] = true;
                 return;  // mismatched matricies
+            }
 
-            anim_node anim_node = SharedShape.Animations[0].anim_nodes[iMatrix];
+            var anim_node = SharedShape.Animations[0].anim_nodes[iMatrix];
             if (anim_node.controllers.Count == 0)
                 return;  // missing controllers
 
-            Matrix xnaPose = SharedShape.Matrices[iMatrix]; // start with the intial pose in the shape file
+            // Start with the intial pose in the shape file.
+            var xnaPose = SharedShape.Matrices[iMatrix];
 
             foreach (controller controller in anim_node.controllers)
             {
-                // determine the frame number and transition amount
-                int iKey1 = 0;
-                for (int i = 0; i < controller.Count; ++i)
-                    if (controller[i].Frame <= key + 0.0001)
-                        iKey1 = i;
-                    else
+                // Determine the frame index from the current frame ('key'). We will be interpolating between two key
+                // frames (the items in 'controller') so we need to find the last one LESS than the current frame
+                // and interpolate with the one after it.
+                var index = 0;
+                for (var i = 0; i < controller.Count; i++)
+                    if (controller[i].Frame <= key)
+                        index = i;
+                    else if (controller[i].Frame > key) // Optimisation, not required for algorithm.
                         break;
-                KeyPosition position1 = controller[iKey1];
-                float frame1 = position1.Frame;
 
-                int iKey2 = iKey1 + 1;
-                if (iKey2 >= controller.Count)
-                    iKey2 = 0;
-                KeyPosition position2 = controller[iKey2];
-                float frame2 = position2.Frame;
-                if (iKey2 == 0)
-                    frame2 = SharedShape.Animations[0].FrameCount; //changed at V148 by Doug, was controller.Count;
+                var position1 = controller[index];
+                var position2 = index + 1 < controller.Count ? controller[index + 1] : controller[index];
+                var frame1 = position1.Frame;
+                var frame2 = position2.Frame;
 
-                float amount;
-                if (Math.Abs(frame2 - frame1) > 0.0001)
-                    amount = (key - frame1) / Math.Abs(frame2 - frame1);
-                else
-                    amount = 0;
+                // Make sure to clamp the amount, as we can fall outside the frame range. Also ensure there's a
+                // difference between frame1 and frame2 or we'll crash.
+                var amount = frame1 < frame2 ? MathHelper.Clamp((key - frame1) / (frame2 - frame1), 0, 1) : 0;
 
                 if (position1.GetType() == typeof(slerp_rot))  // rotate the existing matrix
                 {
@@ -275,15 +310,13 @@ namespace ORTS
             // if the shape has animations
             if (SharedShape.Animations != null && SharedShape.Animations.Count > 0 && SharedShape.Animations[0].FrameCount > 1)
             {
-                // Compute the animation key based on framerate etc
-                // ie, with 8 frames of animation, the key will advance from 0 to 8 at the specified speed.
-                AnimationKey += (float)SharedShape.Animations[0].FrameRate * elapsedTime.ClockSeconds;
-                while (AnimationKey >= SharedShape.Animations[0].FrameCount) AnimationKey -= SharedShape.Animations[0].FrameCount;
-                while (AnimationKey < -0.00001) AnimationKey += SharedShape.Animations[0].FrameCount;
+                AnimationKey += SharedShape.Animations[0].FrameRate * elapsedTime.ClockSeconds;
+                while (AnimationKey > SharedShape.Animations[0].FrameCount) AnimationKey -= SharedShape.Animations[0].FrameCount;
+                while (AnimationKey < 0) AnimationKey += SharedShape.Animations[0].FrameCount;
 
                 // Update the pose for each matrix
-                for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
-                    AnimateMatrix(iMatrix, AnimationKey);
+                for (var matrix = 0; matrix < SharedShape.Matrices.Length; ++matrix)
+                    AnimateMatrix(matrix, AnimationKey);
             }
             SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
@@ -397,24 +430,24 @@ namespace ORTS
                         var tX = GetTextureCoordX(speed[j]); var tY = GetTextureCoordY(speed[j]);
 
                         //the left-bottom vertex
-                        Vector3 v = new Vector3(offset.X, offset.Y, 0);
+                        Vector3 v = new Vector3(offset.X, offset.Y, 0.01f);
                         M.Rotate2D(rotation, ref v.X, ref v.Z);
-                        v += start; Vertex v1 = new Vertex(v.X, v.Y, v.Z + 0.01f, 0, 0, -1, tX, tY);
+                        v += start; Vertex v1 = new Vertex(v.X, v.Y, v.Z, 0, 0, -1, tX, tY);
 
                         //the right-bottom vertex
-                        v.X = offset.X + size; v.Y = offset.Y; v.Z = 0;
+                        v.X = offset.X + size; v.Y = offset.Y; v.Z = 0.01f;
                         M.Rotate2D(rotation, ref v.X, ref v.Z);
-                        v += start; Vertex v2 = new Vertex(v.X, v.Y, v.Z + 0.01f, 0, 0, -1, tX + 0.25f, tY);
+                        v += start; Vertex v2 = new Vertex(v.X, v.Y, v.Z, 0, 0, -1, tX + 0.25f, tY);
 
                         //the right-top vertex
-                        v.X = offset.X + size; v.Y = offset.Y + size; v.Z = 0;
+                        v.X = offset.X + size; v.Y = offset.Y + size; v.Z = 0.01f;
                         M.Rotate2D(rotation, ref v.X, ref v.Z);
-                        v += start; Vertex v3 = new Vertex(v.X, v.Y, v.Z + 0.01f, 0, 0, -1, tX + 0.25f, tY - 0.25f);
+                        v += start; Vertex v3 = new Vertex(v.X, v.Y, v.Z, 0, 0, -1, tX + 0.25f, tY - 0.25f);
 
                         //the left-top vertex
-                        v.X = offset.X; v.Y = offset.Y + size; v.Z = 0;
+                        v.X = offset.X; v.Y = offset.Y + size; v.Z = 0.01f;
                         M.Rotate2D(rotation, ref v.X, ref v.Z);
-                        v += start; Vertex v4 = new Vertex(v.X, v.Y, v.Z + 0.01f, 0, 0, -1, tX, tY - 0.25f);
+                        v += start; Vertex v4 = new Vertex(v.X, v.Y, v.Z, 0, 0, -1, tX, tY - 0.25f);
 
                         //memory may not be enough
                         if (NumVertices > maxVertex - 4)
@@ -493,8 +526,7 @@ namespace ORTS
             xnaXfmWrtCamTile = this.Location.XNAMatrix * xnaXfmWrtCamTile; // Catenate to world transformation
             // (Transformation is now with respect to camera-tile origin)
 
-            frame.AddPrimitive(this.shapePrimitive.Material, this.shapePrimitive,
-                        RenderPrimitiveGroup.World, ref xnaXfmWrtCamTile, ShapeFlags.None);
+            frame.AddPrimitive(this.shapePrimitive.Material, this.shapePrimitive, RenderPrimitiveGroup.World, ref xnaXfmWrtCamTile, ShapeFlags.None);
 
             // Update the pose
             for (int iMatrix = 0; iMatrix < SharedShape.Matrices.Length; ++iMatrix)
@@ -526,14 +558,18 @@ namespace ORTS
             CrossingObj = crossingObj;
             if (!CrossingObj.silent)
             {
-                try
+                if (viewer.Simulator.TRK.Tr_RouteFile.DefaultCrossingSMS != null)
                 {
-                    Sound = new SoundSource(viewer, position.WorldLocation, viewer.Simulator.RoutePath + @"\\sound\\crossing.sms");
-                    viewer.SoundProcess.AddSoundSource(this, new List<SoundSourceBase>() { Sound });
-                }
-                catch (Exception error)
-                {
-                    Trace.WriteLine(error);
+                    var soundPath = viewer.Simulator.RoutePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultCrossingSMS;
+                    try
+                    {
+                        Sound = new SoundSource(viewer, position.WorldLocation, Events.Source.MSTSCrossing, soundPath);
+                        viewer.SoundProcess.AddSoundSource(this, new List<SoundSourceBase>() { Sound });
+                    }
+                    catch (Exception error)
+                    {
+                        Trace.WriteLine(new FileLoadException(soundPath, error));
+                    }
                 }
             }
             Crossing = viewer.Simulator.LevelCrossings.CreateLevelCrossing(
@@ -549,8 +585,7 @@ namespace ORTS
 
         public void Dispose()
         {
-            if (!CrossingObj.silent)
-                Viewer.SoundProcess.RemoveSoundSource(Sound);
+            if (Sound != null) Viewer.SoundProcess.RemoveSoundSource(Sound);
         }
 
         #endregion
@@ -563,7 +598,7 @@ namespace ORTS
             if (Opening == Crossing.HasTrain)
             {
                 Opening = !Crossing.HasTrain;
-                if (!CrossingObj.silent) Sound.HandleEvent(Opening ? 4 : 3);
+                if (Sound != null) Sound.HandleEvent(Opening ? Event.CrossingOpening : Event.CrossingClosing);
             }
 
             // Looping when animTiming < 0 (forwards then backwards then forwards again).
@@ -575,7 +610,7 @@ namespace ORTS
                     AnimationKey -= elapsedTime.ClockSeconds / CrossingObj.levelCrTiming.animTiming;
                 if (AnimationKey > AnimationFrames) AnimationKey -= AnimationFrames;
             }
-            else
+            else if (CrossingObj.levelCrTiming.animTiming > 0)
             {
                 if (Opening)
                     AnimationKey -= elapsedTime.ClockSeconds / CrossingObj.levelCrTiming.animTiming;
@@ -663,7 +698,8 @@ namespace ORTS
         public bool HasNightSubObj;
 
         readonly Viewer3D Viewer;
-        readonly string FilePath;
+        public readonly string FilePath;
+        public readonly string ReferencePath;
 
         /// <summary>
         /// Create an empty shape used as a sub when the shape won't load
@@ -685,6 +721,12 @@ namespace ORTS
         {
             Viewer = viewer;
             FilePath = filePath;
+            if (filePath.Contains('\0'))
+            {
+                var parts = filePath.Split('\0');
+                FilePath = parts[0];
+                ReferencePath = parts[1];
+            }
             LoadContent();
         }
 
@@ -703,8 +745,6 @@ namespace ORTS
                 textureFlags = (Helpers.TextureFlags)sdFile.shape.ESD_Alternative_Texture;
                 HasNightSubObj = sdFile.shape.ESD_SubObj;
             }
-            if (FilePath.ToUpperInvariant().Contains(@"\TRAINS\TRAINSET\"))
-                textureFlags |= Helpers.TextureFlags.TrainSet;
 
             var matrixCount = sFile.shape.matrices.Count;
             MatrixNames.Capacity = matrixCount;
@@ -773,8 +813,9 @@ namespace ORTS
                 SubObjects = (from sub_object obj in MSTSdistance_level.sub_objects
                               select new SubObject(obj, MSTSdistance_level.distance_level_header.hierarchy, textureFlags, index++, sFile, sharedShape)).ToArray();
 #else
+                var index = 0;
                 SubObjects = (from sub_object obj in MSTSdistance_level.sub_objects
-                              select new SubObject(obj, MSTSdistance_level.distance_level_header.hierarchy, textureFlags, sFile, sharedShape)).ToArray();
+                              select new SubObject(obj, ref index, MSTSdistance_level.distance_level_header.hierarchy, textureFlags, sFile, sharedShape)).ToArray();
 #endif
                 if (SubObjects.Length == 0)
                     throw new InvalidDataException("Shape file missing sub_object");
@@ -791,7 +832,7 @@ namespace ORTS
         public class SubObject
         {
             static readonly SceneryMaterialOptions[] UVTextureAddressModeMap = new[] {
-                SceneryMaterialOptions.None,
+                SceneryMaterialOptions.TextureAddressModeWrap,
                 SceneryMaterialOptions.TextureAddressModeMirror,
                 SceneryMaterialOptions.TextureAddressModeClamp,
                 SceneryMaterialOptions.TextureAddressModeBorder,
@@ -822,7 +863,7 @@ namespace ORTS
 #if DEBUG_SHAPE_HIERARCHY
             public SubObject(sub_object sub_object, int[] hierarchy, Helpers.TextureFlags textureFlags, int index, SFile sFile, SharedShape sharedShape)
 #else
-            public SubObject(sub_object sub_object, int[] hierarchy, Helpers.TextureFlags textureFlags, SFile sFile, SharedShape sharedShape)
+            public SubObject(sub_object sub_object, ref int totalPrimitiveIndex, int[] hierarchy, Helpers.TextureFlags textureFlags, SFile sFile, SharedShape sharedShape)
 #endif
             {
 #if DEBUG_SHAPE_HIERARCHY
@@ -869,7 +910,7 @@ namespace ORTS
                             options |= UVTextureAddressModeMap[lightModelConfiguration.uv_ops[0].TexAddrMode - 1];
                         else if (!ShapeWarnings.Contains("texture_addressing_mode:" + lightModelConfiguration.uv_ops[0].TexAddrMode))
                         {
-                            Trace.TraceWarning("Skipped unknown texture addressing mode {1} first seen in shape {0}", sharedShape.FilePath, lightModelConfiguration.uv_ops[0].TexAddrMode);
+                            Trace.TraceInformation("Skipped unknown texture addressing mode {1} first seen in shape {0}", sharedShape.FilePath, lightModelConfiguration.uv_ops[0].TexAddrMode);
                             ShapeWarnings.Add("texture_addressing_mode:" + lightModelConfiguration.uv_ops[0].TexAddrMode);
                         }
 
@@ -880,7 +921,7 @@ namespace ORTS
                         options |= ShaderNames[sFile.shape.shader_names[primitiveState.ishader]];
                     else if (!ShapeWarnings.Contains("shader_name:" + sFile.shape.shader_names[primitiveState.ishader]))
                     {
-                        Trace.TraceWarning("Skipped unknown shader name {1} first seen in shape {0}", sharedShape.FilePath, sFile.shape.shader_names[primitiveState.ishader]);
+                        Trace.TraceInformation("Skipped unknown shader name {1} first seen in shape {0}", sharedShape.FilePath, sFile.shape.shader_names[primitiveState.ishader]);
                         ShapeWarnings.Add("shader_name:" + sFile.shape.shader_names[primitiveState.ishader]);
                     }
 
@@ -888,7 +929,7 @@ namespace ORTS
                         options |= VertexLightModeMap[12 + vertexState.LightMatIdx];
                     else if (!ShapeWarnings.Contains("lighting_model:" + vertexState.LightMatIdx))
                     {
-                        Trace.TraceWarning("Skipped unknown lighting model index {1} first seen in shape {0}", sharedShape.FilePath, vertexState.LightMatIdx);
+                        Trace.TraceInformation("Skipped unknown lighting model index {1} first seen in shape {0}", sharedShape.FilePath, vertexState.LightMatIdx);
                         ShapeWarnings.Add("lighting_model:" + vertexState.LightMatIdx);
                     }
 
@@ -900,7 +941,10 @@ namespace ORTS
                     {
                         var texture = sFile.shape.textures[primitiveState.tex_idxs[0]];
                         var imageName = sFile.shape.images[texture.iImage];
-                        material = sharedShape.Viewer.MaterialManager.Load("Scenery", Helpers.GetShapeTextureFile(sharedShape.Viewer.Simulator, textureFlags, sharedShape.FilePath, imageName), (int)options, texture.MipMapLODBias);
+                        if (String.IsNullOrEmpty(sharedShape.ReferencePath))
+                            material = sharedShape.Viewer.MaterialManager.Load("Scenery", Helpers.GetRouteTextureFile(sharedShape.Viewer.Simulator, textureFlags, imageName), (int)options, texture.MipMapLODBias);
+                        else
+                            material = sharedShape.Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(sharedShape.Viewer.Simulator, textureFlags, sharedShape.ReferencePath, imageName), (int)options, texture.MipMapLODBias);
                     }
                     else
                     {
@@ -922,17 +966,21 @@ namespace ORTS
                     return new { Key = material.ToString() + "/" + vertexState.imatrix.ToString(), Primitive = primitive, Material = material, HierachyIndex = vertexState.imatrix };
                 }).ToArray();
 #else
+                    if (primitive.indexed_trilist.vertex_idxs.Count == 0)
+                    {
+                        Trace.TraceWarning("Skipped primitive with 0 indices in {0}", sharedShape.FilePath);
+                        continue;
+                    }
+
                     var indexData = new List<ushort>(primitive.indexed_trilist.vertex_idxs.Count * 3);
                     foreach (vertex_idx vertex_idx in primitive.indexed_trilist.vertex_idxs)
-                    {
-                        indexData.Add((ushort)vertex_idx.a);
-                        indexData.Add((ushort)vertex_idx.b);
-                        indexData.Add((ushort)vertex_idx.c);
-                    }
+                        foreach (var index in new[] { vertex_idx.a, vertex_idx.b, vertex_idx.c })
+                            indexData.Add((ushort)index);
 
                     var indexBuffer = new IndexBuffer(sharedShape.Viewer.GraphicsDevice, typeof(short), indexData.Count, BufferUsage.WriteOnly);
                     indexBuffer.SetData(indexData.ToArray());
                     ShapePrimitives[primitiveIndex] = new ShapePrimitive(material, vertexBufferSet, indexBuffer, indexData.Min(), indexData.Max() - indexData.Min() + 1, indexData.Count / 3, hierarchy, vertexState.imatrix);
+                    ShapePrimitives[primitiveIndex].SortIndex = ++totalPrimitiveIndex;
                     ++primitiveIndex;
                 }
 #endif
@@ -975,6 +1023,9 @@ namespace ORTS
                 }
                 if (sub_object.primitives.Count != indexes.Count)
                     Trace.TraceInformation("{1} -> {2} primitives in {0}", sharedShape.FilePath, sub_object.primitives.Count, indexes.Count);
+#else
+                if (primitiveIndex < ShapePrimitives.Length)
+                    ShapePrimitives = ShapePrimitives.Take(primitiveIndex).ToArray();
 #endif
             }
 
@@ -1080,6 +1131,13 @@ namespace ORTS
                 while ((chosenDistanceLevelIndex > 0) && Viewer.Camera.InRange(mstsLocation, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewSphereRadius, lodControl.DistanceLevels[chosenDistanceLevelIndex - 1].ViewingDistance))
                     chosenDistanceLevelIndex--;
                 var chosenDistanceLevel = lodControl.DistanceLevels[chosenDistanceLevelIndex];
+
+                // If set, extend the outer LOD to the max. viewing distance
+                if (Viewer.Settings.LODViewingExtention)
+                {
+                    if (chosenDistanceLevelIndex == lodControl.DistanceLevels.Length - 1) chosenDistanceLevel.ViewingDistance = Viewer.Settings.ViewingDistance;
+                }
+
                 // The 1st subobject (note that index 0 is the main object itself) is hidden during the day if HasNightSubObj is true.
                 foreach (var subObject in chosenDistanceLevel.SubObjects.Where((so, i) => (subObjVisible == null || subObjVisible[i]) && (i != 1 || !HasNightSubObj || Viewer.MaterialManager.sunDirection.Y < 0)))
                 {

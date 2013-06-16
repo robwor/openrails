@@ -1,10 +1,20 @@
-// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
@@ -16,6 +26,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ORTS.Common;
 using ORTS.Popups;
 
 namespace ORTS
@@ -100,35 +111,21 @@ namespace ORTS
                 DrawCarNumber = !DrawCarNumber;
             if (UserInput.IsPressed(UserCommands.DisplayStationLabels))
             {
-                // Cycles round 4 states
+                // Steps along a sequence of 5 states
                 // none > both > sidings only > platforms only > none
-                // MSTS users will first see the 2 states they expect and then discover the extra two. 
-                if (DrawSiding == false && DrawPlatform == false)
-                {
-                    DrawSiding = true;
-                    DrawPlatform = true;
-                }
-                else
-                {
-                    if (DrawSiding == true && DrawPlatform == true)
-                    {
-                        DrawSiding = false;
-                        DrawPlatform = true;
-                    }
-                    else
-                    {
-                        if (DrawSiding == false && DrawPlatform == true)
-                        {
-                            DrawSiding = true;
-                            DrawPlatform = false;
-                        }
-                        else
-                        {
-                            DrawSiding = false;
-                            DrawPlatform = false;
-                        }
-                    }
-                }
+                //   00 >   11 >           10 >             01 >   00
+                
+                // Set the first 2 bits of an int
+                int bitArray = 0;
+                bitArray += DrawSiding ? 1 : 0;
+                bitArray += DrawPlatform ? 2 : 0;
+                // Decrement the int to step along the sequence
+                bitArray--;
+                // Extract first 2 bits of the int
+                DrawSiding = ((bitArray & 1) == 1);
+                DrawPlatform = ((bitArray & 2) == 2);
+                // Take modulus 4 to keep in range 0-3. +1 as messages are in range 1-4
+                Viewer.Simulator.Confirmer.Confirm( CabControl.Labels, (CabSetting)(bitArray % 4) + 1 );
             }
         }
 
@@ -146,7 +143,7 @@ namespace ORTS
             //Here's where the logger stores the data from each frame
             if (Viewer.Settings.DataLogger)
             {
-                Logger.Data(Program.Version);
+                Logger.Data(VersionInfo.Version);
                 Logger.Data(FrameNumber.ToString("F0"));
                 Logger.Data(GetWorkingSetSize().ToString("F0"));
                 Logger.Data(GC.GetTotalMemory(false).ToString("F0"));
@@ -168,7 +165,11 @@ namespace ORTS
                 Logger.Data(Viewer.PlayerTrain.MUReverserPercent.ToString("F0"));
                 Logger.Data(Viewer.PlayerLocomotive.ThrottlePercent.ToString("F0"));
                 Logger.Data(Viewer.PlayerLocomotive.MotiveForceN.ToString("F0"));
+#if !NEW_SIGNALLING
                 Logger.Data(TrackMonitorWindow.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+#else
+                Logger.Data(FormatStrings.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+#endif
                 Logger.Data((Viewer.PlayerLocomotive.GravityForceN / (Viewer.PlayerLocomotive.MassKG * 9.81f)).ToString("F0"));
                 Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).LocomotiveAxle.SlipSpeedPercent.ToString("F0"));
                 Logger.End();
@@ -223,6 +224,11 @@ namespace ORTS
             return memory;
         }
 
+        /// <summary>
+        /// Converts duration in seconds to hours, minutes and integer seconds
+        /// </summary>
+        /// <param name="clockTimeSeconds"></param>
+        /// <returns></returns>
         public static string FormattedTime(double clockTimeSeconds) //some measure of time so it can be sorted.  Good enuf for now. Might add more later. Okay
         {
             int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
@@ -243,6 +249,53 @@ namespace ORTS
             return string.Format("{0:D2}:{1:D2}:{2:D2}", hour, minute, seconds);
         }
 
+        /// <summary>
+        /// Converts duration in seconds to hours, minutes and seconds to 2 decimal places.
+        /// </summary>
+        /// <param name="clockTimeSeconds"></param>
+        /// <returns></returns>
+        public static string FormattedPreciseTime( double clockTimeSeconds ) //some measure of time so it can be sorted.  Good enuf for now. Might add more later. Okay
+        {
+            int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
+            clockTimeSeconds -= hour * 60.0 * 60.0;
+            int minute = (int)(clockTimeSeconds / 60.0);
+            clockTimeSeconds -= minute * 60.0;
+            double seconds = clockTimeSeconds;
+            // Reset clock before and after midnight
+            if( hour >= 24 )
+                hour %= 24;
+            if( hour < 0 )
+                hour += 24;
+            if( minute < 0 )
+                minute += 60;
+            if( seconds < 0 )
+                seconds += 60;
+
+            return string.Format( "{0:D2}:{1:D2}:{2:00.00}", hour, minute, seconds );
+        }
+
+
+        /// <summary>
+        /// Converts duration from seconds to hours and minutes (to the nearest minute)
+        /// </summary>
+        /// <param name="clockTimeSeconds"></param>
+        /// <returns></returns>
+        public static string FormattedApproxTime( double clockTimeSeconds ) {
+            int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
+            clockTimeSeconds -= hour * 60.0 * 60.0;
+            int minute = (int)((clockTimeSeconds / 60.0) + 0.5);    // + 0.5 to round to nearest minute
+            clockTimeSeconds -= minute * 60.0;
+            // Reset clock before and after midnight
+            if( hour >= 24 )
+                hour %= 24;
+            if( hour < 0 )
+                hour += 24;
+            if( minute < 0 )
+                minute += 60;
+
+            return string.Format( "{0:D2}:{1:D2}", hour, minute );
+        }
+        
         static void DataLoggerStart()
         {
             using (StreamWriter file = File.AppendText("dump.csv"))

@@ -1,12 +1,27 @@
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Diagnostics;
 using System.IO;
-using ORTS.Interlocking;
+#if NEW_SIGNALLING
+using ORTS;
+using System.Collections.Generic;
+#endif
 
 namespace MSTS
 {
@@ -64,7 +79,7 @@ namespace MSTS
                     TrackNodes = new TrackNode[count + 1];
                     int idx = 1;
                     stf.ParseBlock(new STFReader.TokenProcessor[] {
-                        new STFReader.TokenProcessor("tracknode", ()=>{ TrackNodes[idx] = new TrackNode(stf, idx); ++idx; }),
+                        new STFReader.TokenProcessor("tracknode", ()=>{ TrackNodes[idx] = new TrackNode(stf, idx, count); ++idx; }),
                     });
                 }),
                 new STFReader.TokenProcessor("tritemtable", ()=>{
@@ -103,7 +118,7 @@ namespace MSTS
 
     public class TrackNode
     {
-        public TrackNode(STFReader stf, int idx)
+        public TrackNode(STFReader stf, int idx, int count)
         {
             stf.MustMatch("(");
             Index = stf.ReadUInt(STFReader.UNITS.None, null);
@@ -121,7 +136,7 @@ namespace MSTS
                     for (int i = 0; i < Inpins + Outpins; ++i)
                     {
                         stf.MustMatch("TrPin");
-                        TrPins[i] = new TrPin(stf);
+                        TrPins[i] = new TrPin(stf, count);
                     }
                     stf.SkipRestOfBlock();
                 }),
@@ -150,22 +165,51 @@ namespace MSTS
         public uint Outpins;
 		public uint Index;
 
+#if NEW_SIGNALLING
+        public ORTS.TrackCircuitXRefList TCCrossReference = null;  // Cross reference with TC sections
+#else
         public InterlockingTrack InterlockingTrack { get; set; }
+#endif
     
     }
 
     [DebuggerDisplay("\\{MSTS.TrPin\\} Link={Link}, Dir={Direction}")]
     public class TrPin
     {
-        public TrPin(STFReader stf)
+        public TrPin(STFReader stf, int count)
         {
             stf.MustMatch("(");
             Link = stf.ReadInt(STFReader.UNITS.None, null);
             Direction = stf.ReadInt(STFReader.UNITS.None, null);
+            if (Link <= 0 || Link > count)
+                STFException.TraceWarning(stf, String.Format("Track node pin has invalid link {0}", Link));
             stf.SkipRestOfBlock();
         }
         public int Link;
         public int Direction;
+
+#if NEW_SIGNALLING
+        //
+        // constructor for TrackCircuitSection pins
+        //
+
+        public TrPin()
+        {
+        }
+
+        //
+        // copy pins (from trackNode to TrackCircuitSection)
+        //
+
+        public TrPin Copy()
+        {
+            TrPin newPin = new TrPin();
+            newPin.Direction = this.Direction;
+            newPin.Link = this.Link;
+
+            return newPin;
+        }
+#endif
     }
 
     [DebuggerDisplay("\\{MSTS.UiD\\} ID={WorldID}, TileX={TileX}, TileZ={TileZ}, X={X}, Y={Y}, Z={Z}, AX={AX}, AY={AY}, AZ={AZ}, WorldX={WorldTileX}, WorldZ={WorldTileZ}")]
@@ -200,20 +244,10 @@ namespace MSTS
     [DebuggerDisplay("\\{MSTS.TrJunctionNode\\} SelectedRoute={SelectedRoute}, ShapeIndex={ShapeIndex}")]
     public class TrJunctionNode
     {
-        public int SelectedRoute
-        {
-            get
-            {
-                return _selectedRoute;
-            }
-            set
-            {
-                _selectedRoute = value;
-            }
-        }
+        public int SelectedRoute = 0;
+        
 		public TrackNode TN;
 
-        private int _selectedRoute = 0;
         public int Idx { get; private set; }
 
         public TrJunctionNode(STFReader stf, int idx)
@@ -313,8 +347,8 @@ namespace MSTS
         {
             SectionIndex = stf.ReadUInt(STFReader.UNITS.None, null);
             ShapeIndex = stf.ReadUInt(STFReader.UNITS.None, null);
-            stf.ReadString(); // worldfilenamex
-            stf.ReadString(); // worldfilenamez
+            WFNameX = stf.ReadInt(STFReader.UNITS.None, null);// worldfilenamex
+            WFNameZ = stf.ReadInt(STFReader.UNITS.None, null);// worldfilenamez
             WorldFileUiD = stf.ReadUInt(STFReader.UNITS.None, null); // UID in worldfile
             flag1 = stf.ReadInt(STFReader.UNITS.None, null); // 0
             flag2 = stf.ReadInt(STFReader.UNITS.None, null); // 1
@@ -338,8 +372,12 @@ namespace MSTS
         public float X, Y, Z;
         public float AX, AY, AZ;
         public uint WorldFileUiD;
-   
-         
+        public int WFNameX, WFNameZ;
+        public float StartElev = 0f, EndElev = 0f, MaxElev = 0f;
+        public override string ToString()
+        {
+            return String.Format("{{TileX:{0} TileZ:{1} X:{2} Y:{3} Z:{4} UiD:{5} Section:{6} Shape:{7}}}", WFNameX, WFNameZ, X, Y, Z, WorldFileUiD, SectionIndex, ShapeIndex);
+        }
     }
 
 
@@ -410,7 +448,11 @@ namespace MSTS
 
     public class CrossoverItem : TrItem
     {
+#if !NEW_SIGNALLING
         uint TrackNode, CID1;
+#else
+        public uint TrackNode, CID1;
+#endif
         public CrossoverItem(STFReader stf, int idx)
         {
             ItemType = trItemType.trCROSSOVER;
@@ -683,6 +725,21 @@ namespace MSTS
                 }),
             });
         }
+
+#if NEW_SIGNALLING
+        // constructor to create Platform Item out of Siding Item
+
+        public PlatformItem(SidingItem thisSiding)
+        {
+            TrItemId = thisSiding.TrItemId;
+            SData1 = thisSiding.SData1;
+            SData2 = thisSiding.SData2;
+            ItemName = thisSiding.ItemName;
+            Flags1 = thisSiding.Flags1;
+            LinkedPlatformItemId = thisSiding.Flags2;
+            Station = String.Copy(ItemName);
+        }
+#endif
     }
 
     public class HazzardItem : TrItem

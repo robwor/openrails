@@ -1,4 +1,21 @@
-﻿/* ELECTRIC LOCOMOTIVE CLASSES
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
+/* ELECTRIC LOCOMOTIVE CLASSES
  * 
  * The locomotive is represented by two classes:
  *  ...Simulator - defines the behaviour, ie physics, motion, power generated etc
@@ -9,12 +26,6 @@
  *  LocomotiveViewer - provides basic animation for running gear, wipers, etc
  * 
  */
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -47,8 +58,8 @@ namespace ORTS
         public IIRFilter VoltageFilter;
         public float VoltageV = 0.0f;
 
-		public MSTSElectricLocomotive(Simulator simulator, string wagFile, TrainCar previousCar)
-			: base(simulator, wagFile, previousCar)
+        public MSTSElectricLocomotive(Simulator simulator, string wagFile)
+            : base(simulator, wagFile)
         {
             VoltageFilter = new IIRFilter(IIRFilter.FilterTypes.Butterworth, 1, IIRFilter.HzToRad(0.7f), 0.001f);
         }
@@ -103,9 +114,8 @@ namespace ORTS
             outf.Write(PowerOn);
 
             outf.Write(Pan);
-            outf.Write(FrontPanUp);
-            outf.Write(AftPanUp);
-            outf.Write(NumPantograph);
+            outf.Write(Pan1Up);
+            outf.Write(Pan2Up);
 
             base.Save(outf);
         }
@@ -119,13 +129,11 @@ namespace ORTS
             PantographFirstUp = inf.ReadBoolean();
             PantographSecondUp = inf.ReadBoolean();
             PowerOn = inf.ReadBoolean();
-
+            if (PowerOn)
+                SignalEvent(Event.EnginePowerOn);
             Pan = inf.ReadBoolean();
-            FrontPanUp = inf.ReadBoolean();
-            AftPanUp = inf.ReadBoolean();
-            NumPantograph = (int)inf.ReadSingle();
-
-            //if (inf.ReadBoolean()) SignalEvent(EventID.PantographUp);
+            Pan1Up = inf.ReadBoolean();
+            Pan2Up = inf.ReadBoolean();
             base.Restore(inf);
         }
 
@@ -150,7 +158,10 @@ namespace ORTS
 
             if (!(PantographFirstUp || PantographSecondUp))
             {
+                if (PowerOn)
+                    SignalEvent(Event.EnginePowerOff);
                 PowerOn = false;
+                CompressorOn = false;
                 if ((PantographFirstDelay -= elapsedClockSeconds) < 0.0f) PantographFirstDelay = 0.0f;
                 if ((PantographSecondDelay -= elapsedClockSeconds) < 0.0f) PantographSecondDelay = 0.0f;
             }
@@ -160,6 +171,8 @@ namespace ORTS
                 {
                     if ((PantographFirstDelay -= elapsedClockSeconds) < 0.0f)
                     {
+                        if (!PowerOn)
+                            SignalEvent(Event.EnginePowerOn);
                         PowerOn = true;
                         PantographFirstDelay = 0.0f;
                     }
@@ -171,6 +184,8 @@ namespace ORTS
                 {
                     if ((PantographSecondDelay -= elapsedClockSeconds) < 0.0f)
                     {
+                        if (!PowerOn)
+                            SignalEvent(Event.EnginePowerOn);
                         PowerOn = true;
                         PantographSecondDelay = 0.0f;
                     }
@@ -185,26 +200,53 @@ namespace ORTS
                 VoltageV = VoltageFilter.Filter(0.0f, elapsedClockSeconds);
 
             base.Update(elapsedClockSeconds);
-            Variable2 = Variable1;
+            //Variable2 = Variable1 * 100F ;
+            //Variable2 = Math.Abs(MotiveForceN) / MaxForceN * 100F ;
+
+            if ( ThrottlePercent == 0f ) Variable2 = 0;
+            else 
+            {
+                float dV2;
+                dV2 = Math.Abs(MotiveForceN) / MaxForceN * 100f - Variable2;
+                float max = 2f;
+                if (dV2 > max) dV2 = max;
+                else if (dV2 < -max) dV2 = -max;
+                Variable2 += dV2;
+            }
+            Variable3 = 0;
+            if ( DynamicBrakePercent > 0)
+                Variable3 = Math.Abs(MotiveForceN) / MaxDynamicBrakeForceN;
         }
 
         /// <summary>
         /// Used when someone want to notify us of an event
         /// </summary>
-        public override void SignalEvent( EventID eventID)
+        public override void SignalEvent(Event evt)
         {
-            do  // Like 'switch' (i.e. using 'break' is more efficient than a sequence of 'if's) but doesn't need constant EventID.<values>
+            switch (evt)
             {
-                // for example
-                // case EventID.BellOn: Bell = true; break;
-                // case EventID.BellOff: Bell = false; break;
-                if (eventID == EventID.Pantograph1Down) { SetPantographFirst(false); break; }
-                if (eventID == EventID.Pantograph2Down) { SetPantographSecond(false); break; }
-                if (eventID == EventID.Pantograph1Up) { SetPantographFirst(true); break; }
-                if (eventID == EventID.Pantograph2Up) { SetPantographSecond(true); break; }
-            } while( false );  // Never repeats
+                case Event.Pantograph1Up: { SetPantographFirst(true); break; }
+                case Event.Pantograph1Down: { SetPantographFirst(false); break; }
+                case Event.Pantograph2Up: { SetPantographSecond(true); break; }
+                case Event.Pantograph2Down: { SetPantographSecond(false); break; }
+            }
 
-            base.SignalEvent( eventID );
+            base.SignalEvent(evt);
+        }
+
+        /// <summary>
+        /// Raise or lower the first pantograph on all locomotives in the train
+        /// </summary>
+        /// <param name="raise"></param>
+        public void SetPantographs( int item, bool raise ) {
+            foreach( TrainCar traincar in Train.Cars ) {
+                if( traincar.GetType() == typeof( MSTSElectricLocomotive ) ) {
+                    if( item == 1 ) ((MSTSElectricLocomotive)traincar).SetPantographFirst( raise );
+                    if( item == 2 ) ((MSTSElectricLocomotive)traincar).SetPantographSecond( raise );
+                }
+            }
+            if( item == 1 ) this.Simulator.Confirmer.Confirm( CabControl.Pantograph1, raise == true ? CabSetting.On : CabSetting.Off );
+            if( item == 2 ) this.Simulator.Confirmer.Confirm( CabControl.Pantograph2, raise == true ? CabSetting.On : CabSetting.Off );
         }
 
         public void SetPantographFirst( bool up)
@@ -295,38 +337,13 @@ namespace ORTS
         /// </summary>
         public override void HandleUserInput(ElapsedTime elapsedTime)
         {
-            bool newState = false;
-            if (UserInput.IsPressed(UserCommands.ControlPantographFirst))
-            {
-                // Raise or lower the first pantograph on all locomotives in the train
-                newState = !ElectricLocomotive.PantographFirstUp;
-                bool confirmAction = false;
-                foreach( TrainCar traincar in ElectricLocomotive.Train.Cars )
-                {
-                    if( traincar.GetType() == typeof( MSTSElectricLocomotive ) ) {
-                        ((MSTSElectricLocomotive)traincar).SetPantographFirst( newState );
-                        confirmAction = true;
-                    }
-                }
-                if( confirmAction ) {
-                    if( ElectricLocomotive.NumPantograph > 0 ) {
-                        this.Viewer.Simulator.Confirmer.Confirm( CabControl.Pantograph1, newState == true ? CabSetting.On : CabSetting.Off );
-                    } else {
-                        this.Viewer.Simulator.Confirmer.Confirm( CabControl.Power, newState == true ? CabSetting.On : CabSetting.Off );
-                    }
-                }
+            if( UserInput.IsPressed( UserCommands.ControlPantograph1 ) ) {
+                new PantographCommand( _Viewer3D.Log, 1, !ElectricLocomotive.PantographFirstUp );
+                return; // I.e. Skip the call to base.HandleUserInput()
             }
-            if (UserInput.IsPressed(UserCommands.ControlPantographSecond))
-            {
-                // Raise or lower the second pantograph on all locomotives in the train
-                newState = !ElectricLocomotive.PantographSecondUp;
-                bool confirmAction = false;
-                foreach( TrainCar traincar in ElectricLocomotive.Train.Cars )
-                {
-                    if (traincar.GetType() == typeof(MSTSElectricLocomotive))
-                        ((MSTSElectricLocomotive)traincar).SetPantographSecond(newState);
-                }
-                if( confirmAction ) { this.Viewer.Simulator.Confirmer.Confirm( CabControl.Pantograph2, newState == true ? CabSetting.On : CabSetting.Off ); }
+            if( UserInput.IsPressed( UserCommands.ControlPantograph2 ) ) {
+                new PantographCommand( _Viewer3D.Log, 2, !ElectricLocomotive.PantographSecondUp );
+                return;
             }
 
             base.HandleUserInput(elapsedTime);

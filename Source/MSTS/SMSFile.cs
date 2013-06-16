@@ -1,7 +1,19 @@
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections;
@@ -100,7 +112,7 @@ namespace MSTS
         public bool ExternalCam = false;
         public bool CabCam = false;
         public bool PassengerCam = false;
-        public float Distance = 10000;  // by default we are 'in range' to hear this
+        public float Distance = 1000;  // by default we are 'in range' to hear this
         public int TrackType = -1;
 
         public Activation(STFReader stf)
@@ -110,7 +122,7 @@ namespace MSTS
                 new STFReader.TokenProcessor("externalcam", ()=>{ ExternalCam = stf.ReadBoolBlock(true); }),
                 new STFReader.TokenProcessor("cabcam", ()=>{ CabCam = stf.ReadBoolBlock(true); }),
                 new STFReader.TokenProcessor("passengercam", ()=>{ PassengerCam = stf.ReadBoolBlock(true); }),
-                new STFReader.TokenProcessor("distance", ()=>{ Distance = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                new STFReader.TokenProcessor("distance", ()=>{ Distance = stf.ReadFloatBlock(STFReader.UNITS.Distance, Distance); }),
                 new STFReader.TokenProcessor("tracktype", ()=>{ TrackType = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
             });
         }
@@ -147,7 +159,7 @@ namespace MSTS
         public int Priority = 0;
         public Triggers Triggers;
         public float Volume = 1.0f;
-        public VolumeCurve VolumeCurve = null;
+        public List<VolumeCurve> VolumeCurves = new List<VolumeCurve>();
         public FrequencyCurve FrequencyCurve = null;
 
         public SMSStream(STFReader stf, float VolumeOfScGroup)
@@ -157,7 +169,7 @@ namespace MSTS
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("priority", ()=>{ Priority = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
                 new STFReader.TokenProcessor("triggers", ()=>{ Triggers = new Triggers(stf); }),
-                new STFReader.TokenProcessor("volumecurve", ()=>{ VolumeCurve = new VolumeCurve(stf); }),
+                new STFReader.TokenProcessor("volumecurve", ()=>{ VolumeCurves.Add(new VolumeCurve(stf)); }),
                 new STFReader.TokenProcessor("frequencycurve", ()=>{ FrequencyCurve = new FrequencyCurve(stf); }),
                 new STFReader.TokenProcessor("volume", ()=>{ Volume = stf.ReadFloatBlock(STFReader.UNITS.None, Volume); }),
             });
@@ -190,7 +202,7 @@ namespace MSTS
                 case "variable1controlled": Control = Controls.Variable1Controlled; break;
                 case "variable2controlled": Control = Controls.Variable2Controlled; break;
                 case "variable3controlled": Control = Controls.Variable3Controlled; break;
-                default: STFException.TraceWarning(stf, "Skipped unknown VolumeCurve type " + type); stf.SkipRestOfBlock(); return;
+                default: STFException.TraceInformation(stf, "Skipped unknown VolumeCurve type " + type); stf.SkipRestOfBlock(); return;
             }
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("granularity", ()=>{ Granularity = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
@@ -201,18 +213,16 @@ namespace MSTS
                     for (int i = 0; i < count; ++i)
                     {
                         CurvePoints[i].X = stf.ReadFloat(STFReader.UNITS.None, null);
+                        if (Control == Controls.DistanceControlled)
+						{
+							if (CurvePoints[i].X >= 0) CurvePoints[i].X *= CurvePoints[i].X;
+							else CurvePoints[i].X *= -CurvePoints[i].X;
+						}
                         CurvePoints[i].Y = stf.ReadFloat(STFReader.UNITS.None, null);
                     }
                     stf.SkipRestOfBlock();
                 }),
             });
-            if (Control == Controls.Variable2Controlled && CurvePoints[CurvePoints.Length - 1].X <= 1)
-            {
-                for (int i = 0; i < CurvePoints.Length; i++)
-                {
-                    CurvePoints[i].X *= 100f;
-                }
-            }
         }
     }
 
@@ -324,12 +334,24 @@ namespace MSTS
 
             string eventString = f.ReadString();
 
+            Threshold = f.ReadFloat(STFReader.UNITS.None, null);
+
             switch (eventString.ToLower())
             {
                 case "speed_inc_past": Event = Events.Speed_Inc_Past; break;
                 case "speed_dec_past": Event = Events.Speed_Dec_Past; break;
-                case "distance_inc_past": Event = Events.Distance_Inc_Past; break;
-                case "distance_dec_past": Event = Events.Distance_Dec_Past; break;
+                case "distance_inc_past":
+                    {
+                        Event = Events.Distance_Inc_Past;
+                        Threshold = Threshold * Threshold;
+                        break;
+                    }
+                case "distance_dec_past":
+                    {
+                        Event = Events.Distance_Dec_Past;
+                        Threshold = Threshold * Threshold;
+                        break;
+                    }
                 case "variable1_inc_past": Event = Events.Variable1_Inc_Past; break;
                 case "variable1_dec_past": Event = Events.Variable1_Dec_Past; break;
                 case "variable2_inc_past": Event = Events.Variable2_Inc_Past; break;
@@ -338,7 +360,7 @@ namespace MSTS
                 case "variable3_dec_past": Event = Events.Variable3_Dec_Past; break;
             }
 
-            Threshold = f.ReadFloat(STFReader.UNITS.None, null);
+           
 
             while (!f.EndOfBlock())
                 ParsePlayCommand(f, f.ReadString().ToLower());

@@ -1,7 +1,19 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -307,7 +319,7 @@ namespace ORTS
                             case "Rotary Switch 2-Position 1(OFF)": Rotary2Position1 = v; break;
                             case "Rotary Switch 2-Position 2(DIM)": Rotary2Position2 = v; break;
                             case "Rotary Switch 2-Position 3(FULL)": Rotary2Position3 = v; break;
-                            default: STFException.TraceWarning(reader, "Skipped unknown calibration value " + name); break;
+                            default: STFException.TraceInformation(reader, "Skipped unknown calibration value " + name); break;
                         }
                     }
                 }
@@ -373,12 +385,16 @@ namespace ORTS
             Commands[(int)UserCommands.CameraPassenger] = new RailDriverUserCommand(2, 0x40);
             Commands[(int)UserCommands.CameraBrakeman] = new RailDriverUserCommand(2, 0x80);
             //Commands[(int)UserCommands. hide popups] = new RailDriverUserCommand(3, 0x01);
+#if !NEW_SIGNALLING
             Commands[(int)UserCommands.DebugResetSignal] = new RailDriverUserCommand(3, 0x02);
+#else
+            Commands[(int)UserCommands.GameResetSignalForward] = new RailDriverUserCommand(3, 0x02);
+#endif
             //Commands[(int)UserCommands. load passengers] = new RailDriverUserCommand(3, 0x04);
             //Commands[(int)UserCommands. ok] = new RailDriverUserCommand(3, 0x08);
             // controls to right of blue buttons
-            Commands[(int)UserCommands.CameraPanIn] = new RailDriverUserCommand(3, 0x10);
-            Commands[(int)UserCommands.CameraPanOut] = new RailDriverUserCommand(3, 0x20);
+            Commands[(int)UserCommands.CameraZoomIn] = new RailDriverUserCommand(3, 0x10);
+            Commands[(int)UserCommands.CameraZoomOut] = new RailDriverUserCommand(3, 0x20);
             Commands[(int)UserCommands.CameraPanUp] = new RailDriverUserCommand(3, 0x40);
             Commands[(int)UserCommands.CameraPanRight] = new RailDriverUserCommand(3, 0x80);
             Commands[(int)UserCommands.CameraPanDown] = new RailDriverUserCommand(4, 0x01);
@@ -389,7 +405,7 @@ namespace ORTS
             //Commands[(int)UserCommands.ControlEmergency] = new RailDriverUserCommand(4, 0x30); handled elsewhere
             //Commands[(int)UserCommands. alerter] = new RailDriverUserCommand(4, 0x40);
             Commands[(int)UserCommands.ControlSander] = new RailDriverUserCommand(4, 0x80);
-            Commands[(int)UserCommands.ControlPantographFirst] = new RailDriverUserCommand(5, 0x01);
+            Commands[(int)UserCommands.ControlPantograph1] = new RailDriverUserCommand(5, 0x01);
             Commands[(int)UserCommands.ControlBell] = new RailDriverUserCommand(5, 0x02);
             Commands[(int)UserCommands.ControlHorn] = new RailDriverUserCommand(5, 0x0c);//either of two bits
         }

@@ -1,7 +1,19 @@
-﻿/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -94,10 +106,20 @@ namespace ORTS
             checkBoxBINSound.Checked = Settings.MSTSBINSound;
             checkBoxSuppressConfirmations.Checked = Settings.SuppressConfirmations;
             checkDispatcher.Checked = Settings.ViewDispatcher;
+            numericUpDownFOV.Value = Settings.ViewingFOV;
             numericCab2DStretch.Value = Settings.Cab2DStretch;
             checkBoxAdvancedAdhesion.Checked = Settings.UseAdvancedAdhesion;
             checkBoxBreakCouplers.Checked = Settings.BreakCouplers;
-
+			soundVolume.Value = Settings.SoundVolumePercent;
+            ElevationAmount.Value = Settings.UseSuperElevation;
+            MinLengthChoice.Value = Settings.SuperElevationMinLen;
+            SuperElevationGauge.Value = Settings.SuperElevationGauge;
+            distanceMountain.Checked = settings.DistantMountains;
+            DMDistance.Value = settings.DistantMountainsViewingTiles * 2;
+            DMLoweringValue.Value = settings.DistantMountainsLoweringValue;
+            NormalViewingDistance.Value = settings.ViewingDistance;
+            LODExtention.Checked = settings.LODViewingExtention;
+            checkDoubleWire.Checked = settings.DoubleWire;
         }
 
         string ParseCategoryFrom(string name)
@@ -216,7 +238,7 @@ namespace ORTS
 
             // these ones use the CameraMoveFast and CameraMoveSlow modifier
             foreach (UserCommands eCommand in new UserCommands[] { UserCommands.CameraPanLeft, UserCommands.CameraPanRight, 
-                        UserCommands.CameraPanUp, UserCommands.CameraPanDown, UserCommands.CameraPanIn, UserCommands.CameraPanOut, 
+                        UserCommands.CameraPanUp, UserCommands.CameraPanDown, UserCommands.CameraZoomIn, UserCommands.CameraZoomOut, 
                         UserCommands.CameraRotateLeft, UserCommands.CameraRotateRight, UserCommands.CameraRotateUp, UserCommands.CameraRotateDown })
 
                 FixModifiableKey(eCommand, new UserCommands[] { UserCommands.CameraMoveFast, UserCommands.CameraMoveSlow });
@@ -300,9 +322,20 @@ namespace ORTS
             Settings.MSTSBINSound = checkBoxBINSound.Checked;
             Settings.SuppressConfirmations = checkBoxSuppressConfirmations.Checked;
             Settings.ViewDispatcher = checkDispatcher.Checked;
+            Settings.ViewingFOV = (int)numericUpDownFOV.Value;
             Settings.Cab2DStretch = (int)numericCab2DStretch.Value;
             Settings.UseAdvancedAdhesion = checkBoxAdvancedAdhesion.Checked;
             Settings.BreakCouplers = checkBoxBreakCouplers.Checked;
+			Settings.SoundVolumePercent = (int)soundVolume.Value;
+            Settings.UseSuperElevation = (int)ElevationAmount.Value;
+            Settings.SuperElevationMinLen = (int)MinLengthChoice.Value;
+            Settings.SuperElevationGauge = (int)SuperElevationGauge.Value;
+            Settings.DistantMountains = distanceMountain.Checked;
+            Settings.DistantMountainsViewingTiles = (int) DMDistance.Value / 2;
+            Settings.DistantMountainsLoweringValue = (int)DMLoweringValue.Value;
+            Settings.ViewingDistance = (int)NormalViewingDistance.Value;
+            Settings.LODViewingExtention = LODExtention.Checked;
+            Settings.DoubleWire = checkDoubleWire.Checked;
             Settings.Save();
 
             DialogResult = DialogResult.OK;
@@ -343,6 +376,20 @@ namespace ORTS
                 MessageBox.Show(errors, Application.ProductName);
             else
                 MessageBox.Show("No errors found.", Application.ProductName);
+        }
+
+        private void comboBoxWindowSize_SelectedIndexChanged( object sender, EventArgs e ) {
+            var windowSizeParts = comboBoxWindowSize.Text.Split( new[] { 'x' }, 2 );
+            double width = Convert.ToDouble( windowSizeParts[0] );
+            double height = Convert.ToDouble( windowSizeParts[1] );
+            double aspectRatio = width / height;
+            bool wideScreen = aspectRatio > (4.0 / 3.0); 
+            numericCab2DStretch.Enabled = wideScreen;
+        }
+
+        private void numericUpDownFOV_ValueChanged(object sender, EventArgs e)
+        {
+            labelFOVHelp.Text = String.Format("{0:F0}° vertical FOV is the same as:\n{1:F0}° horizontal FOV on 4:3\n{2:F0}° horizontal FOV on 16:9", numericUpDownFOV.Value, numericUpDownFOV.Value * 4 / 3, numericUpDownFOV.Value * 16 / 9);
         }
     }
 }

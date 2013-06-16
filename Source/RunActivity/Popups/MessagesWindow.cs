@@ -1,14 +1,25 @@
-﻿// COPYRIGHT 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2010, 2011, 2012 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -61,10 +72,18 @@ namespace ORTS.Popups
         {
             base.Restore(inf);
             var messages = new List<Message>(inf.ReadInt32());
-            for (var i = 0; i < messages.Capacity; i++)
+            for( var i = 0; i < messages.Capacity; i++ )
+            {
                 messages.Add(new Message(inf));
+                // Reset the EndTime so the message lasts as long on restore as it did orginally.
+                // Without this reset, the band may last a very long time.
+                var last = messages.Count - 1;
+                var message = messages[last];
+                message.EndTime = Owner.Viewer.Simulator.GameTime + (message.EndTime - message.StartTime); 
+                MessagesChanged = true;
+            }
             Messages = messages;
-            MessagesChanged = true;
+            //MessagesChanged = true;
         }
 
         protected override void LocationChanged()
@@ -95,10 +114,11 @@ namespace ORTS.Popups
         protected override ControlLayout Layout(ControlLayout layout)
         {
             var vbox = base.Layout(layout).AddLayoutVertical();
+
             var maxLines = vbox.RemainingHeight / TextSize;
             var messages = Messages.Take(maxLines).Reverse().ToList();
             vbox.AddSpace(0, vbox.RemainingHeight - TextSize * messages.Count());
-            foreach (var message in messages)
+            foreach( var message in messages )
             {
                 var hbox = vbox.AddLayoutHorizontal(TextSize);
                 var width = hbox.RemainingWidth;
@@ -127,7 +147,7 @@ namespace ORTS.Popups
             public readonly string Key;
             public readonly string Text;
             public readonly double StartTime;
-            public readonly double EndTime;
+            public double EndTime;  // Not readonly so it can be reset by Restore().
             internal LabelShadow LabelShadow;
             internal Label LabelText;
 

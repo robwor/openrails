@@ -1,10 +1,20 @@
-// COPYRIGHT 2009, 2010, 2011, 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 /* SCENERY
@@ -77,7 +87,7 @@ namespace ORTS
                     {
                         var tile = worldFiles.FirstOrDefault(t => t.TileX == TileX + x && t.TileZ == TileZ + z);
                         if (tile == null)
-                            tile = LoadWorldFile(TileX + x, TileZ + z);
+                            tile = LoadWorldFile(TileX + x, TileZ + z, x == 0 && z == 0);
                         newWorldFiles.Add(tile);
                         oldWorldFiles.Remove(tile);
                     }
@@ -120,10 +130,10 @@ namespace ORTS
                     worldFile.PrepareFrame(frame, elapsedTime);
         }
 
-        WorldFile LoadWorldFile(int tileX, int tileZ)
+        WorldFile LoadWorldFile(int tileX, int tileZ, bool visible)
         {
             Trace.Write("W");
-            return new WorldFile(Viewer, tileX, tileZ);
+            return new WorldFile(Viewer, tileX, tileZ, visible);
         }
     }
 
@@ -152,13 +162,15 @@ namespace ORTS
         /// Open the specified WFile and load all the scenery objects into the viewer.
         /// If the file doesn't exist, then return an empty WorldFile object.
         /// </summary>
-        public WorldFile(Viewer3D viewer, int tileX, int tileZ)
+        /// <param name="visible">Tiles adjacent to the current visible tile may not be modelled.
+        /// This flag decides whether a missing file leads to a warning message.</param>
+        public WorldFile(Viewer3D viewer, int tileX, int tileZ, bool visible)
         {
             Viewer = viewer;
             TileX = tileX;
             TileZ = tileZ;
 
-            Viewer.Tiles.Load(tileX, tileZ);
+            Viewer.Tiles.Load(tileX, tileZ, visible);
 
             // determine file path to the WFile at the specified tile coordinates
             var WFileName = WorldFileNameFromTileCoordinates(tileX, tileZ);
@@ -166,7 +178,13 @@ namespace ORTS
 
             // if there isn't a file, then return with an empty WorldFile object
             if (!File.Exists(WFilePath))
+            {
+                if (visible)
+                {
+                    Trace.TraceWarning("World file missing - {0}", WFilePath);
+                }
                 return;
+            }
 
             // read the world file 
             var WFile = new WFile(WFilePath);
@@ -217,10 +235,27 @@ namespace ORTS
                         var trJunctionNode = trackObj.JNodePosn != null ? viewer.Simulator.TDB.GetTrJunctionNode(TileX, TileZ, (int)trackObj.UID) : null;
                         // We might not have found the junction node; if so, fall back to the static track shape.
                         if (trJunctionNode != null)
+                        {
+                            if (viewer.Simulator.UseSuperElevation > 0) SuperElevation.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath);
                             sceneryObjects.Add(new SwitchTrackShape(viewer, shapeFilePath, worldMatrix, trJunctionNode));
+                        }
                         else
-                            sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
-                        if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true)
+                        {
+                            //if want to use super elevation, we will generate tracks using dynamic tracks
+                            if (viewer.Simulator.UseSuperElevation > 0
+                                && SuperElevation.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath))
+                            {
+                                //var success = SuperElevation.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath);
+                                //if (success == 0) sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
+                            }
+                            //otherwise, use shapes
+                            else sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
+
+                        }
+                        if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true
+                            && worldObject.StaticDetailLevel != 2   // Make it compatible with routes that use 'HideWire', a workaround for MSTS that 
+                            && worldObject.StaticDetailLevel != 3   // allowed a mix of electrified and non electrified track see http://msts.steam4me.net/tutorials/hidewire.html
+                            )
                         {
                             int success = Wire.DecomposeStaticWire(viewer, dTrackList, trackObj, worldMatrix);
                             //if cannot draw wire, try to see if it is converted. modified for DynaTrax
@@ -232,7 +267,9 @@ namespace ORTS
                         if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true)
                             Wire.DecomposeDynamicWire(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
                         // Add DyntrackDrawers for individual subsections
-                        Dynatrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
+                        if (viewer.Simulator.UseSuperElevation > 0 && SuperElevation.UseSuperElevationDyn(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix))
+                            SuperElevation.DecomposeDynamicSuperElevation(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
+                        else Dynatrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
 
                     } // end else if DyntrackObj
                     else if (worldObject.GetType() == typeof(MSTS.ForestObj))
@@ -282,11 +319,11 @@ namespace ORTS
                 }
                 catch (Exception error)
                 {
-                    Trace.TraceWarning("{0} scenery object {1} failed to load", worldMatrix, worldObject.UID);
-                    Trace.WriteLine(error);
+                    Trace.WriteLine(new FileLoadException(String.Format("{0} scenery object {1} failed to load", worldMatrix, worldObject.UID), error));
                 }
             }
 
+            if (viewer.Simulator.UseSuperElevation > 0) SuperElevation.DecomposeStaticSuperElevation(Viewer, dTrackList, TileX, TileZ);
             if (Viewer.World.Sounds != null) Viewer.World.Sounds.AddByTile(TileX, TileZ);
         }
 

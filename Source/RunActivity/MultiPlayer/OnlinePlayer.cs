@@ -1,16 +1,19 @@
 ﻿// COPYRIGHT 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-
-/// 
-/// Additional Contributions
-/// Copyright (c) Jijun Tang
-/// Can only be used by the Open Rails Project.
-/// This file cannot be copied, modified or included in any software which is not distributed directly by the Open Rails project.
-/// 
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
@@ -39,8 +42,13 @@ namespace ORTS.MultiPlayer
 		public double CreatedTime;
 		private object lockObj = new object();
 		public string url = ""; //avatar location
+		public double quitTime = -100f;
+		public enum Status {Valid, Quit, Removed};
+		public Status status = Status.Valid;//is this player removed by the dispatcher
+
 		public void Send(string msg)
 		{
+			if (msg == null) return;
 			try
 			{
 				NetworkStream clientStream = Client.GetStream();
@@ -133,6 +141,13 @@ namespace ORTS.MultiPlayer
 			System.Console.WriteLine(this.Username + " quit");
 			if (Program.Simulator.Confirmer != null) Program.Simulator.Confirmer.Information(this.Username + " quit.");
 			Client.Close();
+			if (this.Train != null && this.status != Status.Removed) //remember the location of the train in case the player comes back later, if he is not removed by the dispatcher
+			{
+				if (!MPManager.Instance().lostPlayer.ContainsKey(this.Username)) MPManager.Instance().lostPlayer.Add(this.Username, this);
+				this.quitTime = Program.Simulator.GameTime;
+				this.Train.SpeedMpS = 0.0f;
+				this.status = Status.Quit;
+			}
 			MPManager.Instance().AddRemovedPlayer(this);//add this player to be removed
 			MPManager.BroadCast((new MSGQuit(this.Username)).ToString());
 			thread.Abort();

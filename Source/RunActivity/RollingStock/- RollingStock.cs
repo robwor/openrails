@@ -1,4 +1,21 @@
-﻿using System;
+﻿// COPYRIGHT 2009, 2010, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -9,7 +26,7 @@ namespace ORTS
 {
     public static class RollingStock
     {
-        public static TrainCar Load(Simulator simulator, string wagFilePath, TrainCar previousCar)
+        public static TrainCar Load(Simulator simulator, string wagFilePath)
         {
             GenericWAGFile wagFile = SharedGenericWAGFileManager.Get(wagFilePath);  
             TrainCar car;
@@ -28,14 +45,14 @@ namespace ORTS
                 }
                 catch (Exception error)
                 {
-                    Trace.WriteLine(error);
+                    Trace.WriteLine(new FileLoadException(wagFile.OpenRails.DLL, error));
                     // on error, fall through and try loading without the custom dll
                 }
             }
             if (!wagFile.IsEngine)
             {   
                 // its an ordinary MSTS wagon
-                car = new MSTSWagon(simulator, wagFilePath, previousCar);
+                car = new MSTSWagon(simulator, wagFilePath);
             }
             else
             {   
@@ -46,9 +63,9 @@ namespace ORTS
                 switch (wagFile.Engine.Type.ToLower())
                 {
                         // TODO complete parsing of proper car types
-                    case "electric": car = new MSTSElectricLocomotive(simulator, wagFilePath, previousCar); break;
-                    case "steam": car = new MSTSSteamLocomotive(simulator, wagFilePath, previousCar); break;
-                    case "diesel": car = new MSTSDieselLocomotive(simulator, wagFilePath, previousCar); break;
+                    case "electric": car = new MSTSElectricLocomotive(simulator, wagFilePath); break;
+                    case "steam": car = new MSTSSteamLocomotive(simulator, wagFilePath); break;
+                    case "diesel": car = new MSTSDieselLocomotive(simulator, wagFilePath); break;
 					default: throw new InvalidDataException(wagFilePath + "\r\n\r\nUnknown engine type: " + wagFile.Engine.Type);
                 }
             }
@@ -62,9 +79,9 @@ namespace ORTS
             wagon.Save(outf);
         }
 
-		public static TrainCar Restore(Simulator simulator, BinaryReader inf, Train train, TrainCar previousCar)
+        public static TrainCar Restore(Simulator simulator, BinaryReader inf, Train train)
         {
-            TrainCar car = Load(simulator, inf.ReadString(), previousCar);
+            TrainCar car = Load(simulator, inf.ReadString());
             car.Train = train;
             car.Restore(inf);
             return car;

@@ -1,10 +1,20 @@
-// COPYRIGHT 2010 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+// COPYRIGHT 2010, 2011, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -13,20 +23,16 @@
 
 ////////////////////    G L O B A L   V A L U E S    ///////////////////////////
 
-// General values
-float4x4 World;               // model -> world
-//float4x4 View;                // world -> view (currently unused)
-//float4x4 Projection;          // view -> projection (currently unused)
-float4x4 WorldViewProjection; // model -> world -> view -> projection
+float4x4 World;         // model -> world
+float4x4 WorldViewProjection;  // model -> world -> view -> projection
+float3   GlassColor;
+float2   ScreenSize;
+texture  ScreenTexture;
+texture  WindowTexture;
 
-float3 GlassColor;
-
-float2 ScreenSize;
-
-texture Screen_Tex;
-sampler Screen = sampler_state
+sampler ScreenSampler = sampler_state
 {
-    Texture = (Screen_Tex);
+	Texture = (ScreenTexture);
 	MagFilter = Point;
 	MinFilter = Point;
 	MipFilter = Point;
@@ -34,10 +40,9 @@ sampler Screen = sampler_state
 	AddressV = Clamp;
 };
 
-texture Window_Tex;
-sampler Window = sampler_state
+sampler WindowSampler = sampler_state
 {
-    Texture = (Window_Tex);
+	Texture = (WindowTexture);
 	MagFilter = Point;
 	MinFilter = Point;
 	MipFilter = Point;
@@ -86,46 +91,42 @@ VERTEX_OUTPUT VSPopupWindowGlass(in VERTEX_INPUT In)
 
 float4 PSPopupWindow(in VERTEX_OUTPUT In) : COLOR
 {
-	float4 Color = tex2D(Window, In.TexCoords_Pos.xy);
-	float Mask = tex2D(Window, In.TexCoords_Pos.xy + float2(0.5, 0.0)).r;
+	float4 Color = tex2D(WindowSampler, In.TexCoords_Pos.xy);
+	float Mask = tex2D(WindowSampler, In.TexCoords_Pos.xy + float2(0.5, 0.0)).r;
 	float4 ScreenColor = float4(GlassColor, Mask);
 	return lerp(ScreenColor, Color, Color.a);
 }
 
 float4 PSPopupWindowGlass(in VERTEX_OUTPUT In) : COLOR
 {
-	float4 Color = tex2D(Window, In.TexCoords_Pos.xy);
-	float Mask = tex2D(Window, In.TexCoords_Pos.xy + float2(0.5, 0.0)).r;
-	float3 ScreenColor = tex2D(Screen, In.TexCoords_Pos.zw);
-	float3 ScreenColor1 = tex2D(Screen, In.TexCoords_Pos.zw + float2(+1 / ScreenSize.x, +1 / ScreenSize.y));
-	float3 ScreenColor2 = tex2D(Screen, In.TexCoords_Pos.zw + float2(+1 / ScreenSize.x,  0 / ScreenSize.y));
-	float3 ScreenColor3 = tex2D(Screen, In.TexCoords_Pos.zw + float2(+1 / ScreenSize.x, -1 / ScreenSize.y));
-	float3 ScreenColor4 = tex2D(Screen, In.TexCoords_Pos.zw + float2( 0 / ScreenSize.x, +1 / ScreenSize.y));
-	float3 ScreenColor5 = tex2D(Screen, In.TexCoords_Pos.zw + float2( 0 / ScreenSize.x,  0 / ScreenSize.y));
-	float3 ScreenColor6 = tex2D(Screen, In.TexCoords_Pos.zw + float2( 0 / ScreenSize.x, -1 / ScreenSize.y));
-	float3 ScreenColor7 = tex2D(Screen, In.TexCoords_Pos.zw + float2(-1 / ScreenSize.x, +1 / ScreenSize.y));
-	float3 ScreenColor8 = tex2D(Screen, In.TexCoords_Pos.zw + float2(-1 / ScreenSize.x,  0 / ScreenSize.y));
-	float3 ScreenColor9 = tex2D(Screen, In.TexCoords_Pos.zw + float2(-1 / ScreenSize.x, -1 / ScreenSize.y));
+	float4 Color = tex2D(WindowSampler, In.TexCoords_Pos.xy);
+	float Mask = tex2D(WindowSampler, In.TexCoords_Pos.xy + float2(0.5, 0.0)).r;
+	float3 ScreenColor = tex2D(ScreenSampler, In.TexCoords_Pos.zw);
+	float3 ScreenColor1 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2(+1 / ScreenSize.x, +1 / ScreenSize.y));
+	float3 ScreenColor2 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2(+1 / ScreenSize.x,  0 / ScreenSize.y));
+	float3 ScreenColor3 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2(+1 / ScreenSize.x, -1 / ScreenSize.y));
+	float3 ScreenColor4 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2( 0 / ScreenSize.x, +1 / ScreenSize.y));
+	float3 ScreenColor5 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2( 0 / ScreenSize.x,  0 / ScreenSize.y));
+	float3 ScreenColor6 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2( 0 / ScreenSize.x, -1 / ScreenSize.y));
+	float3 ScreenColor7 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2(-1 / ScreenSize.x, +1 / ScreenSize.y));
+	float3 ScreenColor8 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2(-1 / ScreenSize.x,  0 / ScreenSize.y));
+	float3 ScreenColor9 = tex2D(ScreenSampler, In.TexCoords_Pos.zw + float2(-1 / ScreenSize.x, -1 / ScreenSize.y));
 	ScreenColor = lerp(ScreenColor, (22 * GlassColor + ScreenColor + ScreenColor1 + ScreenColor2 + ScreenColor3 + ScreenColor4 + ScreenColor5 + ScreenColor6 + ScreenColor7 + ScreenColor8 + ScreenColor9) / 32, Mask);
 	return float4(lerp(ScreenColor, Color.rgb, Color.a), 1);
 }
 
 ////////////////////    T E C H N I Q U E S    /////////////////////////////////
 
-technique PopupWindow
-{
-	pass Pass_0
-	{
-        VertexShader = compile vs_2_0 VSPopupWindow ( );
-        PixelShader = compile ps_2_0 PSPopupWindow ( );
+technique PopupWindow {
+	pass Pass_0 {
+		VertexShader = compile vs_2_0 VSPopupWindow();
+		PixelShader = compile ps_2_0 PSPopupWindow();
 	}
 }
 
-technique PopupWindowGlass
-{
-	pass Pass_0
-	{
-        VertexShader = compile vs_2_0 VSPopupWindowGlass ( );
-        PixelShader = compile ps_2_0 PSPopupWindowGlass ( );
+technique PopupWindowGlass {
+	pass Pass_0 {
+		VertexShader = compile vs_2_0 VSPopupWindowGlass();
+		PixelShader = compile ps_2_0 PSPopupWindowGlass();
 	}
 }

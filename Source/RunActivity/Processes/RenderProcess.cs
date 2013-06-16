@@ -1,10 +1,20 @@
-// COPYRIGHT 2009, 2010, 2011, 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
@@ -188,12 +198,20 @@ namespace ORTS
                 var i = (float)(shadowMapIndex + 1);
                 var Clog = n * (float)Math.Pow(f / n, i / m);
                 var Cuniform = n + (f - n) * i / m;
-                var C = (Clog + Cuniform) / 2;
+                var C = (3 * Clog + Cuniform) / 4;
 
                 // This shadow map goes from LastC to C; calculate the correct center and diameter for the sphere from the view frustum.
-                var center = (LastC + C) / 2;
-                var height = (float)Math.Sin(fov / 2) * C;
-                var diameter = 2 * (float)Math.Sqrt(height * height + (height * ratio) * (height * ratio) + (C - center) * (C - center));
+                var height1 = (float)Math.Tan(fov / 2) * LastC;
+                var height2 = (float)Math.Tan(fov / 2) * C;
+                var width1 = height1 * ratio;
+                var width2 = height2 * ratio;
+                var corner1 = new Vector3(height1, width1, LastC);
+                var corner2 = new Vector3(height2, width2, C);
+                var cornerCenter = (corner1 + corner2) / 2;
+                var length = cornerCenter.Length();
+                cornerCenter.Normalize();
+                var center = length / Vector3.Dot(cornerCenter, Vector3.UnitZ);
+                var diameter = 2 * (float)Math.Sqrt(height2 * height2 + width2 * width2 + (C - center) * (C - center));
 
                 ShadowMapDistance[shadowMapIndex] = (int)center;
                 ShadowMapDiameter[shadowMapIndex] = (int)diameter;

@@ -1,10 +1,20 @@
-﻿// COPYRIGHT 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 #define WINDOWTEXT_SPRITEBATCH
@@ -95,9 +105,7 @@ namespace ORTS.Popups
 
         internal WindowTextFont(string fontFamily, float sizeInPt, FontStyle style, int outlineSize)
         {
-            var font = new Font(fontFamily, sizeInPt, style);
-            Font = new Font(fontFamily, (int)font.GetHeight(), style, GraphicsUnit.Pixel);
-            Debug.Assert(Font.Height == (int)Math.Ceiling(Font.GetHeight()), "Font.Height is not expected value.");
+            Font = new Font(fontFamily, (int)Math.Round(sizeInPt * 96 / 72), style, GraphicsUnit.Pixel);
             FontHeight = Font.Height;
             OutlineSize = outlineSize;
             Characters = new CharacterGroup(Font, OutlineSize);
@@ -142,13 +150,13 @@ namespace ORTS.Popups
         [CallOnThread("Render")]
         public void Draw(SpriteBatch spriteBatch, Point offset, string text, Color color)
         {
-            Draw(spriteBatch, offset, 0, text, LabelAlignment.Left, color, Color.Black);
+            Draw(spriteBatch, offset, 0, 0, text, LabelAlignment.Left, color, Color.Black);
         }
 
         [CallOnThread("Render")]
         public void Draw(SpriteBatch spriteBatch, Point offset, string text, Color color, Color outline)
         {
-            Draw(spriteBatch, offset, 0, text, LabelAlignment.Left, color, outline);
+            Draw(spriteBatch, offset, 0, 0, text, LabelAlignment.Left, color, outline);
         }
 
         [CallOnThread("Render")]
@@ -158,15 +166,29 @@ namespace ORTS.Popups
         }
 
         [CallOnThread("Render")]
+        public void Draw(SpriteBatch spriteBatch, Rectangle position, Point offset, string text, LabelAlignment align, Color color, float rotation)
+        {
+            Draw(spriteBatch, position, offset, text, align, color, Color.Black, rotation);
+        }
+
+        [CallOnThread("Render")]
         public void Draw(SpriteBatch spriteBatch, Rectangle position, Point offset, string text, LabelAlignment align, Color color, Color outline)
         {
             offset.X += position.Location.X;
             offset.Y += position.Location.Y;
-            Draw(spriteBatch, offset, position.Width, text, align, color, outline);
+            Draw(spriteBatch, offset, 0, position.Width, text, align, color, outline);
         }
 
         [CallOnThread("Render")]
-        void Draw(SpriteBatch spriteBatch, Point position, int width, string text, LabelAlignment align, Color color, Color outline)
+        public void Draw(SpriteBatch spriteBatch, Rectangle position, Point offset, string text, LabelAlignment align, Color color, Color outline, float rotation)
+        {
+            offset.X += position.Location.X;
+            offset.Y += position.Location.Y;
+            Draw(spriteBatch, offset, rotation, position.Width, text, align, color, outline);
+        }
+
+        [CallOnThread("Render")]
+        void Draw(SpriteBatch spriteBatch, Point position, float rotation, int width, string text, LabelAlignment align, Color color, Color outline)
         {
             EnsureCharacterData(text);
             var characters = Characters;
@@ -174,6 +196,8 @@ namespace ORTS.Popups
             var chIndexes = new int[text.Length];
             for (var i = 0; i < text.Length; i++)
                 chIndexes[i] = characters.IndexOfCharacter(text[i]);
+
+            var rotationScale = Matrix.CreateRotationZ(rotation) * Matrix.CreateTranslation(position.X - OutlineSize, position.Y - OutlineSize, 0);
 
             var current = Vector2.Zero;
             if (align != LabelAlignment.Left)
@@ -190,9 +214,6 @@ namespace ORTS.Popups
                     current.X = width - current.X;
             }
 
-            current.X += position.X - OutlineSize;
-            current.Y += position.Y - OutlineSize;
-
             var start = current;
             var texture = characters.Texture;
             if (texture == null)
@@ -207,7 +228,7 @@ namespace ORTS.Popups
                     var box = characters.Boxes[chIndexes[i]];
                     box.Y += outlineOffset;
                     if (text[i] > ' ')
-                        spriteBatch.Draw(texture, current, box, outline, 0, Vector2.Zero, Vector2.One, SpriteEffects.None, 0);
+                        spriteBatch.Draw(texture, Vector2.Transform(current, rotationScale), box, outline, rotation, Vector2.Zero, Vector2.One, SpriteEffects.None, 0);
                     current.X += characters.AbcWidths[chIndexes[i]].X;
                     current.X += characters.AbcWidths[chIndexes[i]].Y;
                     current.X += characters.AbcWidths[chIndexes[i]].Z;
@@ -222,7 +243,7 @@ namespace ORTS.Popups
             for (var i = 0; i < text.Length; i++)
             {
                 if (text[i] > ' ')
-                    spriteBatch.Draw(texture, current, characters.Boxes[chIndexes[i]], color, 0, Vector2.Zero, Vector2.One, SpriteEffects.None, 0);
+                    spriteBatch.Draw(texture, Vector2.Transform(current, rotationScale), characters.Boxes[chIndexes[i]], color, rotation, Vector2.Zero, Vector2.One, SpriteEffects.None, 0);
                 current.X += characters.AbcWidths[chIndexes[i]].X;
                 current.X += characters.AbcWidths[chIndexes[i]].Y;
                 current.X += characters.AbcWidths[chIndexes[i]].Z;

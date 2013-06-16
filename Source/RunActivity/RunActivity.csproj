@@ -38,7 +38,7 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>..\..\Program</OutputPath>
-    <DefineConstants>TRACE;DEBUG;WINDOWS</DefineConstants>
+    <DefineConstants>TRACE;DEBUG;WINDOWS;NEW_SIGNALLING</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <NoStdLib>true</NoStdLib>
@@ -51,7 +51,7 @@
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>..\..\Program\</OutputPath>
-    <DefineConstants>TRACE;WINDOWS</DefineConstants>
+    <DefineConstants>TRACE;WINDOWS;NEW_SIGNALLING</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <NoStdLib>true</NoStdLib>
@@ -78,10 +78,6 @@
     <Reference Include="PIEHidDotNet, Version=2.2.3.26389, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\3rdPartyLibs\PIEHidDotNet.dll</HintPath>
-    </Reference>
-    <Reference Include="Reader, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\3rdPartyLibs\Reader.dll</HintPath>
     </Reference>
     <Reference Include="System">
       <Private>False</Private>
@@ -187,10 +183,6 @@
     <Compile Include="AI\AI.cs" />
     <Compile Include="AI\AIPath.cs" />
     <Compile Include="AI\AITrain.cs" />
-    <Compile Include="AI\Dispatcher.cs" />
-    <Compile Include="AI\Heap.cs" />
-    <Compile Include="AI\TimeTable.cs" />
-    <Compile Include="AI\TrackAuthority.cs" />
     <Compile Include="Common\BrakeCurves.cs" />
     <Compile Include="Common\Conversions.cs" />
     <Compile Include="Common\Coordinates.cs" />
@@ -220,17 +212,6 @@
     <Compile Include="Debugging\MessageViewer.Designer.cs">
       <DependentUpon>MessageViewer.cs</DependentUpon>
     </Compile>
-    <Compile Include="Interlocking\AutomaticBlock.cs" />
-    <Compile Include="Interlocking\InterlockingBuffer.cs" />
-    <Compile Include="Interlocking\InterlockingItem.cs" />
-    <Compile Include="Interlocking\InterlockingSignal.cs" />
-    <Compile Include="Interlocking\InterlockingSwitch.cs" />
-    <Compile Include="Interlocking\InterlockingSystem.cs" />
-    <Compile Include="Interlocking\InterlockingSystem.Routes.cs" />
-    <Compile Include="Interlocking\InterlockingTerminator.cs" />
-    <Compile Include="Interlocking\InterlockingTrack.cs" />
-    <Compile Include="Interlocking\MovementAuthority\Route.cs" />
-    <Compile Include="Interlocking\MovementAuthority\RouteCollection.cs" />
     <Compile Include="MultiPlayer\ClientComm.cs" />
     <Compile Include="MultiPlayer\Decoder.cs" />
     <Compile Include="MultiPlayer\MPManager.cs" />
@@ -241,7 +222,7 @@
     <Compile Include="MultiPlayer\Server.cs" />
     <Compile Include="MultiPlayer\ServerComm.cs" />
     <Compile Include="Physics\Brakes.cs" />
-    <Compile Include="Physics\Events.cs" />
+    <Compile Include="Common\Events.cs" />
     <Compile Include="Popups\ActivityWindow.cs" />
     <Compile Include="Popups\CompassWindow.cs" />
     <Compile Include="Popups\PauseWindow.cs" />
@@ -273,7 +254,6 @@
     <Compile Include="RollingStock\MSTSElectricLocomotive.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="RollingStock\MSTSEngineController.cs" />
     <Compile Include="RollingStock\MSTSLocomotive.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -283,7 +263,6 @@
     <Compile Include="Processes\ProcessState.cs" />
     <Compile Include="RollingStock\SeriesMotor.cs" />
     <Compile Include="RollingStock\TrainCar.cs" />
-    <Compile Include="RouteEdit\RESandbox.cs" />
     <Compile Include="Signals\SIGSCRfile.cs" />
     <Compile Include="Simulator\Activity.cs" />
     <Compile Include="Simulator\Confirmation.cs" />
@@ -378,6 +357,27 @@
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\MSTS\ACEFile.cs">
+      <Link>MSTS\ACEFile.cs</Link>
+    </Compile>
+    <Compile Include="..\MSTS\SFile.cs">
+      <Link>MSTS\SFile.cs</Link>
+    </Compile>
+    <Compile Include="..\MSTS\_sbr.cs">
+      <Link>MSTS\_sbr.cs</Link>
+    </Compile>
+    <Compile Include="..\MSTS\_tokenid.cs">
+      <Link>MSTS\_tokenid.cs</Link>
+    </Compile>
+    <Compile Include="..\ORTS\Common\BufferedInMemoryStream.cs">
+      <Link>ORTS\Common\BufferedInMemoryStream.cs</Link>
+    </Compile>
+    <Compile Include="..\ORTS\Common\ByteEncoding.cs">
+      <Link>ORTS\Common\ByteEncoding.cs</Link>
+    </Compile>
+    <Compile Include="..\ORTS\Common\VersionInfo.cs">
+      <Link>ORTS\Common\VersionInfo.cs</Link>
+    </Compile>
     <Compile Include="..\ORTS\InputSettings.cs">
       <Link>ORTS\InputSettings.cs</Link>
     </Compile>
@@ -396,6 +396,9 @@
     <Compile Include="Signals\Signals.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Viewer3D\CommandLog.cs" />
+    <Compile Include="Viewer3D\Commands.cs" />
+    <Compile Include="Viewer3D\SuperElevation.cs" />
     <Compile Include="Viewer3D\Transfers.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
@@ -408,8 +411,8 @@
   </Target>
   -->
   <PropertyGroup>
-    <PreBuildEvent>echo $Revision: 000 $ &gt;revision.txt
-date /T &gt;&gt;revision.txt
-time /T &gt;&gt;revision.txt</PreBuildEvent>
+    <PreBuildEvent>echo $Revision: 000 $&gt;revision.txt
+date /t&gt;&gt;revision.txt
+time /t&gt;&gt;revision.txt</PreBuildEvent>
   </PropertyGroup>
 </Project>

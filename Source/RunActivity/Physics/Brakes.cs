@@ -1,10 +1,23 @@
-﻿/// COPYRIGHT 2010 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using MSTS;
@@ -32,7 +45,7 @@ namespace ORTS
 
         public abstract void PropagateBrakePressure(float elapsedClockSeconds);
 
-        public abstract void Initialize(bool handbrakeOn, float maxPressurePSI);
+        public abstract void Initialize(bool handbrakeOn, float maxPressurePSI, bool immediateRelease);
         public abstract void Connect();
         public abstract void Disconnect();
         public abstract void SetHandbrakePercent(float percent);
@@ -197,7 +210,7 @@ namespace ORTS
             TripleValveState = (ValveState)inf.ReadInt32();
         }
 
-        public override void Initialize(bool handbrakeOn, float maxPressurePSI)
+        public override void Initialize(bool handbrakeOn, float maxPressurePSI, bool immediateRelease)
         {
             BrakeLine1PressurePSI = Car.Train.BrakeLine1PressurePSI;
             BrakeLine2PressurePSI = Car.Train.BrakeLine2PressurePSI;
@@ -207,6 +220,9 @@ namespace ORTS
             AutoCylPressurePSI = (maxPressurePSI - BrakeLine1PressurePSI) * AuxCylVolumeRatio;
             if (AutoCylPressurePSI > MaxCylPressurePSI)
                 AutoCylPressurePSI = MaxCylPressurePSI;
+            // release brakes immediately (for AI trains)
+            if (immediateRelease)
+                AutoCylPressurePSI = 0;
             TripleValveState = ValveState.Lap;
             HandbrakePercent = handbrakeOn ? 100 : 0;
         }
@@ -217,7 +233,7 @@ namespace ORTS
         }
         public override void Disconnect()
         {
-            Initialize(false, 0);
+            Initialize(false, 0, false);
             BrakeLine1PressurePSI = -1;
             BrakeLine2PressurePSI = 0;
         }
@@ -308,9 +324,8 @@ namespace ORTS
             {
                 switch (TripleValveState)
                 {
-                    case ValveState.Release: Car.SignalEvent(EventID.TrainBrakeRelease); break;
-                    case ValveState.Apply: Car.SignalEvent(EventID.TrainBrakeApply); break;
-                    case ValveState.Emergency: Car.SignalEvent(EventID.TrainBrakeEmergency); break;
+                    case ValveState.Release: Car.SignalEvent(Event.TrainBrakePressureDecrease); break;
+                    case ValveState.Apply: case ValveState.Emergency: Car.SignalEvent(Event.TrainBrakePressureIncrease); break;
                 }
             }
             if (BrakeLine3PressurePSI >= 1000)
@@ -444,8 +459,8 @@ namespace ORTS
                     if (lead.EngineBrakeState != prevState)
                         switch (lead.EngineBrakeState)
                         {
-                            case AirSinglePipe.ValveState.Release: lead.SignalEvent(EventID.EngineBrakeRelease); break;
-                            case AirSinglePipe.ValveState.Apply: lead.SignalEvent(EventID.EngineBrakeApply); break;
+                            case AirSinglePipe.ValveState.Release: lead.SignalEvent(Event.EngineBrakePressureIncrease); break;
+                            case AirSinglePipe.ValveState.Apply: lead.SignalEvent(Event.EngineBrakePressureDecrease); break;
                         }
                     if (lead.BailOff || (lead.DynamicBrakeAutoBailOff && Car.Train.MUDynamicBrakePercent > 0))
                         p += 1000;
@@ -575,9 +590,8 @@ namespace ORTS
             {
                 switch (TripleValveState)
                 {
-                    case ValveState.Release: Car.SignalEvent(EventID.TrainBrakeRelease); break;
-                    case ValveState.Apply: Car.SignalEvent(EventID.TrainBrakeApply); break;
-                    case ValveState.Emergency: Car.SignalEvent(EventID.TrainBrakeEmergency); break;
+                    case ValveState.Release: Car.SignalEvent(Event.TrainBrakePressureIncrease); break;
+                    case ValveState.Apply: case ValveState.Emergency: Car.SignalEvent(Event.TrainBrakePressureDecrease); break;
                 }
             }
             if (BrakeLine3PressurePSI >= 1000)
@@ -669,8 +683,8 @@ namespace ORTS
             {
                 switch (epState)
                 {
-                    case ValveState.Release: Car.SignalEvent(EventID.TrainBrakeRelease); break;
-                    case ValveState.Apply: Car.SignalEvent(EventID.TrainBrakeApply); break;
+                    case ValveState.Release: Car.SignalEvent(Event.TrainBrakePressureDecrease); break;
+                    case ValveState.Apply: Car.SignalEvent(Event.TrainBrakePressureIncrease); break;
                 }
             }
             if (BrakeLine3PressurePSI >= 1000)
@@ -861,7 +875,7 @@ namespace ORTS
             VacResPressurePSIA = inf.ReadSingle();
         }
 
-        public override void Initialize(bool handbrakeOn, float maxVacuumInHg)
+        public override void Initialize(bool handbrakeOn, float maxVacuumInHg, bool immediateRelease)
         {
             CylPressurePSIA = BrakeLine1PressurePSI = V2P(Car.Train.BrakeLine1PressurePSI);
             VacResPressurePSIA = V2P(maxVacuumInHg);
@@ -915,6 +929,16 @@ namespace ORTS
             if (f < MaxHandbrakeForceN * HandbrakePercent / 100)
                 f = MaxHandbrakeForceN * HandbrakePercent / 100;
             Car.BrakeForceN = f;
+
+// Temporary patch until problem with vacuum brakes is solved
+// This will immediately fully release the brakes
+	    if (Car.Train.AITrainBrakePercent == 0)
+	    {
+		    CylPressurePSIA = 0;
+		    Car.BrakeForceN = 0;
+	    }
+// End of patch
+
         }
 
         public override void PropagateBrakePressure(float elapsedClockSeconds)

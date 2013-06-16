@@ -1,4 +1,21 @@
-﻿using System;
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -60,13 +77,23 @@ namespace ORTS {
                 if( sd.Player_Traffic_Definition.Player_Traffic_List.Count > 0 ) {
                     PlatformItem Platform = null;
                     ActivityTask task = null;
-                    foreach( var i in sd.Player_Traffic_Definition.Player_Traffic_List ) {
-                        Platform = Simulator.TDB.TrackDB.TrItemTable[i.PlatformStartID] as PlatformItem;
-                        if( Platform != null ) {
-                            Tasks.Add( task = new ActivityTaskPassengerStopAt( task,
+
+                    foreach (var i in sd.Player_Traffic_Definition.Player_Traffic_List)
+                    {
+                        Platform = Simulator.TDB.TrackDB.TrItemTable[i.PlatformStartID] is PlatformItem ?
+                            Simulator.TDB.TrackDB.TrItemTable[i.PlatformStartID] as PlatformItem : 
+                            new PlatformItem(Simulator.TDB.TrackDB.TrItemTable[i.PlatformStartID] as SidingItem);
+
+                        if (Platform != null)
+                        {
+                            PlatformItem Platform2 = Simulator.TDB.TrackDB.TrItemTable[Platform.LinkedPlatformItemId] is PlatformItem ?
+                            Simulator.TDB.TrackDB.TrItemTable[Platform.LinkedPlatformItemId] as PlatformItem :
+                            new PlatformItem(Simulator.TDB.TrackDB.TrItemTable[Platform.LinkedPlatformItemId] as SidingItem);
+
+                            Tasks.Add(task = new ActivityTaskPassengerStopAt(task,
                                 i.ArrivalTime,
                                 i.DepartTime,
-                                Platform, Simulator.TDB.TrackDB.TrItemTable[Platform.LinkedPlatformItemId] as PlatformItem ) );
+                                Platform, Platform2));
                         }
                     }
                     Current = Tasks[0];
@@ -184,7 +211,7 @@ namespace ORTS {
             }
         }
 
-        // <CJ comment> Use of static methods is clumsy. </CJ comment>
+        // <CJComment> Use of static methods is clumsy. </CJComment>
         public static void Save( BinaryWriter outf, Activity act ) {
             Int32 noval = -1;
             if( act == null ) {
@@ -196,7 +223,7 @@ namespace ORTS {
             }
         }
 
-        // <CJ comment> Re-creating the activity object seems bizarre but not ready to re-write it yet. </CJ comment>
+        // <CJComment> Re-creating the activity object seems bizarre but not ready to re-write it yet. </CJComment>
         public static Activity Restore( BinaryReader inf, Simulator simulator, Activity oldActivity ) {
             Int32 rdval;
             rdval = inf.ReadInt32();
@@ -302,7 +329,7 @@ namespace ORTS {
         public DateTime CompletedAt { get; internal set; }
         public string DisplayMessage { get; internal set; }
         public Color DisplayColor { get; internal set; }
-        public int SoundNotify = -1;
+        public Event SoundNotify = Event.None;
 
         public virtual void NotifyEvent( ActivityEventType EventType ) {
         }
@@ -321,7 +348,7 @@ namespace ORTS {
             IsCompleted = rdval == -1 ? (bool?)null : rdval == 0 ? false : true;
             CompletedAt = new DateTime( inf.ReadInt64() );
             DisplayMessage = inf.ReadString();
-            SoundNotify = inf.ReadInt32();
+            SoundNotify = (Event)inf.ReadInt32();
         }
     }
 
@@ -409,6 +436,8 @@ namespace ORTS {
                 new TDBTravellerDistanceCalculatorHelper( Program.Simulator.PlayerLocomotive.Train.FrontTDBTraveller );
             TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend1;
             TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend2;
+            TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend3;
+            TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend4;
 
             distanceend1 = helper.CalculateToPoint( PlatformEnd1.TileX,
                     PlatformEnd1.TileZ, PlatformEnd1.X, PlatformEnd1.Y, PlatformEnd1.Z );
@@ -426,16 +455,23 @@ namespace ORTS {
             helper =
                 new TDBTravellerDistanceCalculatorHelper( Program.Simulator.PlayerLocomotive.Train.RearTDBTraveller );
 
-            distanceend1 = helper.CalculateToPoint( PlatformEnd1.TileX,
+            distanceend3 = helper.CalculateToPoint( PlatformEnd1.TileX,
                     PlatformEnd1.TileZ, PlatformEnd1.X, PlatformEnd1.Y, PlatformEnd1.Z );
-            distanceend2 = helper.CalculateToPoint( PlatformEnd2.TileX,
+            distanceend4 = helper.CalculateToPoint( PlatformEnd2.TileX,
                     PlatformEnd2.TileZ, PlatformEnd2.X, PlatformEnd2.Y, PlatformEnd2.Z );
 
             // If rear between the ends of the platform
-            if( (distanceend1 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind &&
-                distanceend2 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Valid) || (
-                distanceend1 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Valid &&
-                distanceend2 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind) )
+            if( (distanceend3 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind &&
+                distanceend4 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Valid) || (
+                distanceend3 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Valid &&
+                distanceend4 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind) )
+                return true;
+
+	    // if front is beyond and rear is still in front of platform
+            if( distanceend1 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind &&
+                distanceend2 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind && 
+                distanceend3 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Valid &&
+                distanceend4 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Valid )
                 return true;
 
             // Otherwise not
@@ -443,26 +479,34 @@ namespace ORTS {
         }
 
         public bool IsMissedStation() {
+            // Check if station is in present train path
+
+            if (Program.Simulator.PlayerLocomotive.Train.StationStops.Count == 0 ||
+                Program.Simulator.PlayerLocomotive.Train.TCRoute.activeSubpath != Program.Simulator.PlayerLocomotive.Train.StationStops[0].SubrouteIndex)
+            {
+                return (false);
+            }
+
             // Calc all distances
             TDBTravellerDistanceCalculatorHelper helper =
-                new TDBTravellerDistanceCalculatorHelper( Program.Simulator.PlayerLocomotive.Train.dFrontTDBTraveller );
+                new TDBTravellerDistanceCalculatorHelper(Program.Simulator.PlayerLocomotive.Train.FrontTDBTraveller);
             TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend1;
             TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend2;
 
-            distanceend1 = helper.CalculateToPoint( PlatformEnd1.TileX,
-                    PlatformEnd1.TileZ, PlatformEnd1.X, PlatformEnd1.Y, PlatformEnd1.Z );
-            distanceend2 = helper.CalculateToPoint( PlatformEnd2.TileX,
-                    PlatformEnd2.TileZ, PlatformEnd2.X, PlatformEnd2.Y, PlatformEnd2.Z );
+            distanceend1 = helper.CalculateToPoint(PlatformEnd1.TileX,
+                    PlatformEnd1.TileZ, PlatformEnd1.X, PlatformEnd1.Y, PlatformEnd1.Z);
+            distanceend2 = helper.CalculateToPoint(PlatformEnd2.TileX,
+                    PlatformEnd2.TileZ, PlatformEnd2.X, PlatformEnd2.Y, PlatformEnd2.Z);
 
             helper =
-                new TDBTravellerDistanceCalculatorHelper( Program.Simulator.PlayerLocomotive.Train.dRearTDBTraveller );
+                new TDBTravellerDistanceCalculatorHelper(Program.Simulator.PlayerLocomotive.Train.RearTDBTraveller);
 
             TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend3;
             TDBTravellerDistanceCalculatorHelper.DistanceResult distanceend4;
-            distanceend3 = helper.CalculateToPoint( PlatformEnd1.TileX,
-                    PlatformEnd1.TileZ, PlatformEnd1.X, PlatformEnd1.Y, PlatformEnd1.Z );
-            distanceend4 = helper.CalculateToPoint( PlatformEnd2.TileX,
-                    PlatformEnd2.TileZ, PlatformEnd2.X, PlatformEnd2.Y, PlatformEnd2.Z );
+            distanceend3 = helper.CalculateToPoint(PlatformEnd1.TileX,
+                    PlatformEnd1.TileZ, PlatformEnd1.X, PlatformEnd1.Y, PlatformEnd1.Z);
+            distanceend4 = helper.CalculateToPoint(PlatformEnd2.TileX,
+                    PlatformEnd2.TileZ, PlatformEnd2.X, PlatformEnd2.Y, PlatformEnd2.Z);
 
             // If all behind then missed
             return (distanceend1 == TDBTravellerDistanceCalculatorHelper.DistanceResult.Behind &&
@@ -485,12 +529,6 @@ namespace ORTS {
                     }
 
                     arrived = true;
-
-                    // Check if this is the last task in activity, then it is complete
-                    if( NextTask == null ) {
-                        IsCompleted = true;
-                        return;
-                    }
 
                     // Figure out the boarding time
                     double plannedBoardingS = (SchDepart - SchArrive).TotalSeconds;
@@ -519,7 +557,8 @@ namespace ORTS {
                     CompletedAt = ActDepart.Value;
                     // Completeness is depend on the elapsed waiting time
                     IsCompleted = maydepart;
-                }
+                    Program.Simulator.PlayerLocomotive.Train.ClearStation(PlatformEnd1.LinkedPlatformItemId, PlatformEnd2.LinkedPlatformItemId);
+		}
             } else if( EventType == ActivityEventType.Timer ) {
                 // Waiting at a station
                 if( arrived ) {
@@ -527,6 +566,11 @@ namespace ORTS {
                     if (remaining < 1) DisplayColor = Color.LightGreen;
                     else if (remaining < 11) DisplayColor = new Color(255, 255, 128);
                     else DisplayColor = Color.White;
+
+                    if (remaining < 120)
+                    {
+                         Program.Simulator.PlayerLocomotive.Train.ClearStation(PlatformEnd1.LinkedPlatformItemId, PlatformEnd2.LinkedPlatformItemId);
+                    }
 
                     // Still have to wait
                     if( remaining > 0 ) {
@@ -537,13 +581,21 @@ namespace ORTS {
                     else if( !maydepart ) {
                         maydepart = true;
                         DisplayMessage = "Passenger boarding completed. You may depart now.";
-                        SoundNotify = 60;
+                        SoundNotify = Event.PermissionToDepart;
+
+                        // if last task, show closure window
+
+                        if (NextTask == null)
+                        {
+                            Program.Simulator.Confirmer.Viewer.QuitWindow.Visible = Program.Simulator.Paused = true;
+                        }
                     }
                 } else {
                     // Checking missed station
                     int tmp = (int)(Program.Simulator.ClockTime % 10);
                     if( tmp != TimerChk ) {
                         if( IsMissedStation() ) {
+                            Program.Simulator.PlayerLocomotive.Train.ClearStation(PlatformEnd1.LinkedPlatformItemId, PlatformEnd2.LinkedPlatformItemId);
                             IsCompleted = false;
                         }
                     }
@@ -688,8 +740,21 @@ namespace ORTS {
             : base( @event, simulator ) {
             var e = this.ParsedObject as EventCategoryAction;
             if( e.SidingId != null ) {
-                SidingEnd1 = Simulator.TDB.TrackDB.TrItemTable[e.SidingId.Value] as SidingItem;
-                SidingEnd2 = Simulator.TDB.TrackDB.TrItemTable[SidingEnd1.Flags2] as SidingItem;
+                var i = e.SidingId.Value;
+                try
+                {
+                    SidingEnd1 = Simulator.TDB.TrackDB.TrItemTable[i] as SidingItem;
+                    i = SidingEnd1.Flags2;
+                    SidingEnd2 = Simulator.TDB.TrackDB.TrItemTable[i] as SidingItem;
+                }
+                catch (IndexOutOfRangeException)
+                {
+                    Trace.TraceWarning(String.Format("Siding {0} is not in track database.", i));
+                }
+                catch (NullReferenceException)
+                {
+                    Trace.TraceWarning(String.Format("Item {0} in track database is not a siding.", i));
+                }
             }
         }
 

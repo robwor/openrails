@@ -1,20 +1,28 @@
-﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 // Define this to check every material is resetting the RenderState correctly.
 //#define DEBUG_RENDER_STATE
 
-// Define this to use the experimental collection that reduces reallocation
-// and copying of RenderItems. This reduces the number/frequency of Gen 0 and
-// Gen 1 garbage collections but has little overall performance effect. It
-// also leaks memory currently.
-//#define RENDER_ITEM_COLLECTION
+// Define this to enable sorting of blended render primitives. This is a
+// complex feature and performance is not guaranteed.
+#define RENDER_BLEND_SORTING
 
 using System;
 using System.Collections.Generic;
@@ -72,7 +80,16 @@ namespace ORTS
 			RenderPrimitiveSequence.TextOverlayOpaque,
 		};
 
-        public float ZBias = 0f;
+        /// <summary>
+        /// This is an adjustment for the depth buffer calculation which may be used to reduce the chance of co-planar primitives from fighting each other.
+        /// </summary>
+        // TODO: Does this actually make any real difference?
+        public float ZBias;
+
+        /// <summary>
+        /// This is a sorting adjustment for primitives with similar/the same world location. Primitives with higher SortIndex values are rendered after others. Has no effect on non-blended primitives.
+        /// </summary>
+        public float SortIndex;
 
         /// <summary>
         /// This is when the object actually renders itself onto the screen.
@@ -84,18 +101,13 @@ namespace ORTS
     }
 
     [DebuggerDisplay("{Material} {RenderPrimitive} {Flags}")]
-#if RENDER_ITEM_COLLECTION
-    public struct RenderItem
-#else
     public class RenderItem
-#endif
     {
-        public Material Material;
-        public RenderPrimitive RenderPrimitive;
+        public readonly Material Material;
+        public readonly RenderPrimitive RenderPrimitive;
         public Matrix XNAMatrix;
-        public ShapeFlags Flags;
+        public readonly ShapeFlags Flags;
 
-#if !RENDER_ITEM_COLLECTION
         public RenderItem(Material material, RenderPrimitive renderPrimitive, ref Matrix xnaMatrix, ShapeFlags flags)
         {
             Material = material;
@@ -103,7 +115,6 @@ namespace ORTS
             XNAMatrix = xnaMatrix;
             Flags = flags;
         }
-#endif
 
         public class Comparer : IComparer<RenderItem>
         {
@@ -119,139 +130,14 @@ namespace ORTS
 
             public int Compare(RenderItem x, RenderItem y)
             {
-                var xd = (x.XNAMatrix.Translation - XNAViewerPos).Length();
-                var yd = (y.XNAMatrix.Translation - XNAViewerPos).Length();
-                return Math.Sign(xd - yd);
+                var xd = (x.XNAMatrix.Translation - XNAViewerPos).Length() - x.RenderPrimitive.SortIndex;
+                var yd = (y.XNAMatrix.Translation - XNAViewerPos).Length() - y.RenderPrimitive.SortIndex;
+                return Math.Sign(yd - xd);
             }
 
             #endregion
         }
     }
-
-#if RENDER_ITEM_COLLECTION
-	public class RenderItemCollection : IEnumerable<RenderItem>, IEnumerator<RenderItem>
-	{
-		RenderItem[] RenderItems;
-		int count;
-		bool Enumerating;
-		int EnumeratingIndex;
-
-		public RenderItemCollection()
-		{
-			// 128 is a reasonable size, i.e. few instances need to resize up
-			// but isn't too big. Further tuning certainly possible.
-			RenderItems = new RenderItem[128];
-			count = 0;
-		}
-
-		public RenderItem this[int index]
-		{
-			get
-			{
-				return RenderItems[index];
-			}
-		}
-
-		public int Count
-		{
-			get
-			{
-				return count;
-			}
-		}
-
-		public void Add(Material material, RenderPrimitive renderPrimitive, ref Matrix xnaMatrix, ShapeFlags flags)
-		{
-			if (count >= RenderItems.Length)
-			{
-				var newRenderItems = new RenderItem[RenderItems.Length * 2];
-				Array.Copy(RenderItems, newRenderItems, RenderItems.Length);
-				RenderItems = newRenderItems;
-			}
-			RenderItems[count].Material = material;
-			RenderItems[count].RenderPrimitive = renderPrimitive;
-			RenderItems[count].XNAMatrix = xnaMatrix;
-			RenderItems[count].Flags = flags;
-			count++;
-		}
-
-		public void Clear()
-		{
-			count = 0;
-		}
-
-    #region IEnumerable<RenderItem> Members
-
-		public IEnumerator<RenderItem> GetEnumerator()
-		{
-			//return new RenderItemCollectionEnumerator(this);
-			if (Enumerating) throw new InvalidOperationException("RenderItemCollection can only have one enumerator.");
-			Enumerating = true;
-			EnumeratingIndex = -1;
-			return this;
-		}
-
-    #endregion
-
-    #region IEnumerable Members
-
-		System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
-		{
-			return GetEnumerator();
-		}
-
-    #endregion
-
-    #region IEnumerator<RenderItem> Members
-
-		public RenderItem Current
-		{
-			get
-			{
-				return RenderItems[EnumeratingIndex];
-			}
-		}
-
-    #endregion
-
-    #region IDisposable Members
-
-		public void Dispose()
-		{
-			if (!Enumerating) throw new InvalidOperationException("RenderItemCollection is not enumerating.");
-			Enumerating = false;
-		}
-
-    #endregion
-
-    #region IEnumerator Members
-
-		object System.Collections.IEnumerator.Current
-		{
-			get
-			{
-				return RenderItems[EnumeratingIndex];
-			}
-		}
-
-		public bool MoveNext()
-		{
-			EnumeratingIndex++;
-			return EnumeratingIndex < count;
-		}
-
-		public void Reset()
-		{
-			EnumeratingIndex = -1;
-		}
-
-    #endregion
-	}
-#else
-    public class RenderItemCollection : List<RenderItem>
-    {
-    }
-#endif
 
     public class RenderFrame
     {
@@ -273,11 +159,19 @@ namespace ORTS
         readonly RenderProcess RenderProcess;
         readonly Material DummyBlendedMaterial;
         readonly ShadowMapMaterial ShadowMapMaterial;
-        readonly Dictionary<Material, RenderItemCollection>[] RenderItems = new Dictionary<Material, RenderItemCollection>[(int)RenderPrimitiveSequence.Sentinel];
-        readonly RenderItemCollection[] RenderShadowItems;
+        readonly Dictionary<Material, List<RenderItem>>[] RenderItems = new Dictionary<Material, List<RenderItem>>[(int)RenderPrimitiveSequence.Sentinel];
+        readonly List<RenderItem>[] RenderShadowItems;
 
         Matrix XNAViewMatrix;
         Matrix XNAProjectionMatrix;
+
+        enum VisibilityState {
+            Visible,
+            Hidden,
+            ScreenshotPending,
+        };
+
+        VisibilityState Visibility = VisibilityState.Visible;
 
         public RenderFrame(RenderProcess owner)
         {
@@ -286,7 +180,7 @@ namespace ORTS
             ShadowMapMaterial = (ShadowMapMaterial)owner.Viewer.MaterialManager.Load("ShadowMap");
 
             for (int i = 0; i < RenderItems.Length; i++)
-                RenderItems[i] = new Dictionary<Material, RenderItemCollection>();
+                RenderItems[i] = new Dictionary<Material, List<RenderItem>>();
 
             if (RenderProcess.Viewer.Settings.DynamicShadows)
             {
@@ -306,9 +200,9 @@ namespace ORTS
                 ShadowMapLightViewProjShadowProj = new Matrix[RenderProcess.ShadowMapCount];
                 ShadowMapCenter= new Vector3[RenderProcess.ShadowMapCount];
 
-                RenderShadowItems = new RenderItemCollection[RenderProcess.ShadowMapCount];
+                RenderShadowItems = new List<RenderItem>[RenderProcess.ShadowMapCount];
                 for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
-                    RenderShadowItems[shadowMapIndex] = new RenderItemCollection();
+                    RenderShadowItems[shadowMapIndex] = new List<RenderItem>();
             }
         }
 
@@ -377,8 +271,8 @@ namespace ORTS
                     shadowMapLocation.Y -= shadowMapAlignAxisY.Y * adjustY;
                     shadowMapLocation.Z -= shadowMapAlignAxisY.Z * adjustY;
 
-                    ShadowMapLightView[shadowMapIndex] = Matrix.CreateLookAt(shadowMapLocation + (viewingDistance + shadowMapDiameter / 2) * SteppedSolarDirection, shadowMapLocation, Vector3.Up);
-                    ShadowMapLightProj[shadowMapIndex] = Matrix.CreateOrthographic(shadowMapDiameter, shadowMapDiameter, viewingDistance, viewingDistance + shadowMapDiameter);
+                    ShadowMapLightView[shadowMapIndex] = Matrix.CreateLookAt(shadowMapLocation + viewingDistance * SteppedSolarDirection, shadowMapLocation, Vector3.Up);
+                    ShadowMapLightProj[shadowMapIndex] = Matrix.CreateOrthographic(shadowMapDiameter, shadowMapDiameter, 0, viewingDistance + shadowMapDiameter / 2);
                     ShadowMapLightViewProjShadowProj[shadowMapIndex] = ShadowMapLightView[shadowMapIndex] * ShadowMapLightProj[shadowMapIndex] * new Matrix(0.5f, 0, 0, 0, 0, -0.5f, 0, 0, 0, 0, 1, 0, 0.5f + 0.5f / ShadowMapStencilBuffer.Width, 0.5f + 0.5f / ShadowMapStencilBuffer.Height, 0, 1);
                     ShadowMapCenter[shadowMapIndex] = shadowMapLocation;
                 }
@@ -388,9 +282,6 @@ namespace ORTS
         /// <summary>
         /// Automatically adds or culls a <see cref="RenderPrimitive"/> based on a location, radius and max viewing distance.
         /// </summary>
-        /// <remarks>
-        /// Must be called from the UpdateProcess thread.
-        /// </remarks>
         /// <param name="mstsLocation">Center location of the <see cref="RenderPrimitive"/> in MSTS coordinates.</param>
         /// <param name="objectRadius">Radius of a sphere containing the whole <see cref="RenderPrimitive"/>, centered on <paramref name="mstsLocation"/>.</param>
         /// <param name="objectViewingDistance">Maximum distance from which the <see cref="RenderPrimitive"/> should be viewable.</param>
@@ -399,9 +290,14 @@ namespace ORTS
         /// <param name="group"></param>
         /// <param name="xnaMatrix"></param>
         /// <param name="flags"></param>
+        [CallOnThread("Updater")]
         public void AddAutoPrimitive(Vector3 mstsLocation, float objectRadius, float objectViewingDistance, Material material, RenderPrimitive primitive, RenderPrimitiveGroup group, ref Matrix xnaMatrix, ShapeFlags flags)
         {
-            if (RenderProcess.Viewer.Camera.InRange(mstsLocation, objectRadius, objectViewingDistance))
+            if (primitive is TerrainPatch && objectRadius > 5000)//this is for LOTiles, as they are large. 
+                                    //It has been checked by FOV in Tiles prepare frame function, and also they will not cast shadows
+                AddPrimitive(material, primitive, group, ref xnaMatrix, flags);
+
+            else if (RenderProcess.Viewer.Camera.InRange(mstsLocation, objectRadius, objectViewingDistance))
             {
                 if (RenderProcess.Viewer.Camera.InFOV(mstsLocation, objectRadius))
                     AddPrimitive(material, primitive, group, ref xnaMatrix, flags);
@@ -413,72 +309,59 @@ namespace ORTS
             }
         }
 
-        /// <summary>
-        /// Executed in the UpdateProcess thread
-        /// </summary>
+        [CallOnThread("Updater")]
         public void AddPrimitive(Material material, RenderPrimitive primitive, RenderPrimitiveGroup group, ref Matrix xnaMatrix)
         {
             AddPrimitive(material, primitive, group, ref xnaMatrix, ShapeFlags.None);
         }
 
-        /// <summary>
-        /// Executed in the UpdateProcess thread
-        /// </summary>
+        [CallOnThread("Updater")]
         public void AddPrimitive(Material material, RenderPrimitive primitive, RenderPrimitiveGroup group, ref Matrix xnaMatrix, ShapeFlags flags)
         {
-            var blended = material.GetBlending();
-            // TODO: Alpha sorting code
-            var sortingMaterial = blended ? DummyBlendedMaterial : material;
-            //var sortingMaterial = material;
-            var sequence = RenderItems[(int)GetRenderSequence(group, blended)];
+            List<RenderItem> items;
+            bool[] blending;
 
-#if RENDER_ITEM_COLLECTION
-			if (!sequence.ContainsKey(sortingMaterial))
-				sequence.Add(sortingMaterial, new RenderItemCollection());
+            bool getBlending = material.GetBlending();
+            if (getBlending && material is SceneryMaterial)
+                blending = new bool[] { true, false }; // Search for opaque pixels in alpha blended primitives, thus maintaining correct DepthBuffer
+            else
+                blending = new bool[] {getBlending};
 
-			sequence[sortingMaterial].Add(material, primitive, ref xnaMatrix, flags);
-#else
-            RenderItemCollection items;
-            if (!sequence.TryGetValue(sortingMaterial, out items))
+            foreach (bool blended in blending)
             {
-                items = new RenderItemCollection();
-                sequence.Add(sortingMaterial, items);
-            }
-            items.Add(new RenderItem(material, primitive, ref xnaMatrix, flags));
-#endif
+                var sortingMaterial = blended ? DummyBlendedMaterial : material;
+                var sequence = RenderItems[(int)GetRenderSequence(group, blended)];
 
+                if (!sequence.TryGetValue(sortingMaterial, out items))
+                {
+                    items = new List<RenderItem>();
+                    sequence.Add(sortingMaterial, items);
+                }
+                items.Add(new RenderItem(material, primitive, ref xnaMatrix, flags));
+            }
             if (((flags & ShapeFlags.AutoZBias) != 0) && (primitive.ZBias == 0))
                 primitive.ZBias = 1;
         }
 
-        /// <summary>
-        /// Executed in the UpdateProcess thread
-        /// </summary>
+        [CallOnThread("Updater")]
         void AddShadowPrimitive(int shadowMapIndex, Material material, RenderPrimitive primitive, ref Matrix xnaMatrix, ShapeFlags flags)
         {
-#if RENDER_ITEM_COLLECTION
-			RenderShadowItems[shadowMapIndex].Add(material, primitive, ref xnaMatrix, flags);
-#else
             RenderShadowItems[shadowMapIndex].Add(new RenderItem(material, primitive, ref xnaMatrix, flags));
-#endif
         }
 
-        /// <summary>
-        /// Executed in the UpdateProcess thread
-        /// </summary>
+        [CallOnThread("Updater")]
         public void Sort()
         {
-            // TODO: Alpha sorting code
-            //var renderItemComparer = new RenderItem.Comparer(RenderProcess.Viewer.Camera.Location);
-            //foreach (var sequence in RenderItems.Where((d, i) => i != (int)RenderPrimitiveSequence.Shadows))
-            //{
-            //    foreach (var sequenceMaterial in sequence.Where(kvp => kvp.Value.Count > 0))
-            //    {
-            //        if (sequenceMaterial.Key != DummyBlendedMaterial)
-            //            continue;
-            //        sequenceMaterial.Value.Sort(renderItemComparer);
-            //    }
-            //}
+            var renderItemComparer = new RenderItem.Comparer(RenderProcess.Viewer.Camera.Location);
+            foreach (var sequence in RenderItems)
+            {
+                foreach (var sequenceMaterial in sequence.Where(kvp => kvp.Value.Count > 0))
+                {
+                    if (sequenceMaterial.Key != DummyBlendedMaterial)
+                        continue;
+                    sequenceMaterial.Value.Sort(renderItemComparer);
+                }
+            }
         }
 
         bool IsInShadowMap(int shadowMapIndex, Vector3 mstsLocation, float objectRadius, float objectViewingDistance)
@@ -493,22 +376,22 @@ namespace ORTS
             objectRadius += RenderProcess.ShadowMapDiameter[shadowMapIndex] / 2;
 
             // Check if object is inside the sphere.
-            var distanceSquared = mstsLocation.X * mstsLocation.X + mstsLocation.Y * mstsLocation.Y + mstsLocation.Z * mstsLocation.Z;
-            if (distanceSquared <= objectRadius * objectRadius)
+            var length = mstsLocation.LengthSquared();
+            if (length <= objectRadius * objectRadius)
                 return true;
 
             // Check if object is inside cylinder.
-            var dotX = Math.Abs(mstsLocation.X * ShadowMapX.X + mstsLocation.Y * ShadowMapX.Y + mstsLocation.Z * ShadowMapX.Z);
+            var dotX = Math.Abs(Vector3.Dot(mstsLocation, ShadowMapX));
             if (dotX > objectRadius)
                 return false;
 
-            var dotY = Math.Abs(mstsLocation.X * ShadowMapY.X + mstsLocation.Y * ShadowMapY.Y + mstsLocation.Z * ShadowMapY.Z);
+            var dotY = Math.Abs(Vector3.Dot(mstsLocation, ShadowMapY));
             if (dotY > objectRadius)
                 return false;
 
             // Check if object is on correct side of center.
-            var dotZ = Math.Abs(mstsLocation.X + SteppedSolarDirection.X + mstsLocation.Y + SteppedSolarDirection.Y + mstsLocation.Z + SteppedSolarDirection.Z);
-            if (dotZ < -objectRadius)
+            var dotZ = Vector3.Dot(mstsLocation, SteppedSolarDirection);
+            if (dotZ < 0)
                 return false;
 
             return true;
@@ -551,28 +434,49 @@ namespace ORTS
                 Console.WriteLine();
             }
 
-            if (UserInput.IsPressed(UserCommands.GameScreenshot))
+            // VisibilityState is used to delay calling SaveScreenshot() by one render cycle. 
+            // We want the hiding of the MessageWindow to take effect on the screen before the screen content is saved.
+            if( Visibility == VisibilityState.Hidden )  // Test for Hidden state must come before setting Hidden state.
             {
-                if (!Directory.Exists(RenderProcess.Viewer.Settings.ScreenshotPath))
+                Visibility = VisibilityState.ScreenshotPending;  // Next state else this path would be taken more than once.
+                if( !Directory.Exists(RenderProcess.Viewer.Settings.ScreenshotPath) )
                     Directory.CreateDirectory(RenderProcess.Viewer.Settings.ScreenshotPath);
                 var fileName = Path.Combine(RenderProcess.Viewer.Settings.ScreenshotPath, Application.ProductName + " " + DateTime.Now.ToString("yyyy-MM-dd hh-mm-ss")) + ".png";
                 SaveScreenshot(graphicsDevice, fileName);
-                RenderProcess.Viewer.MessagesWindow.AddMessage(String.Format("Saving screenshot to '{0}'.", fileName), 10);
+                RenderProcess.Viewer.SaveScreenshot = false; // cancel trigger
             }
-            // Boolean and FileStem set by Viewer3D
-            // <CJ comment> Intended to save a thumbnail-sized image but can't find a way to do this.
+            if (RenderProcess.Viewer.SaveScreenshot)
+            {
+                Visibility = VisibilityState.Hidden;
+                // Hide MessageWindow
+                RenderProcess.Viewer.MessagesWindow.Visible = false;
+                // Audible confirmation that screenshot taken
+                if (RenderProcess.Viewer.World.GameSounds != null) RenderProcess.Viewer.World.GameSounds.HandleEvent(Event.ControlError);
+            }
+
+            // Use IsDown() not IsPressed() so users can take multiple screenshots as fast as possible by holding down the key.
+            if (UserInput.IsDown(UserCommands.GameScreenshot)
+                && Visibility == VisibilityState.Visible) // Ensure we only get one screenshot.
+                new SaveScreenshotCommand(RenderProcess.Viewer.Log);
+
+            // SaveActivityThumbnail and FileStem set by Viewer3D
+            // <CJComment> Intended to save a thumbnail-sized image but can't find a way to do this.
             // Currently saving a full screen image and then showing it in Menu.exe at a thumbnail size.
-            // </CJ comment>
+            // </CJComment>
             if (RenderProcess.Viewer.SaveActivityThumbnail)
             {
                 RenderProcess.Viewer.SaveActivityThumbnail = false;
-                SaveScreenshot(graphicsDevice, Path.Combine(Program.UserDataFolder, RenderProcess.Viewer.SaveActivityFileStem + ".png"));
+                SaveScreenshot(graphicsDevice, Path.Combine(Program.UserDataFolder, RenderProcess.Viewer.SaveActivityFileStem + ".png"), true);
                 RenderProcess.Viewer.MessagesWindow.AddMessage("Game saved", 5);
             }
         }
-
+    
         [CallOnThread("Render")]
-        public void SaveScreenshot(GraphicsDevice graphicsDevice, string fileName)
+        public void SaveScreenshot( GraphicsDevice graphicsDevice, string fileName )
+        {
+            SaveScreenshot(graphicsDevice, fileName, false);
+        }
+        public void SaveScreenshot(GraphicsDevice graphicsDevice, string fileName, bool silent)
         {
             var screenshot = new ResolveTexture2D(graphicsDevice, graphicsDevice.PresentationParameters.BackBufferWidth, graphicsDevice.PresentationParameters.BackBufferHeight, 1, SurfaceFormat.Color);
             graphicsDevice.ResolveBackBuffer(screenshot);
@@ -588,9 +492,16 @@ namespace ORTS
                     for (var i = 0; i < data.Length; i++)
                         data[i] |= 0xFF000000;
                     screenshot.SetData(data);
+                    
                     // Now save the modified image.
                     screenshot.Save(fileName, ImageFileFormat.Png);
                     screenshot.Dispose();
+                    if (!silent)
+                        RenderProcess.Viewer.MessagesWindow.AddMessage(String.Format("Saving screenshot to '{0}'.", fileName), 10);
+
+                    Visibility = VisibilityState.Visible;
+                    // Reveal MessageWindow
+                    RenderProcess.Viewer.MessagesWindow.Visible = true;
                 }
                 catch { }
             }).Start();
@@ -634,7 +545,10 @@ namespace ORTS
 
             // Render terrain shadow items now, with their magic.
             if (logging) Console.WriteLine("      {0,-5} * TerrainMaterial (normal)", RenderShadowItems[shadowMapIndex].Count(ri => ri.Material is TerrainMaterial));
-            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
+            graphicsDevice.VertexDeclaration = TerrainPatch.SharedPatchVertexDeclaration;
+            graphicsDevice.Indices = TerrainPatch.SharedPatchIndexBuffer;
+            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial && (ri.Material is TerrainSharedMaterial)), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
+            ShadowMapMaterial.Render(graphicsDevice, RenderShadowItems[shadowMapIndex].Where(ri => ri.Material is TerrainMaterial && !(ri.Material is TerrainSharedMaterial)), ref ShadowMapLightView[shadowMapIndex], ref ShadowMapLightProj[shadowMapIndex]);
 
             // Prepare for blocking rendering of terrain.
             ShadowMapMaterial.SetState(graphicsDevice, ShadowMapMaterial.Mode.Blocker);
@@ -672,8 +586,18 @@ namespace ORTS
         void DrawSimple(GraphicsDevice graphicsDevice, bool logging)
         {
             if (logging) Console.WriteLine("  DrawSimple {");
-            graphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, SharedMaterialManager.FogColor, 1, 0);
-            DrawSequences(graphicsDevice, logging);
+            if (RenderProcess.Viewer.Settings.DistantMountains)
+            {
+                graphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, SharedMaterialManager.FogColor, 1, 0);
+                DrawSequencesDM(graphicsDevice);
+                graphicsDevice.Clear(ClearOptions.DepthBuffer, SharedMaterialManager.FogColor, 1, 0);
+                DrawSequences(graphicsDevice, logging);
+            }
+            else
+            {
+                graphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, SharedMaterialManager.FogColor, 1, 0);
+                DrawSequences(graphicsDevice, logging);
+            }
             if (logging) Console.WriteLine("  }");
         }
 
@@ -733,6 +657,15 @@ namespace ORTS
                     }
                     else
                     {
+                        if (RenderProcess.Viewer.Settings.DistantMountains)
+                        {
+                            if (sequenceMaterial.Key is TerrainMaterial || sequenceMaterial.Key is TerrainSharedMaterial)
+                            {
+                                var tm = sequenceMaterial.Key as TerrainMaterial;
+                                if (tm.DM) continue;
+                            }
+                            else if (sequenceMaterial.Key is SkyMaterial) continue;
+                        }
                         // Opaque: single material, render in one go.
                         sequenceMaterial.Key.SetState(graphicsDevice, null);
                         if (logging) Console.WriteLine("      {0,-5} * {1}", sequenceMaterial.Value.Count, sequenceMaterial.Key);
@@ -744,6 +677,36 @@ namespace ORTS
                     }
                 }
                 if (logging) Console.WriteLine("    }");
+            }
+        }
+
+        void DrawSequencesDM(GraphicsDevice graphicsDevice)
+        {
+            for (var i = 0; i < (int)RenderPrimitiveSequence.Sentinel; i++)
+            {
+                var sequence = RenderItems[i];
+                foreach (var sequenceMaterial in sequence)
+                {
+                    if (sequenceMaterial.Value.Count == 0)
+                        continue;
+                    if (sequenceMaterial.Key == DummyBlendedMaterial)
+                    {
+                    }
+                    else
+                    {
+                        if (sequenceMaterial.Key is TerrainMaterial || sequenceMaterial.Key is TerrainSharedMaterial || sequenceMaterial.Key is SkyMaterial)
+                        {
+                            var tm = sequenceMaterial.Key as TerrainMaterial;
+                            if (tm == null || tm.DM)
+                            {
+                                // Opaque: single material, render in one go.
+                                sequenceMaterial.Key.SetState(graphicsDevice, null);
+                                sequenceMaterial.Key.Render(graphicsDevice, sequenceMaterial.Value, ref XNAViewMatrix, ref Camera.XNADMProjection);
+                                sequenceMaterial.Key.ResetState(graphicsDevice);
+                            }
+                        }
+                    }
+                }
             }
         }
 

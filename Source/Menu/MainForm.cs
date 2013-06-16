@@ -1,15 +1,27 @@
-﻿// COPYRIGHT 2009, 2010, 2011 by the Open Rails project.
-// This code is provided to enable you to contribute improvements to the open rails program.  
-// Use of the code for any other purpose or distribution of the code to anyone else
-// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using ORTS.Common;
 using ORTS.Menu;
 using Path = System.IO.Path;
 
@@ -17,17 +29,22 @@ namespace ORTS
 {
     public partial class MainForm : Form
     {
-        public enum MultiplayerMode
+        public enum UserAction
         {
-            None,
-            Server,
-            Client,
+            SingleplayerNewGame,
+            SingleplayerResumeSave,
+            SingleplayerReplaySave,
+            SingleplayerReplaySaveFromSave,
+            MultiplayerServer,
+            MultiplayerClient,
         }
 
         bool Initialized;
         UserSettings Settings;
         List<Folder> Folders = new List<Folder>();
-        List<Route> Routes = new List<Route>();
+        
+        public List<Route> Routes = new List<Route>();  // So can be used for checking in ResumeForm 
+        
         List<Activity> Activities = new List<Activity>();
         Task<List<Route>> RouteLoader;
         Task<List<Activity>> ActivityLoader;
@@ -36,7 +53,7 @@ namespace ORTS
         public Route SelectedRoute { get { return listBoxRoutes.SelectedIndex < 0 ? null : Routes[listBoxRoutes.SelectedIndex]; } }
         public Activity SelectedActivity { get { return listBoxActivities.SelectedIndex < 0 ? null : Activities[listBoxActivities.SelectedIndex]; } set { if (listBoxActivities.SelectedIndex >= 0) Activities[listBoxActivities.SelectedIndex] = value; } }
         public string SelectedSaveFile { get; set; }
-        public MultiplayerMode Multiplayer { get; set; }
+        public UserAction SelectedAction { get; set; }
 
         #region Main Form
         public MainForm()
@@ -49,9 +66,9 @@ namespace ORTS
             Font = SystemFonts.MessageBoxFont;
 
             // Set title to show revision or build info.
-            Text = String.Format(Program.Version.Length > 0 ? "{0} {1}" : "{0} BUILD {2}", Application.ProductName, Program.Version, Program.Build);
+            Text = String.Format(VersionInfo.Version.Length > 0 ? "{0} {1}" : "{0} build {2}", Application.ProductName, VersionInfo.Version, VersionInfo.Build);
 #if DEBUG
-            Text = Text + "   --- DEBUG BUILD ---";
+            Text = Text + " (debug)";
 #endif
 
             CleanupPre021();
@@ -84,14 +101,11 @@ namespace ORTS
                 ActivityLoader.Cancel();
 
             // Empty the deleted_saves folder
-            var userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Application.ProductName);
-            var folderToDelete = userDataFolder + @"\deleted_saves";
-            if (Directory.Exists(folderToDelete))
-            {
-                Directory.Delete(folderToDelete, true);   // true removes all contents as well as folder
-            }
+            if (Directory.Exists(Program.DeletedSaveFolder))
+                Directory.Delete(Program.DeletedSaveFolder, true);   // true removes all contents as well as folder
+
             // Tidy up after versions which used SAVE.BIN
-            var file = userDataFolder + @"\SAVE.BIN";
+            var file = Program.UserDataFolder + @"\SAVE.BIN";
             if (File.Exists(file))
                 File.Delete(file);
         }
@@ -171,17 +185,6 @@ namespace ORTS
         #endregion
 
         #region Misc. buttons and options
-        void buttonSwitchStyle_Click(object sender, EventArgs e)
-        {
-            using (var RK = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Program.RegistryKey))
-            {
-                if (RK != null)
-                    RK.SetValue("LauncherMenu", 2);
-            }
-            Process.Start(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "MenuWPF.exe"));
-            Close();
-        }
-
         void buttonTesting_Click(object sender, EventArgs e)
         {
             using (var form = new TestingForm())
@@ -200,22 +203,14 @@ namespace ORTS
 
         void buttonResume_Click(object sender, EventArgs e)
         {
-            using (var form = new ResumeForm(SelectedRoute, SelectedActivity))
+            using (var form = new ResumeForm(Settings, SelectedRoute, SelectedActivity, this))
             {
                 if (form.ShowDialog(this) == DialogResult.OK)
                 {
                     SelectedSaveFile = form.SelectedSaveFile;
-                    DialogResult = DialogResult.Retry;
-                }
-            }
-        }
-
-        void buttonMultiplayer_Click(object sender, EventArgs e)
-        {
-            using (var form = new MultiplayerForm(Settings))
-            {
-                if (form.ShowDialog(this) == DialogResult.OK)
+                    SelectedAction = form.SelectedAction;
                     DialogResult = DialogResult.OK;
+                }
             }
         }
 
@@ -223,7 +218,9 @@ namespace ORTS
         {
             SaveOptions();
 
-            Multiplayer = MultiplayerMode.None;
+            SelectedAction = UserAction.SingleplayerNewGame;
+
+            // GetMultiplayerInfo() overrides SelectedAction.
             if (checkBoxMultiplayer.Checked && !GetMultiplayerInfo())
                 return;
 
@@ -327,10 +324,10 @@ namespace ORTS
                 labelRoutes.Visible = Routes.Count == 0;
                 foreach (var route in Routes)
                     listBoxRoutes.Items.Add(route);
-                var selectionIndex = Settings.Menu_Selection.Length > 1 ? Routes.FindIndex(f => f.Path == Settings.Menu_Selection[1]) : -1;
+                var selectionIndex = Settings.Menu_Selection.Length > 1 ? routes.FindIndex(f => f.Path == Settings.Menu_Selection[1]) : -1;
                 if (selectionIndex >= 0)
                     listBoxRoutes.SelectedIndex = selectionIndex;
-                else if (Routes.Count > 0)
+                else if (routes.Count > 0)
                     listBoxRoutes.SelectedIndex = 0;
                 else
                     listBoxRoutes.ClearSelected();
@@ -352,10 +349,10 @@ namespace ORTS
                 labelActivities.Visible = Activities.Count == 0;
                 foreach (var activity in Activities)
                     listBoxActivities.Items.Add(activity);
-                var selectionIndex = Settings.Menu_Selection.Length > 2 ? Activities.FindIndex(f => f.FilePath == Settings.Menu_Selection[2]) : -1;
+                var selectionIndex = Settings.Menu_Selection.Length > 2 ? activities.FindIndex(f => f.FilePath == Settings.Menu_Selection[2]) : -1;
                 if (selectionIndex >= 0)
                     listBoxActivities.SelectedIndex = selectionIndex;
-                else if (Activities.Count > 0)
+                else if (activities.Count > 0)
                     listBoxActivities.SelectedIndex = 0;
                 else
                     listBoxActivities.ClearSelected();
@@ -407,10 +404,10 @@ namespace ORTS
                 switch (form.ShowDialog(this))
                 {
                     case DialogResult.Yes:
-                        Multiplayer = MultiplayerMode.Server;
+                        SelectedAction = UserAction.MultiplayerServer;
                         return true;
                     case DialogResult.No:
-                        Multiplayer = MultiplayerMode.Client;
+                        SelectedAction = UserAction.MultiplayerClient;
                         return true;
                     default:
                         return false;

@@ -1,10 +1,20 @@
-// COPYRIGHT 2010, 2011, 2012 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 /* OVERHEAD WIRE
@@ -320,7 +330,6 @@ namespace ORTS
 
     } // end WireDrawer
 
-    //WHN added
     public class LODWire : LOD
     {
         public LODWire(float cutoffRadius)
@@ -367,7 +376,7 @@ namespace ORTS
             : base(RenderProcess, 0)//call the dummy base constructor so that no data is pre-populated
         {
             LODMethod = LODMethods.ComponentAdditive;
-            LODWire lod; // Local LOD instance //WHN added
+            LODWire lod; // Local LOD instance 
             LODItemWire lodItem; // Local LODItem instance
             Polyline pl; // Local polyline instance
             Polyline vertical;
@@ -402,34 +411,38 @@ namespace ORTS
             pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, 1f, 0f, 0f, u1, v1));
             pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, 0f, -1f, 0f, u1, v1));
             pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -1f, 0f, 0f, u1, v1));
-            lodItem.Polylines.Add(pl); //WHN changed lod to lodItem
-            lodItem.Accum(pl.Vertices.Count); //WHN changed lod to lodItem
+            lodItem.Polylines.Add(pl); 
+            lodItem.Accum(pl.Vertices.Count);
 
-            pl = new Polyline(this, "TopWire1", 5);
-            pl.DeltaTexCoord = new Vector2(0.00f, 0.00f);
-            topHeight += 1.0f;
+            if (RenderProcess.Viewer.Settings.DoubleWire)
+            {
+                pl = new Polyline(this, "TopWire1", 5);
+                pl.DeltaTexCoord = new Vector2(0.00f, 0.00f);
+                topHeight += 1.0f;
 
-            pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -1f, 0f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(0.01f, topHeight + 0.02f, 0.0f, 0f, 1f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, 1f, 0f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, 0f, -1f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.04f, 0.0f, -1f, 0f, 0f, u1, v1));
-            lodItem.Polylines.Add(pl); //WHN changed lod to lodItem
-            lodItem.Accum(pl.Vertices.Count); //WHN changed lod to lodItem
+                pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -1f, 0f, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(0.01f, topHeight + 0.02f, 0.0f, 0f, 1f, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, 1f, 0f, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, 0f, -1f, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.04f, 0.0f, -1f, 0f, 0f, u1, v1));
+                lodItem.Polylines.Add(pl);
+                lodItem.Accum(pl.Vertices.Count);
 
-            vertical = new Polyline(this, "TopWireVertical", 5);
-            vertical.DeltaTexCoord = new Vector2(0.00f, 0.00f);
+                vertical = new Polyline(this, "TopWireVertical", 5);
+                vertical.DeltaTexCoord = new Vector2(0.00f, 0.00f);
 
-            vertical.Vertices.Add(new Vertex(-0.008f, topHeight, 0.008f, 0f, 0f, 1f, u1, v1));
-            vertical.Vertices.Add(new Vertex(-.008f, topHeight, -.008f, -1f, 0f, 0f, u1, v1));
-            vertical.Vertices.Add(new Vertex(.008f, topHeight, -.008f, 0f, 0f, -1f, u1, v1));
-            vertical.Vertices.Add(new Vertex(.008f, topHeight, .008f, 1f, 0f, 0f, u1, v1));
-            vertical.Vertices.Add(new Vertex(-.008f, topHeight, .008f, 1f, 0f, 0f, u1, v1));
-            lodItem.VerticalPolylines = new ArrayList(); //WHN changed lod to lodItem
-            lodItem.VerticalPolylines.Add(vertical); //WHN changed lod to lodItem
-            lodItem.VerticalAccum(vertical.Vertices.Count); //WHN changed lod to lodItem
+                vertical.Vertices.Add(new Vertex(-0.008f, topHeight, 0.008f, 0f, 0f, 1f, u1, v1));
+                vertical.Vertices.Add(new Vertex(-.008f, topHeight, -.008f, -1f, 0f, 0f, u1, v1));
+                vertical.Vertices.Add(new Vertex(.008f, topHeight, -.008f, 0f, 0f, -1f, u1, v1));
+                vertical.Vertices.Add(new Vertex(.008f, topHeight, .008f, 1f, 0f, 0f, u1, v1));
+                vertical.Vertices.Add(new Vertex(-.008f, topHeight, .008f, 1f, 0f, 0f, u1, v1));
+                lodItem.VerticalPolylines = new ArrayList();
+                lodItem.VerticalPolylines.Add(vertical);
+                lodItem.VerticalAccum(vertical.Vertices.Count);
+            }
 
-            lod.LODItems.Add(lodItem); // Append to LODItems array //WHN changed lod to lodItem, moved to here
+
+            lod.LODItems.Add(lodItem); // Append to LODItems array 
             base.LODs.Add(lod); // Append this lod to LODs array
 
         } // end WireProfile() constructor
@@ -472,7 +485,6 @@ namespace ORTS
                 DTrackData.param2 = radius;
             }
             DTrackData.deltaY = 0;
-            XNAEnd = endPosition.XNAMatrix.Translation;
 
             if (WireProfile == null)
             {
@@ -525,7 +537,6 @@ namespace ORTS
         /// <param name="iLOD">Index of LOD mesh to be generated from profile.</param>
         /// <param name="iLODItem">Index of LOD mesh to be generated from profile.</param>
         public new ShapePrimitive BuildMesh(Viewer3D viewer, WorldPosition worldPosition, int iLOD, int iLODItem)
-        //WHN deleted new because base BuildMesh has an additional int parameter
         {
             // Call for track section to initialize itself
             if (DTrackData.IsCurved == 0) LinearGen();

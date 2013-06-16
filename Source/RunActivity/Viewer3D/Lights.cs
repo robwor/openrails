@@ -1,10 +1,20 @@
-// COPYRIGHT 2010, 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 // Uncomment either or both of these for debugging information about lights.
@@ -224,7 +234,25 @@ namespace ORTS
         public bool CarIsPlayer;
         public bool CarInService;
         public bool IsDay;
+        public bool TrainIsSpad
+        {
+            get
+            {
+                var result = false;
+                if (Car.Train != null && Car.Train.LeadLocomotive!=null) {
+                    try
+                    {
+                        var loc = Car.Train.LeadLocomotive as MSTSLocomotive;
+                        result = loc.TrainBrakeController.GetIsEmergency();
+                    }
+                    catch { }
+                }
+                return result;
+            }
+        }
         public WeatherType Weather;
+        public bool Penalty;
+        public bool IsLightConeActive { get { return ActiveLightCone != null; } }
         List<LightMesh> LightMeshes = new List<LightMesh>();
 
         LightConeMesh ActiveLightCone;
@@ -393,7 +421,7 @@ namespace ORTS
             // Control
             var newCarIsPlayer = Car == Viewer.PlayerLocomotive;
 			if (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.REMOTE) newCarIsPlayer = true;//for remote trains
-			// TODO: Check for relevant Penalty changes.
+            var newPenalty = this.TrainIsSpad;			// TODO: Check for relevant Penalty changes.
             // Service
             var newCarInService = Car.Train != null;
             // Time
@@ -411,6 +439,7 @@ namespace ORTS
                 (CarIsPlayer != newCarIsPlayer) ||
                 (CarInService != newCarInService) ||
                 (IsDay != newIsDay) ||
+                (Penalty != newPenalty) ||
                 (Weather != newWeather))
             {
                 TrainHeadlight = newTrainHeadlight;
@@ -423,6 +452,7 @@ namespace ORTS
                 CarInService = newCarInService;
                 IsDay = newIsDay;
                 Weather = newWeather;
+                Penalty = newPenalty;
 
 #if DEBUG_LIGHT_STATES
                 Console.WriteLine();
@@ -499,6 +529,10 @@ namespace ORTS
         {
             var oldEnabled = Enabled;
             Enabled = true;
+            if (this.Light.Penalty != LightPenaltyCondition.Ignore)
+            {
+                Enabled &= lightDrawer.Penalty;
+            }
             if (Light.Headlight != LightHeadlightCondition.Ignore)
             {
                 if (Light.Headlight == LightHeadlightCondition.Off)

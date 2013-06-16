@@ -1,19 +1,27 @@
-﻿// COPYRIGHT 2011 by the Open Rails project.
-// This code is provided to help you understand what Open Rails does and does
-// not do. Suggestions and contributions to improve Open Rails are always
-// welcome. Use of the code for any other purpose or distribution of the code
-// to anyone else is prohibited without specific written permission from
-// admin@openrails.org.
-//
+﻿// COPYRIGHT 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 // This file is the responsibility of the 3D & Environment Team. 
 
 using System;
-using System.Diagnostics;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using MSTS;
 using Microsoft.Xna.Framework.Graphics.PackedVector;
+using MSTS;
 
 namespace ORTS
 {
@@ -22,25 +30,54 @@ namespace ORTS
         public ParticleEmitterData(STFReader stf)
         {
             stf.MustMatch("(");
-            Offset.X = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
-            Offset.Y = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
-            Offset.Z = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
-            Direction.X = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
-            Direction.Y = stf.ReadFloat(STFReader.UNITS.Distance, 1.0f);  // May as well go up by default.
-            Direction.Z = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
+            XNAOffset.X = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
+            XNAOffset.Y = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
+            XNAOffset.Z = -stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
+            XNADirection.X = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
+            XNADirection.Y = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);  // May as well go up by default.
+            XNADirection.Z = -stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
             NozzleWidth = stf.ReadFloat(STFReader.UNITS.Distance, 0.0f);
             stf.SkipRestOfBlock();
 
-            MaxParticlesPerSecond = 60; // May come from the STF in the future.
-            ParticleDuration = 5.0f;    // May come from the STF in the future.
+            MaxParticlesPerSecond = 60f;
+            ParticlesPerSecond = 60f;
+            ParticleDuration = 60f;    // May come from the STF in the future.
             texturePath = string.Empty; // May come from the STF in the future.
+            ParticleDurationRandomness = 1;
+            ParticleVelocitySensitivity = 0;
+            MinHorizontalVelocity = 0;
+            MaxHorizontalVelocity = 50;
+            MinVerticalVelocity = -10;
+            MaxVerticalVelocity = 50;
+            EndVelocity = 0;
+            MinRotateSpeed = -2;
+            MaxRotateSpeed = 2;
+            MinStartSize = 10;
+            MaxStartSize = 10;
+            MinStartSize = 100;
+            MinEndSize = 100;
+            MaxEndSize = 200;
         }
 
-        public Vector3 Offset;
-        public Vector3 Direction;
+        public Vector3 XNAOffset;
+        public Vector3 XNADirection;
         public float NozzleWidth;
         public float MaxParticlesPerSecond;
+        public float ParticlesPerSecond;
         public float ParticleDuration;
+        public float ParticleDurationRandomness;
+        public float ParticleVelocitySensitivity;
+        public float MinHorizontalVelocity;
+        public float MaxHorizontalVelocity;
+        public float MinVerticalVelocity;
+        public float MaxVerticalVelocity;
+        public float EndVelocity;
+        public float MinRotateSpeed;
+        public float MaxRotateSpeed;
+        public float MinStartSize;
+        public float MaxStartSize;
+        public float MinEndSize;
+        public float MaxEndSize;
         public string texturePath;
     }
 
@@ -48,20 +85,21 @@ namespace ORTS
     {
         Viewer3D Viewer;
         ParticleEmitterMaterial ParticleMaterial;
+        float ParticleEmissionHoleM3 = 1;
 
         // Classes reqiring instantiation
         public ParticleEmitter emitter;
+                
 
         public WorldPosition WorldPosition
         {
             set { emitter.WorldPosition = value; }
         }
-
         public ParticleEmitterDrawer(Viewer3D viewer, ParticleEmitterData data)
         {
             Viewer = viewer;
-            //string texturePath = viewer.Simulator.BasePath + @"\GLOBAL\TEXTURES\dieselsmoke.ace";
             ParticleMaterial = (ParticleEmitterMaterial)viewer.MaterialManager.Load("ParticleEmitter");
+            ParticleEmissionHoleM3 = (MathHelper.Pi * ((data.NozzleWidth / 2f) * (data.NozzleWidth / 2f)));
             emitter = new ParticleEmitter(Viewer.RenderProcess, data);
         }
 
@@ -69,33 +107,28 @@ namespace ORTS
         {
             emitter.CameraTileXZ.X = Viewer.Camera.TileX;
             emitter.CameraTileXZ.Y = Viewer.Camera.TileZ;
-
             emitter.Update(Viewer.Simulator.GameTime, elapsedTime);
-            //ParticleMaterial.particleEmitterShader.
-            
-            Matrix XNAPrecipWorldLocation = Matrix.Identity;// Matrix.CreateTranslation(ViewerXNAPosition);
+            var XNAPrecipWorldLocation = Matrix.Identity;
 
             if(emitter.HasParticlesToRender())
                 frame.AddPrimitive(ParticleMaterial, emitter, RenderPrimitiveGroup.Particles, ref XNAPrecipWorldLocation);
         }
-
         public void SetTexture(Texture2D texture)
         {
             ParticleMaterial.Texture = texture;
         }
-
-        public void SetEmissionRate(float particlesPerSecond)
+        public void SetEmissionRate(float particleVolumeM3)
         {
-            emitter.ParticlesPerSecond = particlesPerSecond;
+            emitter.EmitterData.ParticlesPerSecond = (particleVolumeM3 / ParticleEmissionHoleM3) * .10f;
+            emitter.ParticlesPerSecond = emitter.EmitterData.ParticlesPerSecond;
         }
-
+        public void SetParticleDuration(float particleDuration)
+        {
+            emitter.EmitterData.ParticleDuration = particleDuration;
+        }
         public void SetEmissionColor(Color particleColor)
         {
             emitter.ParticleColor = particleColor;
-        }
-
-        public void Reset()
-        {
         }
 
         [CallOnThread("Loader")]
@@ -128,6 +161,8 @@ namespace ORTS
         static int INDICES_PER_PARTICLE = 6;
 
         public Vector2 CameraTileXZ = Vector2.Zero;
+
+        public Vector3 XNADirection { get; private set; }
 
         public ParticleEmitterData EmitterData;
         int maxParticles;
@@ -166,9 +201,7 @@ namespace ORTS
             ParticleColor = Color.White;
             EmitterData = data;
             this.renderProcess = renderProcess;
-
-            maxParticles = (int)(data.MaxParticlesPerSecond * data.ParticleDuration);
-
+            maxParticles = (int)(EmitterData.MaxParticlesPerSecond * data.ParticleDuration);
             vd = new VertexDeclaration(renderProcess.GraphicsDevice, ParticleVertex.VertexElements);
             InitVB(renderProcess.GraphicsDevice);
             InitIB(renderProcess.GraphicsDevice);
@@ -247,6 +280,10 @@ namespace ORTS
 
         public void Update(double currentTime, ElapsedTime elapsedTime)
         {
+            var rotation = WorldPosition.XNAMatrix;
+            rotation.Translation = Vector3.Zero;
+            XNADirection = Vector3.Transform(EmitterData.XNADirection, rotation);
+
             RetireActiveParticles((float)currentTime);
             FreeRetiredParticles();
 
@@ -261,28 +298,17 @@ namespace ORTS
             var numCanBeEmitted = GetNumParticlesAvailableForEmission();
             var numToEmit = Math.Min(numToBeEmitted, numCanBeEmitted);
 
-            var intervalPerParticle = (time - timeParticlesLastEmitted) / numToEmit;
+            var intervalPerParticle = (time - timeParticlesLastEmitted) / numToEmit; //Change to randomize time of emission.
 
             for (var i = 0; i < numToEmit; i++)
             {
                 var nextFreeParticle = (firstFreeParticle + 1) % maxParticles;
-
                 var newParticleVertexIndex = nextFreeParticle * VERTICES_PER_PARTICLE;
-
-                var particleOffset = EmitterData.Offset;
-                var rotation = WorldPosition.XNAMatrix;
-                rotation.Translation = Vector3.Zero;
-                particleOffset = Vector3.Transform(particleOffset, Matrix.Invert(rotation));
-
+                var particleOffset = Vector3.Transform(EmitterData.XNAOffset, rotation);
                 var particlePosition = WorldPosition.Location + particleOffset;
-
-                var timeOfEmission = timeParticlesLastEmitted + (i * intervalPerParticle);
-
-                var positionTime = new Vector4(WorldPosition.Location + particleOffset, timeOfEmission);
-                positionTime.Z *= -1;
-
-                var randomTextureOffset = (float)rng.Next(16);
-
+                var timeOfEmission = timeParticlesLastEmitted + intervalPerParticle;
+                var positionTime = new Vector4(WorldPosition.XNAMatrix.Translation + particleOffset, timeOfEmission);
+                var randomTextureOffset = (float)rng.Next(16); //Randomizes emissions.
                 var color_random = new Color(ParticleColor, (float)rng.NextDouble());
 
                 for (var j = 0; j < VERTICES_PER_PARTICLE; j++)

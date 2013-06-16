@@ -1,10 +1,22 @@
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
-/// Contributors
-///     2009-12-06  Rob Lane
+﻿// COPYRIGHT 2009, 2010, 2011, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
+// Contributors
+//     2009-12-06  Rob Lane
 
 using System;
 using System.IO;
@@ -72,6 +84,7 @@ namespace MSTS
                                 for (int i = 0; i < count; ++i) 
                                     using( SBR terrain_shadersBlock = subBlock.ReadSubBlock() )
                                         terrain_shaders.Add(new terrain_shader(terrain_shadersBlock));
+                                if (!subBlock.EndOfBlock()) subBlock.Skip();
                                 break;
                             }
                         case TokenID.terrain_patches:
@@ -83,6 +96,7 @@ namespace MSTS
                                     for (int i = 0; i < patch_sets_count; ++i) 
                                         using( SBR terrain_patchsetBlock = patch_sets_Block.ReadSubBlock() )
                                             terrain_patchsets[i] = new terrain_patchset(terrain_patchsetBlock);
+                                    if (!subBlock.EndOfBlock()) subBlock.Skip();
                                 }
                                 break;
                             }
@@ -238,10 +252,10 @@ namespace MSTS
 		public int terrain_patchset_distance;
 		public int terrain_patchset_npatches;
 		public terrain_patchset_patch[] terrain_patchset_patches;
-
+        public int xdim = 16;
         public terrain_patchset_patch GetPatch(int x, int z)
         {
-            terrain_patchset_patch patch = terrain_patchset_patches[z * 16 + x];
+            terrain_patchset_patch patch = terrain_patchset_patches[z * xdim + x];
             return patch;
         }
 
@@ -268,6 +282,7 @@ namespace MSTS
                     }
                 }
 			}
+            xdim = (int)Math.Sqrt(terrain_patchset_patches.Length);
 
 		}
 
@@ -345,9 +360,9 @@ namespace MSTS
 		{
             FileName = filename;
 
-            using( SBR sbr = SBR.Open( filename ))
+            using (SBR sbr = SBR.Open(filename))
             {
-                using (SBR block = sbr.ReadSubBlock() )
+                using (SBR block = sbr.ReadSubBlock())
                 {
                     terrain = new terrain(block);
                 }

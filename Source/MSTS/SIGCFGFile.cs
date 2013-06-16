@@ -1,8 +1,20 @@
-﻿/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
-/// 
+﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
+
 /// This module parses the sigcfg file and builds an object model based on signal details
 /// 
 /// Author: Laurie Heath
@@ -220,7 +232,12 @@ namespace MSTS
 		public IList<SignalLight> Lights;
 		public IDictionary<string, SignalDrawState> DrawStates;
 		public IList<SignalAspect> Aspects;
-		public uint NumClearAhead;
+#if NEW_SIGNALLING
+		public int NumClearAhead_MSTS;
+		public int NumClearAhead_ORTS;
+#else
+		public int NumClearAhead;
+#endif
 		public float SemaphoreInfo = -1; //[Rob Roeterdink] default -1 as 0 is active value
 
 	public SignalType(FnTypes reqType, ORTS.SignalHead.SIGASP reqAspect)
@@ -241,13 +258,22 @@ namespace MSTS
         {
             stf.MustMatch("(");
             Name = stf.ReadString().ToLowerInvariant();
+#if NEW_SIGNALLING
+            int numClearAhead = -2;
+            int numdefs = 0;
+#endif
+
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("signalfntype", ()=>{ FnType = ReadFnType(stf); }),  //[Rob Roeterdink] value was not passed
                 new STFReader.TokenProcessor("signallighttex", ()=>{ LightTextureName = stf.ReadStringBlock("").ToLowerInvariant(); }),
                 new STFReader.TokenProcessor("signallights", ()=>{ Lights = ReadLights(stf); }),
                 new STFReader.TokenProcessor("signaldrawstates", ()=>{ DrawStates = ReadDrawStates(stf); }),
                 new STFReader.TokenProcessor("signalaspects", ()=>{ Aspects = ReadAspects(stf); }),
-                new STFReader.TokenProcessor("signalnumclearahead", ()=>{ NumClearAhead = stf.ReadUIntBlock(STFReader.UNITS.None, null); }),
+#if NEW_SIGNALLING
+                new STFReader.TokenProcessor("signalnumclearahead", ()=>{ numClearAhead = numClearAhead >= -1 ? numClearAhead : stf.ReadIntBlock(STFReader.UNITS.None, null); numdefs++;}),
+#else
+                new STFReader.TokenProcessor("signalnumclearahead", ()=>{ NumClearAhead = stf.ReadIntBlock(STFReader.UNITS.None, null); }),
+#endif
                 new STFReader.TokenProcessor("semaphoreinfo", ()=>{ SemaphoreInfo = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
                 new STFReader.TokenProcessor("sigflashduration", ()=>{
                     stf.MustMatch("(");
@@ -263,10 +289,14 @@ namespace MSTS
                             case "abs": Abs = true; break;
                             case "no_gantry": NoGantry = true; break;
                             case "semaphore": Semaphore = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Skipped unknown SignalType flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceInformation(stf, "Skipped unknown SignalType flag " + stf.ReadString()); break;
                         }
                 }),
             });
+#if NEW_SIGNALLING
+            NumClearAhead_MSTS = numdefs == 1 ? numClearAhead : -2;
+            NumClearAhead_ORTS = numdefs == 2 ? numClearAhead : -2;
+#endif
         }
 
 		static FnTypes ReadFnType(STFReader stf)
@@ -278,7 +308,7 @@ namespace MSTS
 			}
 			catch (ArgumentException)
 			{
-                STFException.TraceWarning(stf, "Skipped unknown SignalFnType " + type);
+                STFException.TraceInformation(stf, "Skipped unknown SignalFnType " + type);
                 return FnTypes.Info;
 			}
 		}
@@ -448,7 +478,7 @@ namespace MSTS
                         switch (stf.ReadString().ToLower())
                         {
                             case "semaphore_change": SemaphoreChange = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Skipped unknown SignalLight flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceInformation(stf, "Skipped unknown SignalLight flag " + stf.ReadString()); break;
                         }
                 }),
             });
@@ -526,7 +556,7 @@ namespace MSTS
                         switch (stf.ReadString().ToLower())
                         {
                             case "flashing": Flashing = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Skipped unknown DrawLight flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceInformation(stf, "Skipped unknown DrawLight flag " + stf.ReadString()); break;
                         }
                 }),
             });
@@ -562,20 +592,23 @@ namespace MSTS
             }
             catch (ArgumentException)
             {
-                STFException.TraceWarning(stf, "Skipped unknown signal aspect " + aspectName);
+                STFException.TraceInformation(stf, "Skipped unknown signal aspect " + aspectName);
                 Aspect = SignalHead.SIGASP.UNKNOWN;
             }
             DrawStateName = stf.ReadString().ToLowerInvariant();
             stf.ParseBlock(new STFReader.TokenProcessor[] {
-                new STFReader.TokenProcessor("speedmph", ()=>{ SpeedMpS = MpH.ToMpS(stf.ReadFloatBlock(STFReader.UNITS.None, 0)); }),
-                new STFReader.TokenProcessor("speedkph", ()=>{ SpeedMpS = KpH.ToMpS(stf.ReadFloatBlock(STFReader.UNITS.None, 0)); }),
+                //CJ
+                //new STFReader.TokenProcessor("speedmph", ()=>{ SpeedMpS = MpH.ToMpS(stf.ReadFloatBlock(STFReader.UNITS.None, 0)); }),
+                //new STFReader.TokenProcessor("speedkph", ()=>{ SpeedMpS = KpH.ToMpS(stf.ReadFloatBlock(STFReader.UNITS.None, 0)); }),
+                new STFReader.TokenProcessor("speedmph", ()=>{ SpeedMpS = MpS.FromMpH(stf.ReadFloatBlock(STFReader.UNITS.None, 0)); }),
+                new STFReader.TokenProcessor("speedkph", ()=>{ SpeedMpS = MpS.FromKpH(stf.ReadFloatBlock(STFReader.UNITS.None, 0)); }),
                 new STFReader.TokenProcessor("signalflags", ()=>{
                     stf.MustMatch("(");
                     while (!stf.EndOfBlock())
                         switch (stf.ReadString().ToLower())
                         {
                             case "asap": Asap = true; break;
-                            default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Skipped unknown DrawLight flag " + stf.ReadString()); break;
+                            default: stf.StepBackOneItem(); STFException.TraceInformation(stf, "Skipped unknown DrawLight flag " + stf.ReadString()); break;
                         }
                 }),
             });
@@ -656,7 +689,7 @@ namespace MSTS
                                 case "default": Default = true; break;
                                 case "back_facing": BackFacing = true; break;
                                 case "jn_link": JunctionLink = true; break;
-                                default: stf.StepBackOneItem(); STFException.TraceWarning(stf, "Skipped unknown SignalSubObj flag " + stf.ReadString()); break;
+                                default: stf.StepBackOneItem(); STFException.TraceInformation(stf, "Skipped unknown SignalSubObj flag " + stf.ReadString()); break;
                             }
                     }),
                 });

@@ -1,7 +1,19 @@
-/// COPYRIGHT 2009 by the Open Rails project.
-/// This code is provided to enable you to contribute improvements to the open rails program.  
-/// Use of the code for any other purpose or distribution of the code to anyone else
-/// is prohibited without specific written permission from admin@openrails.org.
+﻿// COPYRIGHT 2009, 2010, 2011, 2013 by the Open Rails project.
+// 
+// This file is part of Open Rails.
+// 
+// Open Rails is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+// 
+// Open Rails is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License
+// along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 //EBNF
 //Usage follows http://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_Form
@@ -259,6 +271,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
+#if NEW_SIGNALLING
+using System.IO;
+#endif
 
 namespace MSTS {
     public enum SeasonType { Spring = 0, Summer, Autumn, Winter };
@@ -537,6 +552,9 @@ namespace MSTS {
     /// </summary>
     public class Traffic_Definition {
         public string Name;
+#if NEW_SIGNALLING
+        public Traffic_File TrafficFile;
+#endif
         public List<Service_Definition> ServiceDefinitionList = new List<Service_Definition>();
 
         public Traffic_Definition(STFReader stf) {
@@ -545,8 +563,117 @@ namespace MSTS {
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("service_definition", ()=>{ ServiceDefinitionList.Add(new Service_Definition(stf)); }),
             });
+
+#if NEW_SIGNALLING
+            TrafficFile = new Traffic_File(stf.FileName, Name);
+#endif
+
         }
     }
+    
+#if NEW_SIGNALLING
+    /// <summary>
+    /// Parses Traffic File
+    /// </summary>
+    public class Traffic_File
+    {
+        public Traffic_Traffic_Definition TrafficDefinition;
+
+        public Traffic_File(string RoutePath, string FileName)
+        {
+
+            string routeDir = Path.GetDirectoryName(Path.GetDirectoryName(RoutePath));
+            string fullName = String.Concat(routeDir, @"\Traffic\", FileName, ".trf");
+
+            using (STFReader stt = new STFReader(fullName, false))
+                stt.ParseFile(new STFReader.TokenProcessor[] {
+                    new STFReader.TokenProcessor("traffic_definition", ()=>{ TrafficDefinition = new Traffic_Traffic_Definition(stt); }),});
+        }
+    }
+
+    /// <summary>
+    /// Parses Traffic Definitions in Traffic File
+    /// </summary>
+    public class Traffic_Traffic_Definition
+    {
+        public string Name;
+        public int Serial;
+        public List<Traffic_Service_Definition> TrafficItems = new List<Traffic_Service_Definition>();
+
+        public Traffic_Traffic_Definition(STFReader stt)
+        {
+            stt.MustMatch("(");
+            Name = stt.ReadString();
+            Traffic_Service_Definition thisItem;
+
+            new STFReader.TokenProcessor("serial", () => { Serial = stt.ReadIntBlock(STFReader.UNITS.None, Serial); });
+            stt.ParseBlock(new STFReader.TokenProcessor[] {
+	        new STFReader.TokenProcessor("service_definition", ()=>{ thisItem = new Traffic_Service_Definition(stt);
+	        TrafficItems.Add(thisItem); }), });
+        }
+
+    }
+
+    /// <summary>
+    /// Parses Traffic Definition Items in Traffic Definitions in Traffic File
+    /// </summary>
+    public class Traffic_Service_Definition
+    {
+        public string Service_Definition;
+        public int Time;
+        public List<Traffic_Traffic_Item> TrafficDetails = new List<Traffic_Traffic_Item>();
+
+        public Traffic_Service_Definition(STFReader stt)
+        {
+            int arrivalTime = 0;
+            int departTime = 0;
+            int skipCount = 0;
+            float distanceDownPath = new float();
+            int platformStartID = 0;
+
+            stt.MustMatch("(");
+            Service_Definition = stt.ReadString();
+            Time = stt.ReadInt(STFReader.UNITS.None, null);
+            stt.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("arrivaltime", ()=>{ arrivalTime = stt.ReadIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("departtime", ()=>{ departTime = stt.ReadIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("skipcount", ()=>{ skipCount = stt.ReadIntBlock(STFReader.UNITS.None, null); }),
+                new STFReader.TokenProcessor("distancedownpath", ()=>{ distanceDownPath = stt.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                new STFReader.TokenProcessor("platformstartid", ()=>{ platformStartID = stt.ReadIntBlock(STFReader.UNITS.None, null); 
+                    TrafficDetails.Add(new Traffic_Traffic_Item(arrivalTime, departTime, skipCount, distanceDownPath, platformStartID)); }),
+            });
+        }
+
+	public Traffic_Service_Definition()
+	{
+		Service_Definition = String.Empty;
+		Time = 0;
+		TrafficDetails = null;
+	}
+    }
+
+    
+    public class Traffic_Traffic_Item
+    {
+        public int ArrivalTime;
+        public int DepartTime;
+        public float DistanceDownPath;
+        public int PlatformStartID = 0;
+
+        public Traffic_Traffic_Item(int arrivalTime, int departTime, int skipCount, float distanceDownPath, int platformStartID)
+        {
+            ArrivalTime = arrivalTime;
+            DepartTime = departTime;
+            DistanceDownPath = distanceDownPath;
+            PlatformStartID = platformStartID;
+        }
+
+	public Traffic_Traffic_Item()
+	{
+	}
+    }
+
+#endif
 
     /// <summary>
     /// Parses Event objects and saves them in EventList.
