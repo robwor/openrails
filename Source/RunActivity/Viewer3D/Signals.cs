@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -20,31 +20,32 @@
 // Prints out lots of diagnostic information about the construction of signals from shape data and their state changes.
 //#define DEBUG_SIGNAL_SHAPES
 
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Orts.Formats.Msts;
+using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Text;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     public class SignalShape : PoseableShape
     {
+#if DEBUG_SIGNAL_SHAPES
         readonly uint UID;
-        readonly SignalObject SignalObject;
+#endif
         readonly bool[] SubObjVisible;
         readonly List<SignalShapeHead> Heads = new List<SignalShapeHead>();
 
-        public SignalShape(Viewer3D viewer, MSTS.SignalObj mstsSignal, string path, WorldPosition position, ShapeFlags flags)
+        public SignalShape(Viewer viewer, SignalObj mstsSignal, string path, WorldPosition position, ShapeFlags flags)
             : base(viewer, path, position, flags)
         {
 #if DEBUG_SIGNAL_SHAPES
             Console.WriteLine("{0} signal {1}:", Location.ToString(), mstsSignal.UID);
-#endif
             UID = mstsSignal.UID;
+#endif
             var signalShape = Path.GetFileName(path).ToUpper();
             if (!viewer.SIGCFG.SignalShapes.ContainsKey(signalShape))
             {
@@ -63,13 +64,33 @@ namespace ORTS
                 if ((((mstsSignal.SignalSubObj >> i) & 0x1) == 1) && (SharedShape.MatrixNames.Contains(mstsSignalShape.SignalSubObjs[i].MatrixName)))
                     visibleMatrixNames[SharedShape.MatrixNames.IndexOf(mstsSignalShape.SignalSubObjs[i].MatrixName)] = true;
 
-            // All sub-objects except the first are hidden by default. For each sub-object beyond the first, look up
-            // its name in the hierarchy and use the visibility of that matrix. Note: parent matricies in the
-            // hierarchy are not considered.
+            // All sub-objects except the one pointing to the first matrix (99.00% times it is the first one, but not always, see Protrain) are hidden by default.
+            //For each other sub-object, look up its name in the hierarchy and use the visibility of that matrix. 
             SubObjVisible = new bool[SharedShape.LodControls[0].DistanceLevels[0].SubObjects.Length];
             SubObjVisible[0] = true;
             for (var i = 1; i < SharedShape.LodControls[0].DistanceLevels[0].SubObjects.Length; i++)
-                SubObjVisible[i] = visibleMatrixNames[SharedShape.LodControls[0].DistanceLevels[0].SubObjects[i].ShapePrimitives[0].HierarchyIndex];
+            {
+                if (i == SharedShape.RootSubObjectIndex) SubObjVisible[i] = true;
+                else
+                {
+                    var subObj =SharedShape.LodControls[0].DistanceLevels[0].SubObjects[i];
+                    int minHiLevIndex = 0;
+                    if (subObj.ShapePrimitives[0].Hierarchy[subObj.ShapePrimitives[0].HierarchyIndex] > 0)
+                        // Search for ShapePrimitive with lowest Hierarchy Value and check visibility with it
+                    {
+                        var minHiLev = 999;
+                        for (var j = 0; j < subObj.ShapePrimitives.Length; j++)
+                        {
+                            if (subObj.ShapePrimitives[0].Hierarchy[subObj.ShapePrimitives[j].HierarchyIndex] < minHiLev)
+                            {
+                                minHiLevIndex = j;
+                                minHiLev = subObj.ShapePrimitives[0].Hierarchy[subObj.ShapePrimitives[j].HierarchyIndex];
+                            }
+                        }
+                    }
+                    SubObjVisible[i] = visibleMatrixNames[SharedShape.LodControls[0].DistanceLevels[0].SubObjects[i].ShapePrimitives[minHiLevIndex].HierarchyIndex];
+                }
+            }
 
 #if DEBUG_SIGNAL_SHAPES
             for (var i = 0; i < mstsSignalShape.SignalSubObjs.Count; i++)
@@ -103,8 +124,7 @@ namespace ORTS
                     Trace.TraceWarning("Skipped {0} signal {1} unit {2} with invalid SubObj {3}", Location.ToString(), mstsSignal.UID, i, mstsSignal.SignalUnits.Units[i].SubObj);
                     continue;
                 }
-                SignalObject = signalAndHead.Value.Key;
-                var mstsSignalItem = (MSTS.SignalItem)(viewer.Simulator.TDB.TrackDB.TrItemTable[mstsSignal.SignalUnits.Units[i].TrItem]);
+                var mstsSignalItem = (SignalItem)(viewer.Simulator.TDB.TrackDB.TrItemTable[mstsSignal.SignalUnits.Units[i].TrItem]);
                 try
                 {
                     // Go create the shape head.
@@ -125,7 +145,6 @@ namespace ORTS
             // Locate relative to the camera
             var dTileX = Location.TileX - Viewer.Camera.TileX;
             var dTileZ = Location.TileZ - Viewer.Camera.TileZ;
-            var mstsLocation = Location.Location + new Vector3(dTileX * 2048, 0, dTileZ * 2048);
             var xnaTileTranslation = Matrix.CreateTranslation(dTileX * 2048, 0, -dTileZ * 2048);  // object is offset from camera this many tiles
             Matrix.Multiply(ref Location.XNAMatrix, ref xnaTileTranslation, out xnaTileTranslation);
 
@@ -135,6 +154,13 @@ namespace ORTS
             SharedShape.PrepareFrame(frame, Location, XNAMatrices, SubObjVisible, Flags);
         }
 
+        public override void Unload()
+        {
+            foreach (var head in Heads)
+                head.Unload();
+            base.Unload();
+        }
+
         internal override void Mark()
         {
             foreach (var head in Heads)
@@ -142,50 +168,47 @@ namespace ORTS
             base.Mark();
         }
 
-        class SignalShapeHead : IDisposable
+        class SignalShapeHead
         {
             static readonly Dictionary<string, SignalTypeData> SignalTypes = new Dictionary<string, SignalTypeData>();
 
-            readonly Viewer3D Viewer;
+            readonly Viewer Viewer;
             readonly SignalShape SignalShape;
+#if DEBUG_SIGNAL_SHAPES
             readonly int Index;
+#endif
             readonly SignalHead SignalHead;
-            readonly int MatrixIndex;
+            readonly List<int> MatrixIndices = new List<int>();
             readonly SignalTypeData SignalTypeData;
             readonly SoundSource Sound;
             float CumulativeTime;
             float SemaphorePos;
             float SemaphoreTarget;
             float SemaphoreSpeed;
-            float SemaphoreInfo;
-            AnimatedPart SemaphorePart;
+            List<AnimatedPart> SemaphoreParts = new List<AnimatedPart>();
             int DisplayState = -1;
 
-            public SignalShapeHead(Viewer3D viewer, SignalShape signalShape, int index, SignalHead signalHead,
-                        MSTS.SignalItem mstsSignalItem, MSTS.SignalShape.SignalSubObj mstsSignalSubObj)
+            public SignalShapeHead(Viewer viewer, SignalShape signalShape, int index, SignalHead signalHead,
+                        Orts.Formats.Msts.SignalItem mstsSignalItem, Orts.Formats.Msts.SignalShape.SignalSubObj mstsSignalSubObj)
             {
                 Viewer = viewer;
                 SignalShape = signalShape;
+#if DEBUG_SIGNAL_SHAPES
                 Index = index;
-                SignalHead = signalHead;
-                MatrixIndex = signalShape.SharedShape.MatrixNames.IndexOf(mstsSignalSubObj.MatrixName);
-
-#if !NEW_SIGNALLING
-                if (MatrixIndex == -1)
-                    throw new InvalidDataException(String.Format("Skipped {0} signal {1} unit {2} with sub-object {3} which is missing from shape {4}", signalShape.Location, signalShape.UID, index, mstsSignalSubObj.MatrixName, signalShape.SharedShape.FilePath));
 #endif
+                SignalHead = signalHead;
+                for (int mindex = 0; mindex <= signalShape.SharedShape.MatrixNames.Count - 1; mindex++)
+                {
+                    string MatrixName = signalShape.SharedShape.MatrixNames[mindex];
+                    if (String.Equals(MatrixName, mstsSignalSubObj.MatrixName))
+                        MatrixIndices.Add(mindex);
+                }
+
 
                 if (!viewer.SIGCFG.SignalTypes.ContainsKey(mstsSignalSubObj.SignalSubSignalType))
-#if !NEW_SIGNALLING
-                    throw new InvalidDataException(String.Format("Skipped {0} signal {1} unit {2} with SigSubSType {3} which is not defined in SignalTypes", signalShape.Location, signalShape.UID, index, mstsSignalSubObj.SignalSubSignalType));
-#else
                     return;
-#endif
 
                 var mstsSignalType = viewer.SIGCFG.SignalTypes[mstsSignalSubObj.SignalSubSignalType];
-
-                SemaphoreInfo = mstsSignalType.SemaphoreInfo;
-                SemaphorePart = new AnimatedPart(signalShape);
 
                 if (SignalTypes.ContainsKey(mstsSignalType.Name))
                     SignalTypeData = SignalTypes[mstsSignalType.Name];
@@ -194,7 +217,12 @@ namespace ORTS
 
                 if (SignalTypeData.Semaphore)
                 {
-                    SemaphorePart.AddMatrix(MatrixIndex);
+                    foreach (int mindex in MatrixIndices)
+                    {
+                        AnimatedPart SemaphorePart = new AnimatedPart(signalShape);
+                        SemaphorePart.AddMatrix(mindex);
+                        SemaphoreParts.Add(SemaphorePart);
+                    }
 
                     if (Viewer.Simulator.TRK.Tr_RouteFile.DefaultSignalSMS != null)
                     {
@@ -202,7 +230,7 @@ namespace ORTS
                         try
                         {
                             Sound = new SoundSource(Viewer, SignalShape.Location.WorldLocation, Events.Source.MSTSSignal, soundPath);
-                            Viewer.SoundProcess.AddSoundSource(this, new List<SoundSourceBase>() { Sound });
+                            Viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
                         }
                         catch (Exception error)
                         {
@@ -216,14 +244,15 @@ namespace ORTS
 #endif
             }
 
-            #region IDisposable Members
-
-            public void Dispose()
+            [CallOnThread("Loader")]
+            public void Unload()
             {
-                if (Sound != null) Viewer.SoundProcess.RemoveSoundSource(Sound);
+                if (Sound != null)
+                {
+                    Viewer.SoundProcess.RemoveSoundSources(this);
+                    Sound.Dispose();
+                }
             }
-
-            #endregion
 
             public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime, Matrix xnaTileTranslation)
             {
@@ -239,7 +268,7 @@ namespace ORTS
                     if (SignalTypeData.DrawAspects.ContainsKey(DisplayState))
                     {
                         SemaphoreTarget = SignalTypeData.DrawAspects[DisplayState].SemaphorePos;
-                        SemaphoreSpeed = SemaphoreTarget > SemaphorePos ? +1 : -1;
+                        SemaphoreSpeed = SignalTypeData.SemaphoreAnimationTime <= 0 ? 0 : (SemaphoreTarget > SemaphorePos ? +1 : -1) / SignalTypeData.SemaphoreAnimationTime;
                         if (Sound != null) Sound.HandleEvent(Event.SemaphoreArm);
                     }
                 }
@@ -255,7 +284,10 @@ namespace ORTS
                 {
                     // We reset the animation matrix before preparing the lights, because they need to be positioned
                     // based on the original matrix only.
-                    SemaphorePart.SetFrameWrap(0);
+                    foreach (AnimatedPart SemaphorePart in SemaphoreParts)
+                    {
+                        SemaphorePart.SetFrameWrap(0);
+                    }
                 }
 
                 for (var i = 0; i < SignalTypeData.Lights.Count; i++)
@@ -267,18 +299,23 @@ namespace ORTS
                     if (SignalTypeData.DrawAspects[DisplayState].FlashLights[i] && (CumulativeTime > SignalTypeData.FlashTimeOn))
                         continue;
 
-                    var xnaMatrix = Matrix.Identity;
-                    if (MatrixIndex >= 0)
+                    var xnaMatrix = Matrix.CreateTranslation(SignalTypeData.Lights[i].Position);
+
+                    foreach (int MatrixIndex in MatrixIndices)
+                    {
                         Matrix.Multiply(ref xnaMatrix, ref SignalShape.XNAMatrices[MatrixIndex], out xnaMatrix);
+                    }
                     Matrix.Multiply(ref xnaMatrix, ref xnaTileTranslation, out xnaMatrix);
 
                     frame.AddPrimitive(SignalTypeData.Material, SignalTypeData.Lights[i], RenderPrimitiveGroup.Lights, ref xnaMatrix);
+                    if (Viewer.Settings.SignalLightGlow)
+                        frame.AddPrimitive(SignalTypeData.GlowMaterial, SignalTypeData.Lights[i], RenderPrimitiveGroup.Lights, ref xnaMatrix);
                 }
 
                 if (SignalTypeData.Semaphore)
                 {
                     // Now we update and re-animate the semaphore arm.
-                    if (SemaphoreInfo == 0 || initialise)
+                    if (SignalTypeData.SemaphoreAnimationTime <= 0 || initialise)
                     {
                         // No timing (so instant switch) or we're initialising.
                         SemaphorePos = SemaphoreTarget;
@@ -294,7 +331,10 @@ namespace ORTS
                             SemaphoreSpeed = 0;
                         }
                     }
-                    SemaphorePart.SetFrameCycle(SemaphorePos);
+                    foreach (AnimatedPart SemaphorePart in SemaphoreParts)
+                    {
+                        SemaphorePart.SetFrameCycle(SemaphorePos);
+                    }
                 }
             }
 
@@ -308,21 +348,27 @@ namespace ORTS
         class SignalTypeData
         {
             public readonly Material Material;
+            public readonly Material GlowMaterial;
+#if DEBUG_SIGNAL_SHAPES
             public readonly SignalTypeDataType Type;
-            public readonly List<SignalLightMesh> Lights = new List<SignalLightMesh>();
+#endif
+            public readonly List<SignalLightPrimitive> Lights = new List<SignalLightPrimitive>();
             public readonly List<bool> LightsSemaphoreChange = new List<bool>();
             public readonly Dictionary<int, SignalAspectData> DrawAspects = new Dictionary<int, SignalAspectData>();
             public readonly float FlashTimeOn;
             public readonly float FlashTimeTotal;
             public readonly bool Semaphore;
+            public readonly float SemaphoreAnimationTime;
 
-            public SignalTypeData(Viewer3D viewer, MSTS.SignalType mstsSignalType)
+            public SignalTypeData(Viewer viewer, Orts.Formats.Msts.SignalType mstsSignalType)
             {
                 if (!viewer.SIGCFG.LightTextures.ContainsKey(mstsSignalType.LightTextureName))
                 {
                     Trace.TraceWarning("Skipped invalid light texture {1} for signal type {0}", mstsSignalType.Name, mstsSignalType.LightTextureName);
                     Material = viewer.MaterialManager.Load("missing-signal-light");
+#if DEBUG_SIGNAL_SHAPES
                     Type = SignalTypeDataType.Normal;
+#endif
                     FlashTimeOn = 1;
                     FlashTimeTotal = 2;
                 }
@@ -330,9 +376,23 @@ namespace ORTS
                 {
                     var mstsLightTexture = viewer.SIGCFG.LightTextures[mstsSignalType.LightTextureName];
                     Material = viewer.MaterialManager.Load("SignalLight", Helpers.GetRouteTextureFile(viewer.Simulator, Helpers.TextureFlags.None, mstsLightTexture.TextureFile));
+                    GlowMaterial = viewer.MaterialManager.Load("SignalLightGlow");
+#if DEBUG_SIGNAL_SHAPES
                     Type = (SignalTypeDataType)mstsSignalType.FnType;
+#endif
                     if (mstsSignalType.Lights != null)
                     {
+                        // Set up some heuristic glow values from the available data:
+                        //   Typical electric light is 3.0/5.0
+                        //   Semaphore is 0.0/5.0
+                        //   Theatre box is 0.0/0.0
+                        var glowDay = 3.0f;
+                        var glowNight = 5.0f;
+                        if (mstsSignalType.Semaphore)
+                            glowDay = 0.0f;
+                        if (mstsSignalType.FnType == SignalType.FnTypes.Info || mstsSignalType.FnType == SignalType.FnTypes.Shunting) // These are good at identifying theatre boxes.
+                            glowDay = glowNight = 0.0f;
+
                         foreach (var mstsSignalLight in mstsSignalType.Lights)
                         {
                             if (!viewer.SIGCFG.LightsTable.ContainsKey(mstsSignalLight.Name))
@@ -341,16 +401,17 @@ namespace ORTS
                                 continue;
                             }
                             var mstsLight = viewer.SIGCFG.LightsTable[mstsSignalLight.Name];
-                            Lights.Add(new SignalLightMesh(viewer, new Vector3(-mstsSignalLight.X, mstsSignalLight.Y, mstsSignalLight.Z), mstsSignalLight.Radius, new Color(mstsLight.r, mstsLight.g, mstsLight.b, mstsLight.a), mstsLightTexture.u0, mstsLightTexture.v0, mstsLightTexture.u1, mstsLightTexture.v1));
+                            Lights.Add(new SignalLightPrimitive(viewer, new Vector3(-mstsSignalLight.X, mstsSignalLight.Y, mstsSignalLight.Z), mstsSignalLight.Radius, new Color(mstsLight.r, mstsLight.g, mstsLight.b, mstsLight.a), glowDay, glowNight, mstsLightTexture.u0, mstsLightTexture.v0, mstsLightTexture.u1, mstsLightTexture.v1));
                             LightsSemaphoreChange.Add(mstsSignalLight.SemaphoreChange);
                         }
                     }
 
-                    foreach (KeyValuePair<string, MSTS.SignalDrawState> sdrawstate in mstsSignalType.DrawStates)
+                    foreach (KeyValuePair<string, Orts.Formats.Msts.SignalDrawState> sdrawstate in mstsSignalType.DrawStates)
                         DrawAspects.Add(sdrawstate.Value.Index, new SignalAspectData(mstsSignalType, sdrawstate.Value));
                     FlashTimeOn = mstsSignalType.FlashTimeOn;
                     FlashTimeTotal = mstsSignalType.FlashTimeOn + mstsSignalType.FlashTimeOff;
                     Semaphore = mstsSignalType.Semaphore;
+                    SemaphoreAnimationTime = mstsSignalType.SemaphoreInfo;
                 }
             }
         }
@@ -370,7 +431,7 @@ namespace ORTS
             public readonly bool[] FlashLights;
             public readonly float SemaphorePos;
 
-            public SignalAspectData(MSTS.SignalType mstsSignalType, MSTS.SignalDrawState drawStateData)
+            public SignalAspectData(Orts.Formats.Msts.SignalType mstsSignalType, Orts.Formats.Msts.SignalDrawState drawStateData)
             {
                 if (mstsSignalType.Lights != null)
                 {
@@ -401,18 +462,26 @@ namespace ORTS
         }
     }
 
-    public class SignalLightMesh : RenderPrimitive
+    public class SignalLightPrimitive : RenderPrimitive
     {
+        internal readonly Vector3 Position;
+        internal readonly float GlowIntensityDay;
+        internal readonly float GlowIntensityNight;
+
         readonly VertexDeclaration VertexDeclaration;
         readonly VertexBuffer VertexBuffer;
 
-        public SignalLightMesh(Viewer3D viewer, Vector3 position, float radius, Color color, float u0, float v0, float u1, float v1)
+        public SignalLightPrimitive(Viewer viewer, Vector3 position, float radius, Color color, float glowDay, float glowNight, float u0, float v0, float u1, float v1)
         {
+            Position = position;
+            GlowIntensityDay = glowDay;
+            GlowIntensityNight = glowNight;
+
             var verticies = new[] {
-				new VertexPositionColorTexture(new Vector3(position.X - radius, position.Y + radius, position.Z), color, new Vector2(u1, v0)),
-				new VertexPositionColorTexture(new Vector3(position.X + radius, position.Y + radius, position.Z), color, new Vector2(u0, v0)),
-				new VertexPositionColorTexture(new Vector3(position.X + radius, position.Y - radius, position.Z), color, new Vector2(u0, v1)),
-				new VertexPositionColorTexture(new Vector3(position.X - radius, position.Y - radius, position.Z), color, new Vector2(u1, v1)),
+				new VertexPositionColorTexture(new Vector3(-radius, +radius, 0), color, new Vector2(u1, v0)),
+				new VertexPositionColorTexture(new Vector3(+radius, +radius, 0), color, new Vector2(u0, v0)),
+				new VertexPositionColorTexture(new Vector3(-radius, -radius, 0), color, new Vector2(u1, v1)),
+				new VertexPositionColorTexture(new Vector3(+radius, -radius, 0), color, new Vector2(u0, v1)),
 			};
 
             VertexDeclaration = new VertexDeclaration(viewer.GraphicsDevice, VertexPositionColorTexture.VertexElements);
@@ -424,7 +493,7 @@ namespace ORTS
         {
             graphicsDevice.VertexDeclaration = VertexDeclaration;
             graphicsDevice.Vertices[0].SetSource(VertexBuffer, 0, VertexPositionColorTexture.SizeInBytes);
-            graphicsDevice.DrawPrimitives(PrimitiveType.TriangleFan, 0, 2);
+            graphicsDevice.DrawPrimitives(PrimitiveType.TriangleStrip, 0, 2);
         }
     }
 
@@ -433,7 +502,7 @@ namespace ORTS
         readonly SceneryShader SceneryShader;
         readonly Texture2D Texture;
 
-        public SignalLightMaterial(Viewer3D viewer, string textureName)
+        public SignalLightMaterial(Viewer viewer, string textureName)
             : base(viewer, textureName)
         {
             SceneryShader = Viewer.MaterialManager.SceneryShader;
@@ -453,22 +522,87 @@ namespace ORTS
 
         public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
         {
-            Matrix viewProj = XNAViewMatrix * XNAProjectionMatrix;
+            var viewProj = XNAViewMatrix * XNAProjectionMatrix;
 
-            // With the GPU configured, now we can draw the primitive
-            SceneryShader.SetViewMatrix(ref XNAViewMatrix);
             SceneryShader.Begin();
-            foreach (EffectPass pass in SceneryShader.CurrentTechnique.Passes)
+            foreach (var pass in SceneryShader.CurrentTechnique.Passes)
             {
                 pass.Begin();
-
-                foreach (RenderItem item in renderItems)
+                foreach (var item in renderItems)
                 {
-                    SceneryShader.SetMatrix(ref item.XNAMatrix, ref viewProj);
+                    SceneryShader.SetMatrix(item.XNAMatrix, ref viewProj);
                     SceneryShader.CommitChanges();
                     item.RenderPrimitive.Draw(graphicsDevice);
                 }
+                pass.End();
+            }
+            SceneryShader.End();
+        }
 
+        public override void ResetState(GraphicsDevice graphicsDevice)
+        {
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = false;
+            rs.DestinationBlend = Blend.Zero;
+            rs.SourceBlend = Blend.One;
+        }
+
+        public override void Mark()
+        {
+            Viewer.TextureManager.Mark(Texture);
+            base.Mark();
+        }
+    }
+
+    public class SignalLightGlowMaterial : Material
+    {
+        readonly SceneryShader SceneryShader;
+        readonly Texture2D Texture;
+
+        float NightEffect;
+
+        public SignalLightGlowMaterial(Viewer viewer)
+            : base(viewer, null)
+        {
+            SceneryShader = Viewer.MaterialManager.SceneryShader;
+            Texture = SharedTextureManager.Get(Viewer.GraphicsDevice, Path.Combine(Viewer.ContentPath, "SignalLightGlow.png"));
+        }
+
+        public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
+        {
+            SceneryShader.CurrentTechnique = Viewer.MaterialManager.SceneryShader.Techniques["SignalLightGlow"];
+            SceneryShader.ImageTexture = Texture;
+
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = true;
+            rs.DestinationBlend = Blend.InverseSourceAlpha;
+            rs.SourceBlend = Blend.SourceAlpha;
+
+            // The following constants define the beginning and the end conditions of
+            // the day-night transition. Values refer to the Y postion of LightVector.
+            const float startNightTrans = 0.1f;
+            const float finishNightTrans = -0.1f;
+
+            var sunDirection = Viewer.Settings.UseMSTSEnv ? Viewer.World.MSTSSky.mstsskysolarDirection : Viewer.World.Sky.solarDirection;
+            NightEffect = 1 - MathHelper.Clamp((sunDirection.Y - finishNightTrans) / (startNightTrans - finishNightTrans), 0, 1);
+        }
+
+        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+        {
+            var viewProj = XNAViewMatrix * XNAProjectionMatrix;
+
+            SceneryShader.Begin();
+            foreach (var pass in SceneryShader.CurrentTechnique.Passes)
+            {
+                pass.Begin();
+                foreach (var item in renderItems)
+                {
+                    var slp = item.RenderPrimitive as SignalLightPrimitive;
+                    SceneryShader.ZBias = MathHelper.Lerp(slp.GlowIntensityDay, slp.GlowIntensityNight, NightEffect);
+                    SceneryShader.SetMatrix(item.XNAMatrix, ref viewProj);
+                    SceneryShader.CommitChanges();
+                    item.RenderPrimitive.Draw(graphicsDevice);
+                }
                 pass.End();
             }
             SceneryShader.End();

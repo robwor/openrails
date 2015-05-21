@@ -15,11 +15,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
+// This file is the responsibility of the 3D & Environment Team.
+
 using System;
 using System.Diagnostics;   // Used by Trace.Warnings
-using ORTS.Popups;
+using ORTS.Scripting.Api;
+using ORTS.Viewer3D.Popups;
+using ORTS.Viewer3D.RollingStock;
 
-namespace ORTS {
+namespace ORTS.Viewer3D
+{
     /// <summary>
     /// This Command Pattern allows requests to be encapsulated as objects (http://sourcemaking.com/design_patterns/command).
     /// The pattern provides many advantages, but it allows OR to record the commands and then to save them when the user presses F2.
@@ -144,7 +149,7 @@ namespace ORTS {
         }
 
         public override string ToString() {
-            return String.Format( "{0} Event: {1} Duration: {2}", base.ToString(), EventNameLabel, PauseDurationS );
+            return String.Format( "{0} Event: {1} ActionDuration: {2}", base.ToString(), EventNameLabel, PauseDurationS );
         }
     } // </Superclasses>
 
@@ -152,7 +157,7 @@ namespace ORTS {
     public class SaveCommand : Command {
         // <CJComment> Receiver is static so that all commands of this type will share it, 
         // especially new commands created by the deserializing process.
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
         public string FileStem;
 
         public SaveCommand( CommandLog log, string fileStem ) 
@@ -224,15 +229,66 @@ namespace ORTS {
         }
 
         public override void Redo() {
-            if (Receiver == null) return;//no receiver of this panto
-            Receiver.SetPantographs( item, ToState );
-            if( item == 1 ) ((MSTSWagon)Receiver).ToggleFirstPantograph();
-            if( item == 2 ) ((MSTSWagon)Receiver).ToggleSecondPantograph();
-            // Report();
+            if (Receiver != null && Receiver.Train != null)
+            {
+                Receiver.Train.SignalEvent((ToState ? PowerSupplyEvent.RaisePantograph : PowerSupplyEvent.LowerPantograph), item);
+            }
         }
 
         public override string ToString() {
             return base.ToString() + " - " + (ToState ? "raise" : "lower") + ", item = " + item.ToString();
+        }
+    }
+
+    // Power
+    [Serializable()]
+    public class PowerCommand : BooleanCommand
+    {
+        public static MSTSLocomotive Receiver { get; set; }
+
+        public PowerCommand(CommandLog log, MSTSLocomotive receiver, bool toState)
+            : base(log, toState)
+        {
+            Receiver = receiver;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            if (Receiver == null) return;//no receiver of this panto
+            Receiver.SetPower(ToState);
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "ON" : "OFF");
+        }
+    }
+
+    // MU commands connection
+    [Serializable()]
+    public class ToggleMUCommand : BooleanCommand
+    {
+        public static MSTSLocomotive Receiver { get; set; }
+
+        public ToggleMUCommand(CommandLog log, MSTSLocomotive receiver, bool toState)
+            : base(log, toState)
+        {
+            Receiver = receiver;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            if (Receiver == null) return;//no receiver of this panto
+            Receiver.ToggleMUCommand(ToState);
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "ON" : "OFF");
         }
     }
 
@@ -325,22 +381,26 @@ namespace ORTS {
         }
 
         public override void Redo() {
-            Receiver.InitializeBrakes();
+            Receiver.UnconditionalInitializeBrakes();
             // Report();
         }
     }
 
     [Serializable()]
-    public class EmergencyBrakesCommand : Command {
+    public class EmergencyPushButtonCommand : Command
+    {
         public static MSTSLocomotive Receiver { get; set; }
 
-        public EmergencyBrakesCommand( CommandLog log ) 
-            : base( log ) {
+        public EmergencyPushButtonCommand(CommandLog log)
+            : base(log)
+        {
             Redo();
         }
 
-        public override void Redo() {
-            Receiver.SetEmergency();
+        public override void Redo()
+        {
+            Receiver.EmergencyButtonPressed = !Receiver.EmergencyButtonPressed;
+            Receiver.TrainBrakeController.EmergencyBrakingPushButton = Receiver.EmergencyButtonPressed;
             // Report();
         }
     }
@@ -384,6 +444,30 @@ namespace ORTS {
     }
 
     [Serializable()]
+    public class WagonHandbrakeCommand : BooleanCommand
+    {
+        public static MSTSWagon Receiver { get; set; }
+
+        public WagonHandbrakeCommand(CommandLog log, MSTSWagon car, bool toState)
+            : base(log, toState)
+        {
+            Receiver = car;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.SetWagonHandbrake(ToState);
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "apply" : "release");
+        }
+    }
+
+    [Serializable()]
     public class RetainersCommand : BooleanCommand {
         public static MSTSLocomotive Receiver { get; set; }
 
@@ -405,7 +489,6 @@ namespace ORTS {
     [Serializable()]
     public class BrakeHoseConnectCommand : BooleanCommand {
         public static MSTSLocomotive Receiver { get; set; }
-        private bool apply;
 
         public BrakeHoseConnectCommand( CommandLog log, bool toState ) 
             : base( log, toState ) {
@@ -423,6 +506,102 @@ namespace ORTS {
     }
 
     [Serializable()]
+    public class WagonBrakeHoseConnectCommand : BooleanCommand
+    {
+        public static MSTSWagon Receiver { get; set; }
+
+        public WagonBrakeHoseConnectCommand(CommandLog log, MSTSWagon car, bool toState)
+            : base(log, toState)
+        {
+            Receiver = car;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.BrakeSystem.FrontBrakeHoseConnected = ToState;
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "connect" : "disconnect");
+        }
+    }
+
+    [Serializable()]
+    public class ToggleAngleCockACommand : BooleanCommand
+    {
+        public static MSTSWagon Receiver { get; set; }
+
+        public ToggleAngleCockACommand(CommandLog log, MSTSWagon car, bool toState)
+            : base(log, toState)
+        {
+            Receiver = car;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.BrakeSystem.AngleCockAOpen = ToState;
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "open" : "close");
+        }
+    }
+
+    [Serializable()]
+    public class ToggleAngleCockBCommand : BooleanCommand
+    {
+        public static MSTSWagon Receiver { get; set; }
+
+        public ToggleAngleCockBCommand(CommandLog log, MSTSWagon car, bool toState)
+            : base(log, toState)
+        {
+            Receiver = car;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.BrakeSystem.AngleCockBOpen = ToState;
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "open" : "close");
+        }
+    }
+
+    [Serializable()]
+    public class ToggleBleedOffValveCommand : BooleanCommand
+    {
+        public static MSTSWagon Receiver { get; set; }
+
+        public ToggleBleedOffValveCommand(CommandLog log, MSTSWagon car, bool toState)
+            : base(log, toState)
+        {
+            Receiver = car;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.BrakeSystem.BleedOffValveOpen = ToState;
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " - " + (ToState ? "open" : "close");
+        }
+    }
+
+    [Serializable()]
     public class SanderCommand : BooleanCommand {
         public static MSTSLocomotive Receiver { get; set; }
 
@@ -433,9 +612,10 @@ namespace ORTS {
 
         public override void Redo() {
             if( ToState ) {
-                Receiver.Train.SignalEvent(Event.SanderOff);
+                if (!Receiver.Sander)
+                    Receiver.Train.SignalEvent(Event.SanderOn);
             } else {
-                Receiver.Train.SignalEvent(Event.SanderOn);
+                Receiver.Train.SignalEvent(Event.SanderOff);
             }
             // Report();
         }
@@ -446,16 +626,17 @@ namespace ORTS {
     }
 
     [Serializable()]
-    public class AlerterCommand : Command {
+    public class AlerterCommand : BooleanCommand {
         public static MSTSLocomotive Receiver { get; set; }
 
-        public AlerterCommand( CommandLog log ) 
-            : base( log ) {
+        public AlerterCommand( CommandLog log, bool toState ) 
+            : base( log, toState ) {
             Redo();
         }
 
         public override void Redo() {
-            Receiver.AlerterResetExternal();
+            if (ToState) Receiver.SignalEvent(Event.VigilanceAlarmReset); // There is no Event.VigilanceAlarmResetReleased
+            Receiver.AlerterPressed(ToState);
             // Report();
         }
     }
@@ -471,6 +652,11 @@ namespace ORTS {
 
         public override void Redo() {
             Receiver.SignalEvent(ToState ? Event.HornOn : Event.HornOff);
+            if (ToState)
+            {
+                Receiver.AlerterReset(TCSEvent.HornActivated);
+                Receiver.Simulator.HazzardManager.Horn();
+            }
             // Report();
         }
 
@@ -489,7 +675,15 @@ namespace ORTS {
         }
 
         public override void Redo() {
-            Receiver.SignalEvent(ToState ? Event.BellOn : Event.BellOff);
+            if (ToState)
+            {
+                if (!Receiver.Bell)
+                    Receiver.SignalEvent(Event.BellOn);
+            }
+            else
+            {
+                Receiver.SignalEvent(Event.BellOff);
+            }
             // Report();
         }
 
@@ -569,7 +763,8 @@ namespace ORTS {
         }
 
         public override void Redo() {
-            Receiver.ToggleDoorsLeft();
+            if (Receiver.Flipped ^ Receiver.GetCabFlipped())  Receiver.ToggleDoorsRight();
+            else Receiver.ToggleDoorsLeft();
             // Report();
         }
     }
@@ -584,7 +779,8 @@ namespace ORTS {
         }
 
         public override void Redo() {
-            Receiver.ToggleDoorsRight();
+            if (Receiver.Flipped ^ Receiver.GetCabFlipped()) Receiver.ToggleDoorsLeft();
+            else Receiver.ToggleDoorsRight();
             // Report();
         }
     }
@@ -689,6 +885,25 @@ namespace ORTS {
     }
 
     [Serializable()]
+    public class ContinuousFireboxDoorCommand : ContinuousCommand
+    {
+        public static MSTSSteamLocomotive Receiver { get; set; }
+
+        public ContinuousFireboxDoorCommand(CommandLog log, bool toState, float? target, double startTime)
+            : base(log, toState, target, startTime)
+        {
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            if (Receiver == null) return;
+            Receiver.FireboxDoorChangeTo(ToState, Target);
+            // Report();
+        }
+    }
+
+    [Serializable()]
     public class ContinuousFiringRateCommand : ContinuousCommand {
         public static MSTSSteamLocomotive Receiver { get; set; }
 
@@ -736,6 +951,98 @@ namespace ORTS {
         }
     }
 
+    /// <summary>
+    /// Continuous command to re-fuel and re-water locomotive or tender.
+    /// </summary>
+    [Serializable()]
+    public class RefillCommand : ContinuousCommand
+    {
+        public static MSTSLocomotiveViewer Receiver { get; set; }
+
+        public RefillCommand(CommandLog log, float? target, double startTime)
+            : base(log, true, target, startTime)
+        {
+            Target = target;        // Fraction from 0 to 1.0
+            this.Time = startTime;  // Continuous commands are created at end of change, so overwrite time when command was created
+        }
+
+        public override void Redo()
+        {
+            if (Receiver == null) return;
+            Receiver.RefillChangeTo(Target);
+            // Report();
+        }
+    }
+
+    [Serializable()]
+    public class ToggleOdometerCommand : Command
+    {
+        public static MSTSLocomotive Receiver { get; set; }
+
+        public ToggleOdometerCommand(CommandLog log)
+            : base(log)
+        {
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.OdometerToggle();
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString();
+        }
+    }
+
+    [Serializable()]
+    public class ResetOdometerCommand : Command
+    {
+        public static MSTSLocomotive Receiver { get; set; }
+
+        public ResetOdometerCommand(CommandLog log)
+            : base(log)
+        {
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.OdometerReset();
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString();
+        }
+    }
+
+    [Serializable()]
+    public class ToggleOdometerDirectionCommand : Command
+    {
+        public static MSTSLocomotive Receiver { get; set; }
+
+        public ToggleOdometerDirectionCommand(CommandLog log)
+            : base(log)
+        {
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.OdometerToggleDirection();
+            // Report();
+        }
+
+        public override string ToString()
+        {
+            return base.ToString();
+        }
+    }
+
     [Serializable()]
     public class ToggleCylinderCocksCommand : Command {
         public static MSTSSteamLocomotive Receiver { get; set; }
@@ -752,10 +1059,29 @@ namespace ORTS {
         }
     }
 
+    // Compound Valve command
+    [Serializable()]
+    public class ToggleCylinderCompoundCommand : Command {
+        public static MSTSSteamLocomotive Receiver { get; set; }
+
+        public ToggleCylinderCompoundCommand(CommandLog log)
+            : base(log)
+        {
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            if (Receiver == null) return;
+            Receiver.ToggleCylinderCompound();
+            // Report();
+        }
+    }
+
     // Other
     [Serializable()]
     public class ChangeCabCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
 
         public ChangeCabCommand( CommandLog log ) 
             : base( log ) {
@@ -770,7 +1096,7 @@ namespace ORTS {
 
     [Serializable()]
     public class ToggleSwitchAheadCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
 
         public ToggleSwitchAheadCommand( CommandLog log ) 
             : base( log ) {
@@ -785,7 +1111,7 @@ namespace ORTS {
 
     [Serializable()]
     public class ToggleSwitchBehindCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
 
         public ToggleSwitchBehindCommand( CommandLog log ) 
             : base( log ) {
@@ -800,7 +1126,7 @@ namespace ORTS {
 
     [Serializable()]
     public class ToggleAnySwitchCommand : IndexCommand {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
 
         public ToggleAnySwitchCommand( CommandLog log, int index )
             : base(log, index)
@@ -817,7 +1143,7 @@ namespace ORTS {
 
     [Serializable()]
     public class UncoupleCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
         int CarPosition;    // 0 for head of train
 
         public UncoupleCommand( CommandLog log, int carPosition ) 
@@ -838,7 +1164,7 @@ namespace ORTS {
 
     [Serializable()]
     public class SaveScreenshotCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
 
         public SaveScreenshotCommand(CommandLog log)
             : base(log)
@@ -880,6 +1206,22 @@ namespace ORTS {
     }
 
     [Serializable()]
+    public class PauseActivityCommand : ActivityCommand
+    {
+        public PauseActivityCommand(CommandLog log, string eventNameLabel, double pauseDurationS)
+            : base(log, eventNameLabel, pauseDurationS)
+        {
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.PauseActivity();
+            // Report();
+        }
+    }
+
+    [Serializable()]
     public class QuitActivityCommand : ActivityCommand {
         public QuitActivityCommand( CommandLog log, string eventNameLabel, double pauseDurationS )
             : base( log, eventNameLabel, pauseDurationS ) {
@@ -894,7 +1236,7 @@ namespace ORTS {
     
     [Serializable()]
     public abstract class UseCameraCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
 
         public UseCameraCommand( CommandLog log )
             : base( log ) {
@@ -915,7 +1257,24 @@ namespace ORTS {
         }
     }
 
-    [Serializable()]
+	[Serializable()]
+	public class Use3DCabCameraCommand : UseCameraCommand
+	{
+
+		public Use3DCabCameraCommand(CommandLog log)
+			: base(log)
+		{
+			Redo();
+		}
+
+		public override void Redo()
+		{
+			Receiver.ThreeDimCabCamera.Activate();
+			// Report();
+		}
+	}
+	
+	[Serializable()]
     public class UseFrontCameraCommand : UseCameraCommand {
 
         public UseFrontCameraCommand( CommandLog log )
@@ -968,11 +1327,15 @@ namespace ORTS {
 
         public override void Redo()
         {
-            // Make a new camera that adopts the same viewpoint as the current camera.
-            // Add new camera at head of list
-            Receiver.FreeRoamCameraList.Insert(0, new FreeRoamCamera(Receiver, Receiver.Camera)); 
+            // Makes a new free roam camera that adopts the same viewpoint as the current camera.
+            // List item [0] is the current free roam camera, most recent free roam camera is at item [1]. 
+            // Adds existing viewpoint to the head of the history list.
+            // If this is the first use of the free roam camera, then the view point is added twice, so
+            // it gets stored in the history list.
+            if (Receiver.FreeRoamCameraList.Count == 0)
+                Receiver.FreeRoamCameraList.Insert(0, new FreeRoamCamera(Receiver, Receiver.Camera));
+            Receiver.FreeRoamCameraList.Insert(0, new FreeRoamCamera(Receiver, Receiver.Camera));
             Receiver.FreeRoamCamera.Activate();
-            // Report();
         }
     }
     
@@ -988,21 +1351,6 @@ namespace ORTS {
         public override void Redo()
         {
             Receiver.ChangeToPreviousFreeRoamCamera();
-            //var length = Receiver.FreeRoamCameraList.Count;
-            //// Rotate list moving 1 to 0 etc. (by adding 0 to end, then removing 0)
-            //if (Receiver.Camera == Receiver.FreeRoamCamera)
-            //{
-            //    Receiver.FreeRoamCameraList.Add(Receiver.FreeRoamCamera);
-            //    Receiver.FreeRoamCameraList.RemoveAt(0);
-            //    Receiver.FreeRoamCamera.Activate();
-            //}
-            //else
-            //{
-            //    Receiver.FreeRoamCamera.Activate();
-            //    Receiver.FreeRoamCameraList.Add(Receiver.FreeRoamCamera);
-            //    Receiver.FreeRoamCameraList.RemoveAt(0);
-            //}
-            // Report();
         }
     }
     
@@ -1065,7 +1413,7 @@ namespace ORTS {
     
     [Serializable()]
     public abstract class MoveCameraCommand : Command {
-        public static Viewer3D Receiver { get; set; }
+        public static Viewer Receiver { get; set; }
         protected double EndTime;
 
         public MoveCameraCommand( CommandLog log, double startTime, double endTime )
@@ -1228,8 +1576,37 @@ namespace ORTS {
             return base.ToString() + String.Format( ", {0}", ZRadians );
         }
     }
-    
-    [Serializable()]
+
+	[Serializable()]
+	public class CameraMoveXYZCommand : MoveCameraCommand
+	{
+		float X, Y, Z;
+
+        public CameraMoveXYZCommand(CommandLog log, double startTime, double endTime, float xr, float yr, float zr)
+			: base(log, startTime, endTime)
+		{
+			X = xr; Y = yr; Z = zr;
+			Redo();
+		}
+
+		public override void Redo()
+		{
+			if (Receiver.Camera is ThreeDimCabCamera)
+			{
+				var c = Receiver.Camera as ThreeDimCabCamera;
+				c.MoveCameraXYZ(X, Y, Z);
+				c.EndTime = EndTime;
+			}
+			// Report();
+		}
+
+		public override string ToString()
+		{
+			return base.ToString() + String.Format(", {0}", X);
+		}
+	}
+
+	[Serializable()]
     public class TrackingCameraXCommand : MoveCameraCommand {
         float PositionXRadians;
 
@@ -1366,6 +1743,25 @@ namespace ORTS {
                 c.LastCar();
             }
             // Report();
+        }
+    }
+
+    [Serializable]
+    public class FieldOfViewCommand : UseCameraCommand
+    {
+        float FieldOfView;
+
+        public FieldOfViewCommand(CommandLog log, float fieldOfView)
+            : base(log)
+        {
+            FieldOfView = fieldOfView;
+            Redo();
+        }
+
+        public override void Redo()
+        {
+            Receiver.Camera.FieldOfView = FieldOfView;
+            Receiver.Camera.ScreenChanged();
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -23,204 +23,23 @@
 //#define DEBUG_LIGHT_CONE
 //#define DEBUG_LIGHT_CONE_FULL
 
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Orts.Formats.Msts;
+using Orts.Parsers.Msts;
+using ORTS.Common;
+using ORTS.Processes;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-using MSTS;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
-    /// <summary>
-    /// A LightState object encapsulates the data for each State in the States subblock.
-    /// </summary>
-    public class LightState
+    public class LightViewer
     {
-        public float Duration;
-        public uint Color;
-        public Vector3 Position;
-        public float Radius;
-        public Vector3 Azimuth;
-        public Vector3 Elevation;
-        public bool Transition;
-        public float Angle;
-
-        public LightState(STFReader stf)
-        {
-            stf.MustMatch("(");
-            stf.ParseBlock(new[] {
-                new STFReader.TokenProcessor("duration", ()=>{ Duration = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("lightcolour", ()=>{ Color = stf.ReadHexBlock(null); }),
-                new STFReader.TokenProcessor("position", ()=>{ Position = stf.ReadVector3Block(STFReader.UNITS.None, Vector3.Zero); }),
-                new STFReader.TokenProcessor("radius", ()=>{ Radius = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
-                new STFReader.TokenProcessor("azimuth", ()=>{ Azimuth = stf.ReadVector3Block(STFReader.UNITS.None, Vector3.Zero); }),
-                new STFReader.TokenProcessor("elevation", ()=>{ Elevation = stf.ReadVector3Block(STFReader.UNITS.None, Vector3.Zero); }),
-                new STFReader.TokenProcessor("transition", ()=>{ Transition = 1 <= stf.ReadFloatBlock(STFReader.UNITS.None, 0); }),
-                new STFReader.TokenProcessor("angle", ()=>{ Angle = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
-            });
-        }
-    }
-
-    #region Light enums
-    public enum LightType
-    {
-        Glow,
-        Cone,
-    }
-
-    public enum LightHeadlightCondition
-    {
-        Ignore,
-        Off,
-        Dim,
-        Bright,
-        DimBright, // MSTSBin
-        OffDim, // MSTSBin
-        OffBright, // MSTSBin
-        // TODO: DimBright?, // MSTSBin labels this the same as DimBright. Not sure what it means.
-    }
-
-    public enum LightUnitCondition
-    {
-        Ignore,
-        Middle,
-        First,
-        Last,
-        LastRev, // MSTSBin
-        FirstRev, // MSTSBin
-    }
-
-    public enum LightPenaltyCondition
-    {
-        Ignore,
-        No,
-        Yes,
-    }
-
-    public enum LightControlCondition
-    {
-        Ignore,
-        AI,
-        Player,
-    }
-
-    public enum LightServiceCondition
-    {
-        Ignore,
-        No,
-        Yes,
-    }
-
-    public enum LightTimeOfDayCondition
-    {
-        Ignore,
-        Day,
-        Night,
-    }
-
-    public enum LightWeatherCondition
-    {
-        Ignore,
-        Clear,
-        Rain,
-        Snow,
-    }
-
-    public enum LightCouplingCondition
-    {
-        Ignore,
-        Front,
-        Rear,
-        Both,
-    }
-    #endregion
-
-    /// <summary>
-    /// The Light class encapsulates the data for each Light object 
-    /// in the Lights block of an ENG/WAG file. 
-    /// </summary>
-    public class Light
-    {
-        public int Index;
-        public LightType Type;
-        public LightHeadlightCondition Headlight;
-        public LightUnitCondition Unit;
-        public LightPenaltyCondition Penalty;
-        public LightControlCondition Control;
-        public LightServiceCondition Service;
-        public LightTimeOfDayCondition TimeOfDay;
-        public LightWeatherCondition Weather;
-        public LightCouplingCondition Coupling;
-        public bool Cycle;
-        public float FadeIn;
-        public float FadeOut;
-        public List<LightState> States = new List<LightState>();
-
-        public Light(int index, STFReader stf)
-        {
-            Index = index;
-            stf.MustMatch("(");
-            stf.ParseBlock(new[] {
-                new STFReader.TokenProcessor("type", ()=>{ Type = (LightType)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("conditions", ()=>{ stf.MustMatch("("); stf.ParseBlock(new[] {
-                    new STFReader.TokenProcessor("headlight", ()=>{ Headlight = (LightHeadlightCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("unit", ()=>{ Unit = (LightUnitCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("penalty", ()=>{ Penalty = (LightPenaltyCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("control", ()=>{ Control = (LightControlCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("service", ()=>{ Service = (LightServiceCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("timeofday", ()=>{ TimeOfDay = (LightTimeOfDayCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("weather", ()=>{ Weather = (LightWeatherCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                    new STFReader.TokenProcessor("coupling", ()=>{ Coupling = (LightCouplingCondition)stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                });}),
-                new STFReader.TokenProcessor("cycle", ()=>{ Cycle = 0 != stf.ReadIntBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("fadein", ()=>{ FadeIn = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("fadeout", ()=>{ FadeOut = stf.ReadFloatBlock(STFReader.UNITS.None, null); }),
-                new STFReader.TokenProcessor("states", ()=>{
-                    stf.MustMatch("(");
-                    var count = stf.ReadInt(STFReader.UNITS.None, null);
-                    stf.ParseBlock(new[] {
-                        new STFReader.TokenProcessor("state", ()=>{
-                            if (States.Count >= count)
-                                STFException.TraceWarning(stf, "Skipped extra State");
-                            else
-                                States.Add(new LightState(stf));
-                        }),
-                    });
-                    if (States.Count < count)
-                        STFException.TraceWarning(stf, (count - States.Count).ToString() + " missing State(s)");
-                }),
-            });
-        }
-    }
-
-    /// <summary>
-    /// A Lights object is created for any engine or wagon having a 
-    /// Lights block in its ENG/WAG file. It contains a collection of
-    /// Light objects.
-    /// Called from within the MSTSWagon class.
-    /// </summary>
-    public class LightCollection
-    {
-        public List<Light> Lights = new List<Light>();
-
-        public LightCollection(STFReader stf)
-        {
-            stf.MustMatch("(");
-            stf.ReadInt(STFReader.UNITS.None, null); // count; ignore this because its not always correct
-            stf.ParseBlock(new[] {
-                new STFReader.TokenProcessor("light", ()=>{ Lights.Add(new Light(Lights.Count, stf)); }),
-            });
-            if (Lights.Count == 0)
-                throw new InvalidDataException("lights with no lights");
-        }
-    }
-
-    public class LightDrawer
-    {
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
         readonly TrainCar Car;
         readonly Material LightGlowMaterial;
         readonly Material LightConeMaterial;
@@ -229,33 +48,18 @@ namespace ORTS
         public bool CarIsReversed;
         public bool CarIsFirst;
         public bool CarIsLast;
-        public bool CarCoupledFront;
-        public bool CarCoupledRear;
+        public bool Penalty;
         public bool CarIsPlayer;
         public bool CarInService;
         public bool IsDay;
-        public bool TrainIsSpad
-        {
-            get
-            {
-                var result = false;
-                if (Car.Train != null && Car.Train.LeadLocomotive!=null) {
-                    try
-                    {
-                        var loc = Car.Train.LeadLocomotive as MSTSLocomotive;
-                        result = loc.TrainBrakeController.GetIsEmergency();
-                    }
-                    catch { }
-                }
-                return result;
-            }
-        }
         public WeatherType Weather;
-        public bool Penalty;
-        public bool IsLightConeActive { get { return ActiveLightCone != null; } }
-        List<LightMesh> LightMeshes = new List<LightMesh>();
+        public bool CarCoupledFront;
+        public bool CarCoupledRear;
 
-        LightConeMesh ActiveLightCone;
+        public bool IsLightConeActive { get { return ActiveLightCone != null; } }
+        List<LightPrimitive> LightPrimitives = new List<LightPrimitive>();
+
+        LightConePrimitive ActiveLightCone;
         public bool HasLightCone;
         public float LightConeFadeIn;
         public float LightConeFadeOut;
@@ -265,7 +69,7 @@ namespace ORTS
         public float LightConeMinDotProduct;
         public Vector4 LightConeColor;
 
-        public LightDrawer(Viewer3D viewer, TrainCar car)
+        public LightViewer(Viewer viewer, TrainCar car)
         {
             Viewer = viewer;
             Car = car;
@@ -280,15 +84,15 @@ namespace ORTS
                     switch (light.Type)
                     {
                         case LightType.Glow:
-                            LightMeshes.Add(new LightGlowMesh(this, Viewer.RenderProcess, light));
+                            LightPrimitives.Add(new LightGlowPrimitive(this, Viewer.RenderProcess, light));
                             break;
                         case LightType.Cone:
-                            LightMeshes.Add(new LightConeMesh(this, Viewer.RenderProcess, light));
+                            LightPrimitives.Add(new LightConePrimitive(this, Viewer.RenderProcess, light));
                             break;
                     }
                 }
             }
-            HasLightCone = LightMeshes.Any(lm => lm is LightConeMesh);
+            HasLightCone = LightPrimitives.Any(lm => lm is LightConePrimitive);
 #if DEBUG_LIGHT_STATES
             Console.WriteLine();
 #endif
@@ -297,7 +101,7 @@ namespace ORTS
 
         void UpdateActiveLightCone()
         {
-            var newLightCone = (LightConeMesh)LightMeshes.FirstOrDefault(lm => lm is LightConeMesh && lm.Enabled);
+            var newLightCone = (LightConePrimitive)LightPrimitives.FirstOrDefault(lm => lm is LightConePrimitive && lm.Enabled);
 
             // Fade-in should be NEW headlight.
             if ((ActiveLightCone == null) && (newLightCone != null))
@@ -334,16 +138,16 @@ namespace ORTS
         {
             if (UpdateState())
             {
-                foreach (var lightMesh in LightMeshes)
-                    lightMesh.UpdateState(this);
+                foreach (var lightPrimitive in LightPrimitives)
+                    lightPrimitive.UpdateState(this);
 #if DEBUG_LIGHT_STATES
                 Console.WriteLine();
 #endif
                 UpdateActiveLightCone();
             }
 
-            foreach (var lightMesh in LightMeshes)
-                lightMesh.PrepareFrame(frame, elapsedTime);
+            foreach (var lightPrimitive in LightPrimitives)
+                lightPrimitive.PrepareFrame(frame, elapsedTime);
 
             int dTileX = Car.WorldPosition.TileX - Viewer.Camera.TileX;
             int dTileZ = Car.WorldPosition.TileZ - Viewer.Camera.TileZ;
@@ -355,16 +159,16 @@ namespace ORTS
             float objectRadius = 20; // Even more arbitrary.
             float objectViewingDistance = Viewer.Settings.ViewingDistance; // Arbitrary.
             if (Viewer.Camera.CanSee(mstsLocation, objectRadius, objectViewingDistance))
-                foreach (var lightMesh in LightMeshes)
-                    if (lightMesh.Enabled || lightMesh.FadeOut)
-                        if (lightMesh is LightGlowMesh)
-                            frame.AddPrimitive(LightGlowMaterial, lightMesh, RenderPrimitiveGroup.Lights, ref xnaDTileTranslation);
+                foreach (var lightPrimitive in LightPrimitives)
+                    if (lightPrimitive.Enabled || lightPrimitive.FadeOut)
+                        if (lightPrimitive is LightGlowPrimitive)
+                            frame.AddPrimitive(LightGlowMaterial, lightPrimitive, RenderPrimitiveGroup.Lights, ref xnaDTileTranslation);
 
 #if DEBUG_LIGHT_CONE
-            foreach (var lightMesh in LightMeshes)
-                if (lightMesh.Enabled || lightMesh.FadeOut)
-                    if (lightMesh is LightConeMesh)
-                            frame.AddPrimitive(LightConeMaterial, lightMesh, RenderPrimitiveGroup.Lights, ref xnaDTileTranslation);
+            foreach (var lightPrimitive in LightPrimitives)
+                if (lightPrimitive.Enabled || lightPrimitive.FadeOut)
+                    if (lightPrimitive is LightConePrimitive)
+                            frame.AddPrimitive(LightConeMaterial, lightPrimitive, RenderPrimitiveGroup.Lights, ref xnaDTileTranslation);
 #endif
 
             // Set the active light cone info for the material code.
@@ -400,80 +204,88 @@ namespace ORTS
         }
 
 #if DEBUG_LIGHT_STATES
-        public const string MeshStateLabel = "Index       Enabled     Type        Headlight   Unit        Coupling    Control     Penalty     Service     Time        Weather   ";
-        public const string MeshStateFormat = "{0,-10  }  {1,-10   }  {2,-10   }  {3,-10   }  {4,-10   }  {5,-10   }  {6,-10   }  {7,-10   }  {8,-10   }  {9,-10   }  {10,-10  }";
+        public const string PrimitiveStateLabel = "Index       Enabled     Type        Headlight   Unit        Penalty     Control     Service     Time        Weather     Coupling  ";
+        public const string PrimitiveStateFormat = "{0,-10  }  {1,-10   }  {2,-10   }  {3,-10   }  {4,-10   }  {5,-10   }  {6,-10   }  {7,-10   }  {8,-10   }  {9,-10   }  {10,-10  }";
 #endif
 
         bool UpdateState()
         {
+			Debug.Assert(Viewer.PlayerTrain.LeadLocomotive == Viewer.PlayerLocomotive ||Viewer.PlayerTrain.TrainType == Train.TRAINTYPE.AI_PLAYERHOSTING, "PlayerTrain.LeadLocomotive must be PlayerLocomotive.");
+			var locomotive = Car.Train != null && Car.Train.IsActualPlayerTrain ? Viewer.PlayerLocomotive : null;
+			var mstsLocomotive = locomotive as MSTSLocomotive;
+
             // Headlight
-			var newTrainHeadlight = Car.Train != null && Car.Train == Viewer.PlayerTrain ? Viewer.PlayerLocomotive.Headlight : 2;
-			if (Car.Train != null && Car.Train.LeadLocomotive != null) newTrainHeadlight = Car.Train.LeadLocomotive.Headlight;
+			var newTrainHeadlight = locomotive != null ? locomotive.Headlight : 2;
             // Unit
-            var locoIsFlipped = Car.Train == Viewer.PlayerTrain && Viewer.PlayerLocomotive.Flipped;
-            if (Car.Train != null && Car.Train.LeadLocomotive != null && Car.Train != Viewer.PlayerTrain) locoIsFlipped = Car.Train.LeadLocomotive.Flipped;
-			var newCarIsReversed = Car.Flipped ^ locoIsFlipped;
-            var newCarIsFirst = Car.Train == null || (locoIsFlipped ? Car.Train.LastCar : Car.Train.FirstCar) == Car;
-            var newCarIsLast = Car.Train == null || (locoIsFlipped ? Car.Train.FirstCar : Car.Train.LastCar) == Car;
+			var locomotiveFlipped = locomotive != null && locomotive.Flipped;
+			var locomotiveReverseCab = mstsLocomotive != null && mstsLocomotive.UsingRearCab;
+            var newCarIsReversed = Car.Flipped ^ locomotiveFlipped ^ locomotiveReverseCab;
+			var newCarIsFirst = Car.Train == null || (locomotiveFlipped ^ locomotiveReverseCab ? Car.Train.LastCar : Car.Train.FirstCar) == Car;
+			var newCarIsLast = Car.Train == null || (locomotiveFlipped ^ locomotiveReverseCab ? Car.Train.FirstCar : Car.Train.LastCar) == Car;
+            // Penalty
+			var newPenalty = mstsLocomotive != null && mstsLocomotive.TrainBrakeController.EmergencyBraking;
+            // Control
+            var newCarIsPlayer = (Car.Train != null && Car.Train == Viewer.PlayerTrain) || (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.REMOTE);
+            // Service
+            var newCarInService = Car.Train != null;
+            // Time of day
+            bool newIsDay = false;
+            if (Viewer.Settings.UseMSTSEnv == false)
+                newIsDay = Viewer.World.Sky.solarDirection.Y > 0;
+            else
+                newIsDay = Viewer.World.MSTSSky.mstsskysolarDirection.Y > 0;
+            // Weather
+            var newWeather = Viewer.Simulator.Weather;
             // Coupling
             var newCarCoupledFront = Car.Train != null && (Car.Train.Cars.Count > 1) && ((Car.Flipped ? Car.Train.LastCar : Car.Train.FirstCar) != Car);
             var newCarCoupledRear = Car.Train != null && (Car.Train.Cars.Count > 1) && ((Car.Flipped ? Car.Train.FirstCar : Car.Train.LastCar) != Car);
-            // Control
-            var newCarIsPlayer = Car == Viewer.PlayerLocomotive;
-			if (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.REMOTE) newCarIsPlayer = true;//for remote trains
-            var newPenalty = this.TrainIsSpad;			// TODO: Check for relevant Penalty changes.
-            // Service
-            var newCarInService = Car.Train != null;
-            // Time
-            var newIsDay = Viewer.World.Sky.solarDirection.Y > 0;
-            // Weather
-            var newWeather = Viewer.Simulator.Weather;
 
             if (
                 (TrainHeadlight != newTrainHeadlight) ||
                 (CarIsReversed != newCarIsReversed) ||
                 (CarIsFirst != newCarIsFirst) ||
                 (CarIsLast != newCarIsLast) ||
-                (CarCoupledFront != newCarCoupledFront) ||
-                (CarCoupledRear != newCarCoupledRear) ||
+                (Penalty != newPenalty) ||
                 (CarIsPlayer != newCarIsPlayer) ||
                 (CarInService != newCarInService) ||
                 (IsDay != newIsDay) ||
-                (Penalty != newPenalty) ||
-                (Weather != newWeather))
+                (Weather != newWeather) ||
+                (CarCoupledFront != newCarCoupledFront) ||
+                (CarCoupledRear != newCarCoupledRear))
             {
                 TrainHeadlight = newTrainHeadlight;
                 CarIsReversed = newCarIsReversed;
                 CarIsFirst = newCarIsFirst;
                 CarIsLast = newCarIsLast;
-                CarCoupledFront = newCarCoupledFront;
-                CarCoupledRear = newCarCoupledRear;
+                Penalty = newPenalty;
                 CarIsPlayer = newCarIsPlayer;
                 CarInService = newCarInService;
                 IsDay = newIsDay;
                 Weather = newWeather;
-                Penalty = newPenalty;
+                CarCoupledFront = newCarCoupledFront;
+                CarCoupledRear = newCarCoupledRear;
 
 #if DEBUG_LIGHT_STATES
                 Console.WriteLine();
                 Console.WriteLine();
-                Console.WriteLine("LightDrawer: {0} {1} {2:D}{3}:{4}{5}{6}{7}{8}{9}{10}{11}{12}{13}",
+                Console.WriteLine("LightViewer: {0} {1} {2:D}{3}:{4}{5}{6}{7}{8}{9}{10}{11}{12}{13}{14}",
                     Car.Train != null ? Car.Train.FrontTDBTraveller.WorldLocation : Car.WorldPosition.WorldLocation, Car.Train != null ? "train car" : "car", Car.Train != null ? Car.Train.Cars.IndexOf(Car) : 0, Car.Flipped ? " (flipped)" : "",
                     TrainHeadlight == 2 ? " HL=Bright" : TrainHeadlight == 1 ? " HL=Dim" : "",
                     CarIsReversed ? " Reversed" : "",
                     CarIsFirst ? " First" : "",
                     CarIsLast ? " Last" : "",
-                    CarCoupledFront ? " CoupledFront" : "",
-                    CarCoupledRear ? " CoupledRear" : "",
+                    Penalty ? " Penalty" : "",
                     CarIsPlayer ? " Player" : " AI",
                     CarInService ? " Service" : "",
                     IsDay ? "" : " Night",
-                    Weather == WeatherType.Snow ? " Snow" : Weather == WeatherType.Rain ? " Rain" : "");
+                    Weather == WeatherType.Snow ? " Snow" : Weather == WeatherType.Rain ? " Rain" : "",
+                    CarCoupledFront ? " CoupledFront" : "",
+                    CarCoupledRear ? " CoupledRear" : "");
                 if (Car.Lights != null)
                 {
                     Console.WriteLine();
-                    Console.WriteLine(MeshStateLabel);
-                    Console.WriteLine(new String('=', MeshStateLabel.Length));
+                    Console.WriteLine(PrimitiveStateLabel);
+                    Console.WriteLine(new String('=', PrimitiveStateLabel.Length));
                 }
 #endif
 
@@ -483,7 +295,7 @@ namespace ORTS
         }
     }
 
-    public abstract class LightMesh : RenderPrimitive
+    public abstract class LightPrimitive : RenderPrimitive
     {
         public Light Light;
         public bool Enabled;
@@ -495,7 +307,7 @@ namespace ORTS
         protected int StateCount;
         protected float StateTime;
 
-        public LightMesh(Light light)
+        public LightPrimitive(Light light)
         {
             Light = light;
             StateCount = Light.Cycle ? 2 * Light.States.Count - 2 : Light.States.Count;
@@ -506,7 +318,7 @@ namespace ORTS
         {
 #if DEBUG_LIGHT_TRANSITIONS
             Console.WriteLine();
-            Console.WriteLine("LightMesh transitions:");
+            Console.WriteLine("LightPrimitive transitions:");
 #endif
             if (Light.Cycle)
             {
@@ -525,93 +337,97 @@ namespace ORTS
 #endif
         }
 
-        internal void UpdateState(LightDrawer lightDrawer)
+        internal void UpdateState(LightViewer lightViewer)
         {
             var oldEnabled = Enabled;
             Enabled = true;
-            if (this.Light.Penalty != LightPenaltyCondition.Ignore)
-            {
-                Enabled &= lightDrawer.Penalty;
-            }
             if (Light.Headlight != LightHeadlightCondition.Ignore)
             {
                 if (Light.Headlight == LightHeadlightCondition.Off)
-                    Enabled &= lightDrawer.TrainHeadlight == 0;
+                    Enabled &= lightViewer.TrainHeadlight == 0;
                 else if (Light.Headlight == LightHeadlightCondition.Dim)
-                    Enabled &= lightDrawer.TrainHeadlight == 1;
+                    Enabled &= lightViewer.TrainHeadlight == 1;
                 else if (Light.Headlight == LightHeadlightCondition.Bright)
-                    Enabled &= lightDrawer.TrainHeadlight == 2;
+                    Enabled &= lightViewer.TrainHeadlight == 2;
                 else if (Light.Headlight == LightHeadlightCondition.DimBright)
-                    Enabled &= lightDrawer.TrainHeadlight >= 1;
+                    Enabled &= lightViewer.TrainHeadlight >= 1;
                 else if (Light.Headlight == LightHeadlightCondition.OffDim)
-                    Enabled &= lightDrawer.TrainHeadlight <= 1;
+                    Enabled &= lightViewer.TrainHeadlight <= 1;
                 else if (Light.Headlight == LightHeadlightCondition.OffBright)
-                    Enabled &= lightDrawer.TrainHeadlight != 1;
+                    Enabled &= lightViewer.TrainHeadlight != 1;
                 else
                     Enabled &= false;
             }
             if (Light.Unit != LightUnitCondition.Ignore)
             {
                 if (Light.Unit == LightUnitCondition.Middle)
-                    Enabled &= !lightDrawer.CarIsFirst && !lightDrawer.CarIsLast;
+                    Enabled &= !lightViewer.CarIsFirst && !lightViewer.CarIsLast;
                 else if (Light.Unit == LightUnitCondition.First)
-                    Enabled &= lightDrawer.CarIsFirst && !lightDrawer.CarIsReversed;
+                    Enabled &= lightViewer.CarIsFirst && !lightViewer.CarIsReversed;
                 else if (Light.Unit == LightUnitCondition.Last)
-                    Enabled &= lightDrawer.CarIsLast && !lightDrawer.CarIsReversed;
+                    Enabled &= lightViewer.CarIsLast && !lightViewer.CarIsReversed;
                 else if (Light.Unit == LightUnitCondition.LastRev)
-                    Enabled &= lightDrawer.CarIsLast && lightDrawer.CarIsReversed;
+                    Enabled &= lightViewer.CarIsLast && lightViewer.CarIsReversed;
                 else if (Light.Unit == LightUnitCondition.FirstRev)
-                    Enabled &= lightDrawer.CarIsFirst && lightDrawer.CarIsReversed;
+                    Enabled &= lightViewer.CarIsFirst && lightViewer.CarIsReversed;
                 else
                     Enabled &= false;
             }
-            if (Light.Coupling != LightCouplingCondition.Ignore)
+            if (Light.Penalty != LightPenaltyCondition.Ignore)
             {
-                if (Light.Coupling == LightCouplingCondition.Front)
-                    Enabled &= lightDrawer.CarCoupledFront && !lightDrawer.CarCoupledRear;
-                else if (Light.Coupling == LightCouplingCondition.Rear)
-                    Enabled &= !lightDrawer.CarCoupledFront && lightDrawer.CarCoupledRear;
-                else if (Light.Coupling == LightCouplingCondition.Both)
-                    Enabled &= lightDrawer.CarCoupledFront && lightDrawer.CarCoupledRear;
+                if (Light.Penalty == LightPenaltyCondition.No)
+                    Enabled &= !lightViewer.Penalty;
+                else if (Light.Penalty == LightPenaltyCondition.Yes)
+                    Enabled &= lightViewer.Penalty;
                 else
                     Enabled &= false;
             }
             if (Light.Control != LightControlCondition.Ignore)
             {
                 if (Light.Control == LightControlCondition.AI)
-                    Enabled &= !lightDrawer.CarIsPlayer;
+                    Enabled &= !lightViewer.CarIsPlayer;
                 else if (Light.Control == LightControlCondition.Player)
-                    Enabled &= lightDrawer.CarIsPlayer;
+                    Enabled &= lightViewer.CarIsPlayer;
                 else
                     Enabled &= false;
             }
-            // TODO: Check Penalty here.
             if (Light.Service != LightServiceCondition.Ignore)
             {
                 if (Light.Service == LightServiceCondition.No)
-                    Enabled &= !lightDrawer.CarInService;
+                    Enabled &= !lightViewer.CarInService;
                 else if (Light.Service == LightServiceCondition.Yes)
-                    Enabled &= lightDrawer.CarInService;
+                    Enabled &= lightViewer.CarInService;
                 else
                     Enabled &= false;
             }
             if (Light.TimeOfDay != LightTimeOfDayCondition.Ignore)
             {
                 if (Light.TimeOfDay == LightTimeOfDayCondition.Day)
-                    Enabled &= lightDrawer.IsDay;
+                    Enabled &= lightViewer.IsDay;
                 else if (Light.TimeOfDay == LightTimeOfDayCondition.Night)
-                    Enabled &= !lightDrawer.IsDay;
+                    Enabled &= !lightViewer.IsDay;
                 else
                     Enabled &= false;
             }
             if (Light.Weather != LightWeatherCondition.Ignore)
             {
                 if (Light.Weather == LightWeatherCondition.Clear)
-                    Enabled &= lightDrawer.Weather == WeatherType.Clear;
+                    Enabled &= lightViewer.Weather == WeatherType.Clear;
                 else if (Light.Weather == LightWeatherCondition.Rain)
-                    Enabled &= lightDrawer.Weather == WeatherType.Rain;
+                    Enabled &= lightViewer.Weather == WeatherType.Rain;
                 else if (Light.Weather == LightWeatherCondition.Snow)
-                    Enabled &= lightDrawer.Weather == WeatherType.Snow;
+                    Enabled &= lightViewer.Weather == WeatherType.Snow;
+                else
+                    Enabled &= false;
+            }
+            if (Light.Coupling != LightCouplingCondition.Ignore)
+            {
+                if (Light.Coupling == LightCouplingCondition.Front)
+                    Enabled &= lightViewer.CarCoupledFront && !lightViewer.CarCoupledRear;
+                else if (Light.Coupling == LightCouplingCondition.Rear)
+                    Enabled &= !lightViewer.CarCoupledFront && lightViewer.CarCoupledRear;
+                else if (Light.Coupling == LightCouplingCondition.Both)
+                    Enabled &= lightViewer.CarCoupledFront && lightViewer.CarCoupledRear;
                 else
                     Enabled &= false;
             }
@@ -624,7 +440,7 @@ namespace ORTS
             }
 
 #if DEBUG_LIGHT_STATES
-            Console.WriteLine(LightDrawer.MeshStateFormat, Light.Index, Enabled, Light.Type, Light.Headlight, Light.Unit, Light.Coupling, Light.Control, Light.Penalty, Light.Service, Light.TimeOfDay, Light.Weather);
+            Console.WriteLine(LightViewer.PrimitiveStateFormat, Light.Index, Enabled, Light.Type, Light.Headlight, Light.Unit, Light.Penalty, Light.Control, Light.Service, Light.TimeOfDay, Light.Weather, Light.Coupling);
 #endif
         }
 
@@ -670,16 +486,16 @@ namespace ORTS
         }
     }
 
-    public class LightGlowMesh : LightMesh
+    public class LightGlowPrimitive : LightPrimitive
     {
         static VertexDeclaration VertexDeclaration;
         VertexBuffer VertexBuffer;
         static IndexBuffer IndexBuffer;
 
-        public LightGlowMesh(LightDrawer lightDrawer, RenderProcess renderProcess, Light light)
+        public LightGlowPrimitive(LightViewer lightViewer, RenderProcess renderProcess, Light light)
             : base(light)
         {
-            Debug.Assert(light.Type == LightType.Glow, "LightGlowMesh is only for LightType.Glow lights.");
+            Debug.Assert(light.Type == LightType.Glow, "LightGlowPrimitive is only for LightType.Glow lights.");
 
             if (VertexDeclaration == null)
                 VertexDeclaration = new VertexDeclaration(renderProcess.GraphicsDevice, LightGlowVertex.VertexElements);
@@ -724,7 +540,7 @@ namespace ORTS
                 IndexBuffer.SetData(indexData);
             }
 
-            UpdateState(lightDrawer);
+            UpdateState(lightViewer);
         }
 
         public override void Draw(GraphicsDevice graphicsDevice)
@@ -774,7 +590,7 @@ namespace ORTS
         public static int SizeInBytes = sizeof(float) * (3 + 3 + 3 + 3 + 4 + 4 + 4);
     }
 
-    public class LightConeMesh : LightMesh
+    public class LightConePrimitive : LightPrimitive
     {
         const int CircleSegments = 16;
 
@@ -782,10 +598,10 @@ namespace ORTS
         VertexBuffer VertexBuffer;
         static IndexBuffer IndexBuffer;
 
-        public LightConeMesh(LightDrawer lightDrawer, RenderProcess renderProcess, Light light)
+        public LightConePrimitive(LightViewer lightViewer, RenderProcess renderProcess, Light light)
             : base(light)
         {
-            Debug.Assert(light.Type == LightType.Cone, "LightConeMesh is only for LightType.Cone lights.");
+            Debug.Assert(light.Type == LightType.Cone, "LightConePrimitive is only for LightType.Cone lights.");
 
             if (VertexDeclaration == null)
                 VertexDeclaration = new VertexDeclaration(renderProcess.GraphicsDevice, LightConeVertex.VertexElements);
@@ -804,8 +620,8 @@ namespace ORTS
                     Vector3 position1, position2, direction1, direction2;
                     float angle1, angle2, radius1, radius2, distance1, distance2;
                     Vector4 color1, color2;
-                    LightDrawer.CalculateLightCone(state1, out position1, out direction1, out angle1, out radius1, out distance1, out color1);
-                    LightDrawer.CalculateLightCone(state2, out position2, out direction2, out angle2, out radius2, out distance2, out color2);
+                    LightViewer.CalculateLightCone(state1, out position1, out direction1, out angle1, out radius1, out distance1, out color1);
+                    LightViewer.CalculateLightCone(state2, out position2, out direction2, out angle2, out radius2, out distance2, out color2);
                     var direction1Right = Vector3.Cross(direction1, Vector3.UnitY);
                     var direction1Up = Vector3.Cross(direction1Right, direction1);
                     var direction2Right = Vector3.Cross(direction2, Vector3.UnitY);
@@ -842,7 +658,7 @@ namespace ORTS
                 IndexBuffer.SetData(indexData);
             }
 
-            UpdateState(lightDrawer);
+            UpdateState(lightViewer);
         }
 
         public override void Draw(GraphicsDevice graphicsDevice)
@@ -884,8 +700,8 @@ namespace ORTS
             var state1 = Light.States[stateIndex1];
             var state2 = Light.States[stateIndex2];
 
-            LightDrawer.CalculateLightCone(state1, out Position1, out Direction1, out Angle1, out Radius1, out Distance1, out Color1);
-            LightDrawer.CalculateLightCone(state2, out Position2, out Direction2, out Angle2, out Radius2, out Distance2, out Color2);
+            LightViewer.CalculateLightCone(state1, out Position1, out Direction1, out Angle1, out Radius1, out Distance1, out Color1);
+            LightViewer.CalculateLightCone(state2, out Position2, out Direction2, out Angle2, out Radius2, out Distance2, out Color2);
         }
     }
 
@@ -912,5 +728,123 @@ namespace ORTS
         };
 
         public static int SizeInBytes = sizeof(float) * (3 + 3 + 4 + 4);
+    }
+
+    public class LightGlowMaterial : Material
+    {
+        readonly Texture2D LightGlowTexture;
+
+        public LightGlowMaterial(Viewer viewer)
+            : base(viewer, null)
+        {
+            // TODO: This should happen on the loader thread.
+            LightGlowTexture = SharedTextureManager.Get(Viewer.RenderProcess.GraphicsDevice, System.IO.Path.Combine(Viewer.ContentPath, "Lightglow.png"));
+        }
+
+        public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
+        {
+            var shader = Viewer.MaterialManager.LightGlowShader;
+            shader.CurrentTechnique = shader.Techniques["LightGlow"];
+            shader.LightGlowTexture = LightGlowTexture;
+
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = true;
+            rs.DepthBufferWriteEnable = false;
+            rs.DestinationBlend = Blend.InverseSourceAlpha;
+            rs.SourceBlend = Blend.SourceAlpha;
+        }
+
+        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+        {
+            var shader = Viewer.MaterialManager.LightGlowShader;
+
+            shader.Begin();
+            foreach (var pass in shader.CurrentTechnique.Passes)
+            {
+                pass.Begin();
+                foreach (var item in renderItems)
+                {
+                    // Glow lights were not working properly because farPlaneDistance used by XNASkyProjection is hardcoded at 6100.  So when view distance was greater than 6100, the 
+                    // glow lights were unable to render properly.
+                    Matrix wvp = item.XNAMatrix * XNAViewMatrix * Viewer.Camera.XnaProjection;
+                    shader.SetMatrix(ref wvp);
+                    shader.SetFade(((LightPrimitive)item.RenderPrimitive).Fade);
+                    shader.CommitChanges();
+                    item.RenderPrimitive.Draw(graphicsDevice);
+                }
+                pass.End();
+            }
+            shader.End();
+        }
+
+        public override void ResetState(GraphicsDevice graphicsDevice)
+        {
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = false;
+            rs.DepthBufferWriteEnable = true;
+            rs.DestinationBlend = Blend.Zero;
+            rs.SourceBlend = Blend.One;
+        }
+
+        public override bool GetBlending()
+        {
+            return true;
+        }
+
+        public override void Mark()
+        {
+            Viewer.TextureManager.Mark(LightGlowTexture);
+            base.Mark();
+        }
+    }
+
+    public class LightConeMaterial : Material
+    {
+        public LightConeMaterial(Viewer viewer)
+            : base(viewer, null)
+        {
+        }
+
+        public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
+        {
+            var shader = Viewer.MaterialManager.LightConeShader;
+            shader.CurrentTechnique = shader.Techniques["LightCone"];
+
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = true;
+            rs.DepthBufferWriteEnable = false;
+            rs.StencilEnable = true;
+        }
+
+        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+        {
+            var shader = Viewer.MaterialManager.LightConeShader;
+
+            shader.Begin();
+            foreach (var pass in shader.CurrentTechnique.Passes)
+            {
+                pass.Begin();
+                foreach (var item in renderItems)
+                {
+                    // Light cone was originally using XNASkyProjection, but with no problems.
+                    // Switched to Viewer.Camera.XnaProjection to keep the standard since farPlaneDistance used by XNASkyProjection is limited to 6100.
+                    Matrix wvp = item.XNAMatrix * XNAViewMatrix * Viewer.Camera.XnaProjection;
+                    shader.SetMatrix(ref wvp);
+                    shader.SetFade(((LightPrimitive)item.RenderPrimitive).Fade);
+                    shader.CommitChanges();
+                    item.RenderPrimitive.Draw(graphicsDevice);
+                }
+                pass.End();
+            }
+            shader.End();
+        }
+
+        public override void ResetState(GraphicsDevice graphicsDevice)
+        {
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = false;
+            rs.DepthBufferWriteEnable = true;
+            rs.StencilEnable = false;
+        }
     }
 }

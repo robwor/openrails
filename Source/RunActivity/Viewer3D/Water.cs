@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2009, 2010, 2011, 2012 by the Open Rails project.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -17,66 +17,66 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
-using System.Collections.Generic;
-using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ORTS.Common;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
-    public class WaterTile : RenderPrimitive
+    [DebuggerDisplay("TileX = {TileX}, TileZ = {TileZ}, Size = {Size}")]
+    public class WaterPrimitive : RenderPrimitive
     {
-        readonly Viewer3D Viewer;
-        readonly int TileX;
-        readonly int TileZ;
+        public static VertexDeclaration PatchVertexDeclaration;
 
         static KeyValuePair<float, Material>[] WaterLayers;
-        public static VertexDeclaration PatchVertexDeclaration;
+
         static int PatchVertexStride;
 
-        VertexBuffer TileVertexBuffer;
-        IndexBuffer TileIndexBuffer;
-        int TriangleCount;
+        readonly Viewer Viewer;
+        readonly int TileX, TileZ, Size;
+        readonly VertexBuffer VertexBuffer;
+        readonly IndexBuffer IndexBuffer;
+        readonly int PrimitiveCount;
+
         Matrix xnaMatrix = Matrix.Identity;
 
-        public WaterTile(Viewer3D viewer, int tileX, int tileZ)
+        public WaterPrimitive(Viewer viewer, Tile tile)
         {
             Viewer = viewer;
-            TileX = tileX;
-            TileZ = tileZ;
-
-            if (viewer.Tiles.GetTile(tileX, tileZ) == null)
-                return;
+            TileX = tile.TileX;
+            TileZ = tile.TileZ;
+            Size = tile.Size;
 
             if (PatchVertexDeclaration == null)
                 LoadStaticData();
 
-            LoadGeometry(Viewer.GraphicsDevice);
+            LoadGeometry(Viewer.GraphicsDevice, tile, out PrimitiveCount, out IndexBuffer, out VertexBuffer);
         }
 
         void LoadStaticData()
         {
             if (Viewer.ENVFile.WaterLayers != null)
-                WaterLayers = Viewer.ENVFile.WaterLayers.Select(layer => new KeyValuePair<float, Material>(layer.Height, Viewer.MaterialManager.Load("Water", Viewer.Simulator.RoutePath + @"\envfiles\textures\" + layer.TextureName))).ToArray();
-
+            WaterLayers = Viewer.ENVFile.WaterLayers.Select(layer => new KeyValuePair<float, Material>(layer.Height, Viewer.MaterialManager.Load("Water", Viewer.Simulator.RoutePath + @"\envfiles\textures\" + layer.TextureName))).ToArray();
+  
             PatchVertexDeclaration = new VertexDeclaration(Viewer.GraphicsDevice, VertexPositionNormalTexture.VertexElements);
             PatchVertexStride = VertexPositionNormalTexture.SizeInBytes;
+            
         }
 
         [CallOnThread("Updater")]
         public void PrepareFrame(RenderFrame frame)
         {
-            if (WaterLayers == null)  // if there was a problem loading the water texture
-                return;
-
             var dTileX = TileX - Viewer.Camera.TileX;
             var dTileZ = TileZ - Viewer.Camera.TileZ;
-            var mstsLocation = new Vector3(1024 + dTileX * 2048, 0, 1024 + dTileZ * 2048);
+            var mstsLocation = new Vector3(dTileX * 2048 - 1024 + 1024 * Size, 0, dTileZ * 2048 - 1024 + 1024 * Size);
 
-            if (Viewer.Camera.CanSee(mstsLocation, 1448f, Viewer.Settings.ViewingDistance))
+            if (Viewer.Camera.InFov(mstsLocation, Size * 1448f) && WaterLayers != null)
             {
-                xnaMatrix.M41 = mstsLocation.X - 1024;
-                xnaMatrix.M43 = 1024 - mstsLocation.Z;
+                xnaMatrix.M41 = mstsLocation.X;
+                xnaMatrix.M43 = -mstsLocation.Z;
                 foreach (var waterLayer in WaterLayers)
                 {
                     xnaMatrix.M42 = mstsLocation.Y + waterLayer.Key;
@@ -85,36 +85,37 @@ namespace ORTS
             }
         }
 
-        [CallOnThread("Render")]
         public override void Draw(GraphicsDevice graphicsDevice)
         {
-            graphicsDevice.Indices = TileIndexBuffer;
-            graphicsDevice.Vertices[0].SetSource(TileVertexBuffer, 0, PatchVertexStride);
-            graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, 17 * 17, 0, TriangleCount);
+            graphicsDevice.Indices = IndexBuffer;
+            graphicsDevice.Vertices[0].SetSource(VertexBuffer, 0, PatchVertexStride);
+            graphicsDevice.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, 17 * 17, 0, PrimitiveCount);
         }
 
-        void LoadGeometry(GraphicsDevice graphicsDevice)
+        void LoadGeometry(GraphicsDevice graphicsDevice, Tile tile, out int primitiveCount, out IndexBuffer indexBuffer, out VertexBuffer vertexBuffer)
         {
-            var tFile = Viewer.Tiles.GetTile(TileX, TileZ).TFile;
-            var waterLevels = new ORTSMath.Matrix2x2(tFile.WaterNW, tFile.WaterNE, tFile.WaterSW, tFile.WaterSE);
+            primitiveCount = 0;
+            var waterLevels = new ORTSMath.Matrix2x2(tile.WaterNW, tile.WaterNE, tile.WaterSW, tile.WaterSE);
 
             var indexData = new List<short>(16 * 16 * 2 * 3);
-            for (var z = 0; z < 16; ++z)
-                for (var x = 0; x < 16; ++x)
+            for (var z = 0; z < tile.PatchCount; ++z)
+            {
+                for (var x = 0; x < tile.PatchCount; ++x)
                 {
-                    var patch = tFile.terrain.terrain_patchsets[0].GetPatch(x, z);
+                    
+                    var patch = tile.GetPatch(x, z);
 
                     if (!patch.WaterEnabled)
                         continue;
 
-                    var nw = (short)(z * 17 + x);  // vertice index in the north west corner
+                    var nw = (short)(z * 17 + x);  // Vertex index in the north west corner
                     var ne = (short)(nw + 1);
                     var sw = (short)(nw + 17);
                     var se = (short)(sw + 1);
 
-                    TriangleCount += 2;
+                    primitiveCount += 2;
 
-                    if (((z & 1) == (x & 1)))  // triangles alternate
+                    if ((z & 1) == (x & 1))  // Triangles alternate
                     {
                         indexData.Add(nw);
                         indexData.Add(se);
@@ -133,31 +134,115 @@ namespace ORTS
                         indexData.Add(sw);
                     }
                 }
-            TileIndexBuffer = new IndexBuffer(graphicsDevice, typeof(short), indexData.Count, BufferUsage.WriteOnly);
-            TileIndexBuffer.SetData(indexData.ToArray());
-
+            }
+            indexBuffer = new IndexBuffer(graphicsDevice, typeof(short), indexData.Count, BufferUsage.WriteOnly);
+            indexBuffer.SetData(indexData.ToArray());
             var vertexData = new List<VertexPositionNormalTexture>(17 * 17);
             for (var z = 0; z < 17; ++z)
+            {
                 for (var x = 0; x < 17; ++x)
                 {
-                    var U = (float)x / 16;
-                    var V = (float)z / 16;
+                    var U = (float)x * 4;
+                    var V = (float)z * 4;
 
-                    var w = -1024 + x * 128;
-                    var n = -1024 + z * 128;
-                    var y = ORTSMath.Interpolate2D(U, V, waterLevels);
+                    var a = (float)x / 16;
+                    var b = (float)z / 16;
 
-                    vertexData.Add(new VertexPositionNormalTexture(new Vector3(w, y, n), Vector3.UnitY, new Vector2(U, V)));
+                    var e = (a - 0.5f) * 2048 * Size;
+                    var n = (b - 0.5f) * 2048 * Size;
+
+                    var y = ORTSMath.Interpolate2D(a, b, waterLevels);
+
+                    vertexData.Add(new VertexPositionNormalTexture(new Vector3(e, y, n), Vector3.UnitY, new Vector2(U, V)));
                 }
-            TileVertexBuffer = new VertexBuffer(graphicsDevice, typeof(VertexPositionNormalTexture), vertexData.Count, BufferUsage.WriteOnly);
-            TileVertexBuffer.SetData(vertexData.ToArray());
+            }
+            vertexBuffer = new VertexBuffer(graphicsDevice, typeof(VertexPositionNormalTexture), vertexData.Count, BufferUsage.WriteOnly);
+            vertexBuffer.SetData(vertexData.ToArray());
         }
 
         [CallOnThread("Loader")]
-        internal void Mark()
+        internal static void Mark()
         {
+            if (WaterLayers == null) return;
             foreach (var material in WaterLayers.Select(kvp => kvp.Value))
                 material.Mark();
+        }
+    }
+
+    public class WaterMaterial : Material
+    {
+        readonly Texture2D WaterTexture;
+        IEnumerator<EffectPass> ShaderPasses;
+
+        public WaterMaterial(Viewer viewer, string waterTexturePath)
+            : base(viewer, waterTexturePath)
+        {
+            WaterTexture = Viewer.TextureManager.Get(waterTexturePath);
+        }
+
+        public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
+        {
+            var shader = Viewer.MaterialManager.SceneryShader;
+            shader.CurrentTechnique = shader.Techniques[Viewer.Settings.ShaderModel >= 3 ? "ImagePS3" : "ImagePS2"];
+            if (ShaderPasses == null) ShaderPasses = shader.Techniques[Viewer.Settings.ShaderModel >= 3 ? "ImagePS3" : "ImagePS2"].Passes.GetEnumerator();
+            shader.ImageTexture = WaterTexture;
+            shader.ReferenceAlpha = 10;
+
+            var samplerState = graphicsDevice.SamplerStates[0];
+            samplerState.AddressU = TextureAddressMode.Wrap;
+            samplerState.AddressV = TextureAddressMode.Wrap;
+            samplerState.MipMapLevelOfDetailBias = 0;
+
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = true;
+            rs.DestinationBlend = Blend.InverseSourceAlpha;
+            rs.SourceBlend = Blend.SourceAlpha;
+
+            graphicsDevice.VertexDeclaration = WaterPrimitive.PatchVertexDeclaration;
+        }
+
+        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
+        {
+            var shader = Viewer.MaterialManager.SceneryShader;
+            var viewproj = XNAViewMatrix * XNAProjectionMatrix;
+
+            shader.Begin();
+            ShaderPasses.Reset();
+            while (ShaderPasses.MoveNext())
+            {
+                ShaderPasses.Current.Begin();
+                foreach (var item in renderItems)
+                {
+                    shader.SetMatrix(item.XNAMatrix, ref viewproj);
+                    shader.ZBias = item.RenderPrimitive.ZBias;
+                    shader.CommitChanges();
+                    item.RenderPrimitive.Draw(graphicsDevice);
+                }
+                ShaderPasses.Current.End();
+            }
+            shader.End();
+        }
+
+        public override void ResetState(GraphicsDevice graphicsDevice)
+        {
+            var shader = Viewer.MaterialManager.SceneryShader;
+            shader.ReferenceAlpha = 0;
+
+            var rs = graphicsDevice.RenderState;
+            rs.AlphaBlendEnable = false;
+            rs.DestinationBlend = Blend.Zero;
+            rs.SourceBlend = Blend.One;
+        }
+
+        public override bool GetBlending()
+        {
+            return true;
+        }
+
+        public override void Mark()
+        {
+            Viewer.TextureManager.Mark(WaterTexture);
+            base.Mark();
         }
     }
 }

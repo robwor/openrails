@@ -45,6 +45,7 @@ namespace ORTS.MultiPlayer
 		public double quitTime = -100f;
 		public enum Status {Valid, Quit, Removed};
 		public Status status = Status.Valid;//is this player removed by the dispatcher
+        public bool protect = false; //when in true, will not force this player out, to protect the one that others uses the same name
 
 		public void Send(string msg)
 		{
@@ -118,6 +119,11 @@ namespace ORTS.MultiPlayer
 				{
 					break;
 				}
+				catch (SameNameError)
+				{
+					Client.Close();
+					thread.Abort();
+				}
 				catch (Exception)
 				{
 					nowTicks = Program.Simulator.GameTime;
@@ -138,8 +144,8 @@ namespace ORTS.MultiPlayer
 				}
 			}
 
-			System.Console.WriteLine(this.Username + " quit");
-			if (Program.Simulator.Confirmer != null) Program.Simulator.Confirmer.Information(this.Username + " quit.");
+			System.Console.WriteLine("{0} quit", this.Username);
+			if (Program.Simulator.Confirmer != null) Program.Simulator.Confirmer.Information(Viewer3D.Viewer.Catalog.GetStringFmt("{0} quit.", this.Username));
 			Client.Close();
 			if (this.Train != null && this.status != Status.Removed) //remember the location of the train in case the player comes back later, if he is not removed by the dispatcher
 			{

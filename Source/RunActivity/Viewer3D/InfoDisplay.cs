@@ -17,6 +17,23 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+#define GEARBOX_DEBUG_LOG
+
+#define DEBUG_DUMP_STEAM_POWER_CURVE
+// Uses the DataLogger to record power curve data for steam locos when no other option is chosen.
+// To use this, on the Menu, check the Logging box and cancel all Options > DataLogger.
+// The data logger records data in the file "Program\dump.csv".
+// For steam locomotives only this replaces the default data with a record for each speed increment (mph).
+// Collect the data by starting from rest and accelerating the loco to maximum speed.
+// Only horsepower and mph available currently.
+// Analyse the data using a spreadsheet and graph with an XY chart.
+
+
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using ORTS.Common;
+using ORTS.Settings;
+using ORTS.Viewer3D.Popups;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -24,34 +41,25 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-using ORTS.Common;
-using ORTS.Popups;
 
-namespace ORTS
+
+namespace ORTS.Viewer3D
 {
     /// <summary>
     /// Displays Viewer frame rate and Viewer.Text debug messages in the upper left corner of the screen.
     /// </summary>
     public class InfoDisplay
     {
-        readonly Viewer3D Viewer;
-        readonly DataLogger Logger = new DataLogger();
+        readonly Viewer Viewer;
+        readonly DataLogger Logger;
         readonly int ProcessorCount = System.Environment.ProcessorCount;
 
-        bool DrawCarNumber = false;
-        // F6 reveals labels for both sidings and platforms.
-        // Booleans for both so they can also be used independently.
-        bool DrawSiding = false;
-        bool DrawPlatform = false;
+        int FrameNumber;
+        double LastUpdateRealTime;   // update text message only 10 times per second
 
-        SpriteBatchMaterial TextMaterial;
-        ActivityInforMaterial DrawInforMaterial;
-
-        Matrix Identity = Matrix.Identity;
-        int FrameNumber = 0;
-        double LastUpdateRealTime = 0;   // update text message only 10 times per second
+#if DEBUG_DUMP_STEAM_POWER_CURVE
+        float previousLoggedSpeedMpH = -1.0f;
+#endif
 
         [StructLayout(LayoutKind.Sequential, Size = 40)]
         struct PROCESS_MEMORY_COUNTERS
@@ -77,17 +85,16 @@ namespace ORTS
         readonly IntPtr ProcessHandle;
         PROCESS_MEMORY_COUNTERS ProcessMemoryCounters;
 
-        public InfoDisplay(Viewer3D viewer)
+        public InfoDisplay(Viewer viewer)
         {
             Viewer = viewer;
-            TextMaterial = (SpriteBatchMaterial)viewer.MaterialManager.Load("SpriteBatch");
-            DrawInforMaterial = (ActivityInforMaterial)viewer.MaterialManager.Load("DrawInfor");
+            Logger = new DataLogger(Path.Combine(Viewer.Settings.LoggingPath, "OpenRailsDump.csv"));
 
             ProcessHandle = OpenProcess(0x410 /* PROCESS_QUERY_INFORMATION | PROCESS_VM_READ */, false, Process.GetCurrentProcess().Id);
             ProcessMemoryCounters = new PROCESS_MEMORY_COUNTERS() { cb = 40 };
 
             if (Viewer.Settings.DataLogger)
-                DataLoggerStart();
+                DataLoggerStart(Viewer.Settings);
         }
 
         [ThreadName("Render")]
@@ -103,31 +110,39 @@ namespace ORTS
             {
                 Viewer.Settings.DataLogger = !Viewer.Settings.DataLogger;
                 if (Viewer.Settings.DataLogger)
-                    DataLoggerStart();
+                    DataLoggerStart(Viewer.Settings);
                 else
                     DataLoggerStop();
             }
-            if (UserInput.IsPressed(UserCommands.DisplayCarLabels))
-                DrawCarNumber = !DrawCarNumber;
-            if (UserInput.IsPressed(UserCommands.DisplayStationLabels))
+        }
+
+#if DEBUG_DUMP_STEAM_POWER_CURVE
+        public bool IsRecordingSteamPowerCurve { get 
             {
-                // Steps along a sequence of 5 states
-                // none > both > sidings only > platforms only > none
-                //   00 >   11 >           10 >             01 >   00
-                
-                // Set the first 2 bits of an int
-                int bitArray = 0;
-                bitArray += DrawSiding ? 1 : 0;
-                bitArray += DrawPlatform ? 2 : 0;
-                // Decrement the int to step along the sequence
-                bitArray--;
-                // Extract first 2 bits of the int
-                DrawSiding = ((bitArray & 1) == 1);
-                DrawPlatform = ((bitArray & 2) == 2);
-                // Take modulus 4 to keep in range 0-3. +1 as messages are in range 1-4
-                Viewer.Simulator.Confirmer.Confirm( CabControl.Labels, (CabSetting)(bitArray % 4) + 1 );
+                return Viewer.Settings.DataLogger
+                && !Viewer.Settings.DataLogPerformance
+                && !Viewer.Settings.DataLogPhysics
+                && !Viewer.Settings.DataLogMisc
+                && Viewer.PlayerLocomotive.GetType() == typeof(MSTSSteamLocomotive);
             }
         }
+
+        void RecordSteamPowerCurve()
+        {
+            MSTSSteamLocomotive loco = (MSTSSteamLocomotive)Viewer.PlayerLocomotive;
+            float speedMpH = MpS.ToMpH(loco.SpeedMpS);
+            if (speedMpH >= previousLoggedSpeedMpH + 1) // Add a new record every time speed increases by 1 mph
+            {
+                previousLoggedSpeedMpH = (float)(int)speedMpH; // Keep speed records close to whole numbers
+                Logger.Data(speedMpH.ToString("F1"));
+                float power = W.ToHp(loco.MotiveForceN * loco.SpeedMpS);
+                Logger.Data(power.ToString("F1"));
+                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).ThrottlePercent.ToString("F0"));
+                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).Train.MUReverserPercent.ToString("F0"));
+                Logger.End();
+            }
+        }
+#endif
 
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
@@ -140,80 +155,161 @@ namespace ORTS
                 Profile(elapsedRealSeconds);
             }
 
-            //Here's where the logger stores the data from each frame
-            if (Viewer.Settings.DataLogger)
+#if DEBUG_DUMP_STEAM_POWER_CURVE
+            if (IsRecordingSteamPowerCurve)
             {
-                Logger.Data(VersionInfo.Version);
-                Logger.Data(FrameNumber.ToString("F0"));
-                Logger.Data(GetWorkingSetSize().ToString("F0"));
-                Logger.Data(GC.GetTotalMemory(false).ToString("F0"));
-                Logger.Data(GC.CollectionCount(0).ToString("F0"));
-                Logger.Data(GC.CollectionCount(1).ToString("F0"));
-                Logger.Data(GC.CollectionCount(2).ToString("F0"));
-                Logger.Data(ProcessorCount.ToString("F0"));
-                Logger.Data(Viewer.RenderProcess.FrameRate.Value.ToString("F0"));
-                Logger.Data(Viewer.RenderProcess.FrameTime.Value.ToString("F4"));
-                Logger.Data(Viewer.RenderProcess.FrameJitter.Value.ToString("F4"));
-                Logger.Data(Viewer.RenderProcess.ShadowPrimitivePerFrame.Sum().ToString("F0"));
-                Logger.Data(Viewer.RenderProcess.PrimitivePerFrame.Sum().ToString("F0"));
-                Logger.Data(Viewer.RenderProcess.Profiler.Wall.Value.ToString("F0"));
-                Logger.Data(Viewer.UpdaterProcess.Profiler.Wall.Value.ToString("F0"));
-                Logger.Data(Viewer.LoaderProcess.Profiler.Wall.Value.ToString("F0"));
-                Logger.Data(Viewer.SoundProcess.Profiler.Wall.Value.ToString("F0"));
-                Logger.Data(FormattedTime(Viewer.Simulator.ClockTime));
-                Logger.Data(Viewer.PlayerLocomotive.Direction.ToString());
-                Logger.Data(Viewer.PlayerTrain.MUReverserPercent.ToString("F0"));
-                Logger.Data(Viewer.PlayerLocomotive.ThrottlePercent.ToString("F0"));
-                Logger.Data(Viewer.PlayerLocomotive.MotiveForceN.ToString("F0"));
-#if !NEW_SIGNALLING
-                Logger.Data(TrackMonitorWindow.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
-#else
-                Logger.Data(FormatStrings.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+                RecordSteamPowerCurve();
+            }
+            else
+            {
 #endif
-                Logger.Data((Viewer.PlayerLocomotive.GravityForceN / (Viewer.PlayerLocomotive.MassKG * 9.81f)).ToString("F0"));
-                Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).LocomotiveAxle.SlipSpeedPercent.ToString("F0"));
-                Logger.End();
-            }
-            if (DrawCarNumber == true)
-            {
-                var cars = Viewer.World.Trains.Cars;
-                foreach (var car in cars.Keys)
-                    frame.AddPrimitive(DrawInforMaterial, new ActivityInforPrimitive(DrawInforMaterial, car), RenderPrimitiveGroup.World, ref Identity);
-
-                //	UpdateCarNumberText(frame, elapsedTime);
-            }
-            if (DrawSiding == true || DrawPlatform == true)
-            {
-                var worldFiles = Viewer.World.Scenery.WorldFiles;
-                foreach (var w in worldFiles)
+            //Here's where the logger stores the data from each frame
+                if (Viewer.Settings.DataLogger)
                 {
-                    if (DrawSiding == true && w != null && w.sidings != null)
+                    Logger.Separator = (DataLogger.Separators)Enum.Parse(typeof(DataLogger.Separators), Viewer.Settings.DataLoggerSeparator);
+                    if (Viewer.Settings.DataLogPerformance)
                     {
-                        foreach (var sd in w.sidings)
-                        {
-                            if (sd != null) frame.AddPrimitive(DrawInforMaterial,
-                                new ActivityInforPrimitive(DrawInforMaterial, sd, Color.Coral),
-                                RenderPrimitiveGroup.World, ref Identity);
-                        }
+                        Logger.Data(VersionInfo.Version);
+                        Logger.Data(FrameNumber.ToString("F0"));
+                        Logger.Data(GetWorkingSetSize().ToString("F0"));
+                        Logger.Data(GC.GetTotalMemory(false).ToString("F0"));
+                        Logger.Data(GC.CollectionCount(0).ToString("F0"));
+                        Logger.Data(GC.CollectionCount(1).ToString("F0"));
+                        Logger.Data(GC.CollectionCount(2).ToString("F0"));
+                        Logger.Data(ProcessorCount.ToString("F0"));
+                        Logger.Data(Viewer.RenderProcess.FrameRate.Value.ToString("F0"));
+                        Logger.Data(Viewer.RenderProcess.FrameTime.Value.ToString("F6"));
+                        Logger.Data(Viewer.RenderProcess.ShadowPrimitivePerFrame.Sum().ToString("F0"));
+                        Logger.Data(Viewer.RenderProcess.PrimitivePerFrame.Sum().ToString("F0"));
+                        Logger.Data(Viewer.RenderProcess.Profiler.Wall.Value.ToString("F0"));
+                        Logger.Data(Viewer.UpdaterProcess.Profiler.Wall.Value.ToString("F0"));
+                        Logger.Data(Viewer.LoaderProcess.Profiler.Wall.Value.ToString("F0"));
+                        Logger.Data(Viewer.SoundProcess.Profiler.Wall.Value.ToString("F0"));
                     }
-                    if (DrawPlatform == true && w != null && w.platforms != null)
+                    if (Viewer.Settings.DataLogPhysics)
                     {
-                        foreach (var pd in w.platforms)
+                        Logger.Data(FormattedPreciseTime(Viewer.Simulator.ClockTime));
+                        Logger.Data(Viewer.PlayerLocomotive.Direction.ToString());
+                        Logger.Data(Viewer.PlayerTrain.MUReverserPercent.ToString("F0"));
+                        Logger.Data(Viewer.PlayerLocomotive.ThrottlePercent.ToString("F0"));
+                        Logger.Data(Viewer.PlayerLocomotive.MotiveForceN.ToString("F0"));
+                        Logger.Data(Viewer.PlayerLocomotive.BrakeForceN.ToString("F0"));
+                        Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).LocomotiveAxle.AxleForceN.ToString("F2"));
+                        Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).LocomotiveAxle.SlipSpeedPercent.ToString("F1"));
+#if !NEW_SIGNALLING
+                    Logger.Data(TrackMonitorWindow.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+#else
+                        switch (Viewer.Settings.DataLogSpeedUnits)
                         {
-                            if (pd != null) frame.AddPrimitive(DrawInforMaterial,
-                                new ActivityInforPrimitive(DrawInforMaterial, pd, Color.Yellow),
-                                RenderPrimitiveGroup.World, ref Identity);
+                            case "route":
+                                Logger.Data(FormatStrings.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+                                break;
+                            case "mps":
+                                Logger.Data(Viewer.PlayerLocomotive.SpeedMpS.ToString("F1"));
+                                break;
+                            case "mph":
+                                Logger.Data(MpS.FromMpS(Viewer.PlayerLocomotive.SpeedMpS, false).ToString("F1"));
+                                break;
+                            case "kmph":
+                                Logger.Data(MpS.FromMpS(Viewer.PlayerLocomotive.SpeedMpS, true).ToString("F1"));
+                                break;
+                            default:
+                                Logger.Data(FormatStrings.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
+                                break;
                         }
-                    }
-                }
-            }
-        }
+#endif
+                        Logger.Data((Viewer.PlayerLocomotive.DistanceM.ToString("F0")));
+                        Logger.Data((Viewer.PlayerLocomotive.GravityForceN.ToString("F0")));
 
-        [CallOnThread("Loader")]
-        public void Mark()
-        {
-            TextMaterial.Mark();
-            DrawInforMaterial.Mark();
+                        if ((Viewer.PlayerLocomotive as MSTSLocomotive).TrainBrakeController != null)
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).TrainBrakeController.CurrentValue.ToString("F2"));
+                        else
+                            Logger.Data("null");
+
+                        if ((Viewer.PlayerLocomotive as MSTSLocomotive).EngineBrakeController != null)
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).EngineBrakeController.CurrentValue.ToString("F2"));
+                        else
+                            Logger.Data("null");
+
+                        Logger.Data(Viewer.PlayerLocomotive.BrakeSystem.GetCylPressurePSI().ToString("F0"));
+                        Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).MainResPressurePSI.ToString("F0"));
+                        Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).CompressorIsOn.ToString());
+#if GEARBOX_DEBUG_LOG
+                        if (Viewer.PlayerLocomotive.GetType() == typeof(MSTSDieselLocomotive))
+                        {
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines[0].RealRPM.ToString("F0"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines[0].DemandedRPM.ToString("F0"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines[0].LoadPercent.ToString("F0"));
+                            if ((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines.HasGearBox)
+                            {
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines[0].GearBox.CurrentGearIndex.ToString());
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines[0].GearBox.NextGearIndex.ToString());
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselEngines[0].GearBox.ClutchPercent.ToString());
+                            }
+                            else
+                            {
+                                Logger.Data("null");
+                                Logger.Data("null");
+                                Logger.Data("null");
+                            }
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselFlowLps.ToString("F2"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSDieselLocomotive).DieselLevelL.ToString("F0"));
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                        }
+                        if (Viewer.PlayerLocomotive.GetType() == typeof(MSTSElectricLocomotive))
+                        {
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSElectricLocomotive).Pantographs[1].CommandUp.ToString());
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSElectricLocomotive).Pantographs[2].CommandUp.ToString());
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                            Logger.Data("null");
+                        }
+                        if (Viewer.PlayerLocomotive.GetType() == typeof(MSTSSteamLocomotive))
+                        {
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).BlowerSteamUsageLBpS.ToString("F0"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).BoilerPressurePSI.ToString("F0"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).CylinderCocksAreOpen.ToString());
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).CylinderCompoundOn.ToString());
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).EvaporationLBpS.ToString("F0"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).FireMassKG.ToString("F0"));
+                            Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).CylinderSteamUsageLBpS.ToString("F0"));
+                            if ((Viewer.PlayerLocomotive as MSTSSteamLocomotive).BlowerController != null)
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).BlowerController.CurrentValue.ToString("F0"));
+                            else
+                                Logger.Data("null");
+
+                            if ((Viewer.PlayerLocomotive as MSTSSteamLocomotive).DamperController != null)
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).DamperController.CurrentValue.ToString("F0"));
+                            else
+                                Logger.Data("null");
+                            if ((Viewer.PlayerLocomotive as MSTSSteamLocomotive).FiringRateController != null)
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).FiringRateController.CurrentValue.ToString("F0"));
+                            else
+                                Logger.Data("null");
+                            if ((Viewer.PlayerLocomotive as MSTSSteamLocomotive).Injector1Controller != null)
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).Injector1Controller.CurrentValue.ToString("F0"));
+                            else
+                                Logger.Data("null");
+                            if ((Viewer.PlayerLocomotive as MSTSSteamLocomotive).Injector2Controller != null)
+                                Logger.Data((Viewer.PlayerLocomotive as MSTSSteamLocomotive).Injector2Controller.CurrentValue.ToString("F0"));
+                            else
+                                Logger.Data("null");
+                        }
+#endif
+                    }
+                Logger.End();
+#if DEBUG_DUMP_STEAM_POWER_CURVE
+                }
+#endif
+            }
         }
 
         int GetWorkingSetSize()
@@ -254,7 +350,7 @@ namespace ORTS
         /// </summary>
         /// <param name="clockTimeSeconds"></param>
         /// <returns></returns>
-        public static string FormattedPreciseTime( double clockTimeSeconds ) //some measure of time so it can be sorted.  Good enuf for now. Might add more later. Okay
+        public static string FormattedPreciseTime(double clockTimeSeconds) //some measure of time so it can be sorted.  Good enuf for now. Might add more later. Okay
         {
             int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
             clockTimeSeconds -= hour * 60.0 * 60.0;
@@ -262,16 +358,16 @@ namespace ORTS
             clockTimeSeconds -= minute * 60.0;
             double seconds = clockTimeSeconds;
             // Reset clock before and after midnight
-            if( hour >= 24 )
+            if (hour >= 24)
                 hour %= 24;
-            if( hour < 0 )
+            if (hour < 0)
                 hour += 24;
-            if( minute < 0 )
+            if (minute < 0)
                 minute += 60;
-            if( seconds < 0 )
+            if (seconds < 0)
                 seconds += 60;
 
-            return string.Format( "{0:D2}:{1:D2}:{2:00.00}", hour, minute, seconds );
+            return string.Format("{0:D2}:{1:D2}:{2:00.00}", hour, minute, seconds);
         }
 
 
@@ -280,53 +376,118 @@ namespace ORTS
         /// </summary>
         /// <param name="clockTimeSeconds"></param>
         /// <returns></returns>
-        public static string FormattedApproxTime( double clockTimeSeconds ) {
+        public static string FormattedApproxTime(double clockTimeSeconds)
+        {
             int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
             clockTimeSeconds -= hour * 60.0 * 60.0;
             int minute = (int)((clockTimeSeconds / 60.0) + 0.5);    // + 0.5 to round to nearest minute
             clockTimeSeconds -= minute * 60.0;
             // Reset clock before and after midnight
-            if( hour >= 24 )
+            if (hour >= 24)
                 hour %= 24;
-            if( hour < 0 )
+            if (hour < 0)
                 hour += 24;
-            if( minute < 0 )
+            if (minute < 0)
                 minute += 60;
 
-            return string.Format( "{0:D2}:{1:D2}", hour, minute );
+            return string.Format("{0:D2}:{1:D2}", hour, minute);
         }
-        
-        static void DataLoggerStart()
+
+        static void DataLoggerStart(UserSettings settings)
         {
-            using (StreamWriter file = File.AppendText("dump.csv"))
+            using (StreamWriter file = File.AppendText(Path.Combine(settings.LoggingPath, "OpenRailsDump.csv")))
             {
-                file.WriteLine(String.Join(",", new[] {
-							"SVN",
-							"Frame",
-							"Memory",
-							"Memory (Managed)",
-							"Gen 0 GC",
-							"Gen 1 GC",
-							"Gen 2 GC",
-							"Processors",
-							"Frame Rate",
-							"Frame Time",
-							"Frame Jitter",
-							"Shadow Primitives",
-							"Render Primitives",
-							"Render Process",
-							"Updater Process",
-							"Loader Process",
-							"Sound Process",
-                            "Time",
-                            "Player Direction",
-                            "Player Reverser",
-                            "Player Throttle",
-                            "Player Motive Force [N]",
-                            "Player Speed [Mps]",
-                            "Player Elevation [N/kN]",
-                            "Player Wheelslip",
-						}));
+                DataLogger.Separators separator = (DataLogger.Separators)Enum.Parse(typeof(DataLogger.Separators), settings.DataLoggerSeparator);
+                string headerLine = "";
+                if (settings.DataLogPerformance)
+                {
+                    headerLine = String.Join(Convert.ToString((char)separator),
+                        new string[] 
+                            {    
+                                "SVN",
+                                "Frame",
+                                "Memory",
+                                "Memory (Managed)",
+                                "Gen 0 GC",
+                                "Gen 1 GC",
+                                "Gen 2 GC",
+                                "Processors",
+                                "Frame Rate",
+                                "Frame Time",
+                                "Shadow Primitives",
+                                "Render Primitives",
+                                "Render Process",
+                                "Updater Process",
+                                "Loader Process",
+                                "Sound Process"
+                            }
+                        );
+                }
+                if (settings.DataLogPhysics)
+                {
+                    if (settings.DataLogPerformance)
+                        headerLine += Convert.ToString((char)separator);
+
+                    headerLine += String.Join(Convert.ToString((char)separator),
+                            new string[] 
+                            {
+                                "Time",
+                                "Player Direction",
+                                "Player Reverser [%]",
+                                "Player Throttle [%]",
+                                "Player Motive Force [N]",
+                                "Player Brake Force [N]",
+                                "Player Axle Force [N]",
+                                "Player Wheelslip",
+                                "Player Speed [" + settings.DataLogSpeedUnits + "]",
+                                "Distance [m]",
+                                "Player Gravity Force [N]",
+                                "Train Brake",
+                                "Engine Brake",
+                                "Player Cylinder PSI",
+                                "Player Main Res PSI",
+                                "Player Compressor On",
+                                "D:Real RPM / E:panto 1 / S:Blower usage LBpS",
+                                "D:Demanded RPM / E:panto 2 / S:Boiler PSI",
+                                "D:Load % / E:null / S:Cylinder Cocks open",
+                                "D:Gearbox Current Gear / E:null / S:Evaporation LBpS",
+                                "D:Gearbox Next Gear / E:null / S:Fire Mass KG",
+                                "D:Clutch % / E:null / S:Steam usage LBpS",
+                                "D:Fuel Flow Lps / E:null / S:Blower",
+                                "D:Fuel level L / E:null / S:Damper",
+                                "D:null / E:null / S:Firing Rate",
+                                "D:null / E:null / S:Injector 1",
+                                "D:null / E:null / S:Injector 2"
+                            }
+                        );
+                }
+                //Ready to use...
+                //if (settings.DataLogMisc)
+                //{
+                //    if (settings.DataLogPerformance || settings.DataLogPhysics)
+                //        headerLine += Convert.ToString((char)separator);
+                //    headerLine += String.Join(Convert.ToString((char)separator),
+                //        new string[] {"null",
+                //        "null"});
+                //}
+
+#if DEBUG_DUMP_STEAM_POWER_CURVE
+                if (!settings.DataLogPerformance
+                && !settings.DataLogPhysics
+                && !settings.DataLogMisc)
+                {
+                    headerLine = String.Join(Convert.ToString((char)separator),
+                        new string[] 
+                            {    
+                                "speed (mph)",
+                                "power (hp)",
+                                "throttle (%)",
+                                "cut-off (%)"
+                            });
+                }
+#endif
+                file.WriteLine(headerLine);
+
                 file.Close();
             }
         }
@@ -346,242 +507,5 @@ namespace ORTS
             Viewer.LoaderProcess.Profiler.Mark();
             Viewer.SoundProcess.Profiler.Mark();
         }
-    }
-
-    public class TextPrimitive : RenderPrimitive
-    {
-        public readonly SpriteBatchMaterial Material;
-        public Point Position;
-        public readonly Color Color;
-        public readonly WindowTextFont Font;
-        public string Text;
-
-        public TextPrimitive(SpriteBatchMaterial material, Point position, Color color, WindowTextFont font)
-        {
-            Material = material;
-            Position = position;
-            Color = color;
-            Font = font;
-        }
-
-        public override void Draw(GraphicsDevice graphicsDevice)
-        {
-            Font.Draw(Material.SpriteBatch, Position, Text, Color);
-        }
-    }
-
-    //2D straight lines
-    public class LinePrimitive : RenderPrimitive
-    {
-        public readonly SpriteBatchLineMaterial Material;
-        public Vector2 PositionStart;
-        public Vector2 PositionEnd;
-        public readonly Color Color;
-        public float Depth; //z buffer value: 0 always show, 1 always not show, in between, depends
-        public int Width; //line width
-
-        //constructor: startX, startY: X,Y of the start point, endXY the end point, depth: z buffer value (between 0, 1)
-        public LinePrimitive(SpriteBatchLineMaterial material, float startX, float startY, float endX, float endY, Color color, float depth, int width)
-        {
-            Material = material;
-            Color = color;
-            Depth = depth;
-            Width = width;
-            PositionEnd = new Vector2(endX, endY);
-            PositionStart = new Vector2(startX, startY);
-        }
-        public void UpdateLocation(float startX, float startY, float endX, float endY)
-        {
-            PositionEnd.X = endX;
-            PositionEnd.Y = endY;
-            PositionStart.X = startX;
-            PositionStart.Y = startY;
-        }
-
-        //draw 2D straight lines
-        public void DrawLine(SpriteBatch batch, Color color, Vector2 point1,
-                                    Vector2 point2, float Layer)
-        {
-            float angle = (float)Math.Atan2(point2.Y - point1.Y, point2.X - point1.X);
-            float length = (point2 - point1).Length();
-
-            batch.Draw(Material.Texture, point1, null, color,
-                       angle, Vector2.Zero, new Vector2(length, Width),
-                       SpriteEffects.None, Layer);
-        }
-
-        /// <summary>
-        /// This is called when the game should draw itself.
-        /// </summary>
-        public override void Draw(GraphicsDevice graphicsDevice)
-        {
-            DrawLine(Material.SpriteBatch, Color, PositionStart, PositionEnd, Depth);
-        }
-
-    }
-
-    //2D textures
-    public class ActivityInforPrimitive : RenderPrimitive
-    {
-        public readonly ActivityInforMaterial Material;
-        public SpriteFont Font;
-        public Viewer3D Viewer;
-        TrainCar TrainCar = null;
-        TrItemLabel TrItemLabel = null;
-        Color LabelColor = Color.Blue;
-        float LineSpacing;
-		WindowTextFont TextFont;
-
-        //constructor: create one that draw car numbers
-        public ActivityInforPrimitive(ActivityInforMaterial material, TrainCar tcar)
-        {
-            Material = material;
-            Font = material.Font;
-            Viewer = material.Viewer;
-            TrainCar = tcar;
-            LineSpacing = Material.LineSpacing;
-			TextFont = Viewer.WindowManager.TextManager.Get("Arial", 12, System.Drawing.FontStyle.Bold, 1);
-        }
-
-        /// <summary>
-        /// Information for showing labels of track items such as sidings and platforms
-        /// </summary>
-        public ActivityInforPrimitive(ActivityInforMaterial material, TrItemLabel pd, Color labelColor)
-        {
-            Material = material;
-            Font = material.Font;
-            Viewer = material.Viewer;
-            TrItemLabel = pd;
-            LineSpacing = Material.LineSpacing;
-            LabelColor = labelColor;
-			TextFont = Viewer.WindowManager.TextManager.Get("Arial", 12, System.Drawing.FontStyle.Bold, 1);
-        }
-
-        /// <summary>
-        /// This is called when the game should draw itself.
-        /// </summary>
-        public override void Draw(GraphicsDevice graphicsDevice)
-        {
-            if (TrainCar != null) UpdateCarNumberText();
-            if (TrItemLabel != null) UpdateTrItemNameText();
-        }
-
-        //draw car numbers above train cars when F7 is hit
-        void UpdateCarNumberText()
-        {
-            float X, BottomY, TopY;
-
-            //find car location vs. camera
-            Vector3 Location = TrainCar.WorldPosition.XNAMatrix.Translation +
-                    new Vector3((TrainCar.WorldPosition.TileX - Viewer.Camera.TileX) * 2048, 0, (-TrainCar.WorldPosition.TileZ + Viewer.Camera.TileZ) * 2048);
-
-            //project 3D space to 2D (for the top of the line)
-            Vector3 cameraVector = Viewer.GraphicsDevice.Viewport.Project(
-                Location + new Vector3(0, TrainCar.Height, 0),
-                Viewer.Camera.XNAProjection, Viewer.Camera.XNAView, Matrix.Identity);
-            if (cameraVector.Z > 1 || cameraVector.Z < 0) return; //out of range or behind the camera
-            X = cameraVector.X;
-            BottomY = cameraVector.Y;//remember them
-
-            ////project for the top of the line
-            cameraVector = Viewer.GraphicsDevice.Viewport.Project(
-                Location + new Vector3(0, 10, 0),
-                Viewer.Camera.XNAProjection, Viewer.Camera.XNAView, Matrix.Identity);
-
-            //want to draw the train car name at cameraVector.Y, but need to check if it overlap other texts in Material.AlignedTextB
-            //and determine the new location if conflict occurs
-            TopY = AlignVertical(cameraVector.Y, X, X + Font.MeasureString(TrainCar.CarID).X, LineSpacing, Material.AlignedTextA);
-			TextFont.Draw(Material.SpriteBatch, new Point((int)X, (int)TopY), TrainCar.CarID, LabelColor, Color.White);
-
-
-            //draw the vertical line with length Math.Abs(cameraVector.Y + LineSpacing - BottomY)
-            //the term LineSpacing is used so that the text is above the line head
-            Material.SpriteBatch.Draw(Material.Texture, new Vector2(X, BottomY), null, Color.Blue,
-                       (float)-Math.PI / 2, Vector2.Zero, new Vector2(Math.Abs(cameraVector.Y + LineSpacing - BottomY), 2),
-                       SpriteEffects.None, cameraVector.Z);
-        }
-
-        /// <summary>
-        /// When F6 is pressed, draws names above track items such as sidings and platforms.
-        /// </summary>
-        void UpdateTrItemNameText()
-        {
-            float X, BottomY, TopY;
-
-            //loop through all wfile and each platform to draw platform names and lines
-
-            //the location w.r.t. the camera
-            Vector3 locationWRTCamera = TrItemLabel.Location.WorldLocation.Location + new Vector3((TrItemLabel.Location.TileX - Viewer.Camera.TileX) * 2048, 0, (TrItemLabel.Location.TileZ - Viewer.Camera.TileZ) * 2048);
-
-            //if the platform is out of viewing range
-            if (!Viewer.Camera.InFOV(locationWRTCamera, 10)) return;
-
-            //project 3D space to 2D (for the bottom of the line)
-            Vector3 cameraVector = Viewer.GraphicsDevice.Viewport.Project(
-            TrItemLabel.Location.XNAMatrix.Translation + new Vector3((TrItemLabel.Location.TileX - Viewer.Camera.TileX) * 2048, 0, (-TrItemLabel.Location.TileZ + Viewer.Camera.TileZ) * 2048),
-                Viewer.Camera.XNAProjection, Viewer.Camera.XNAView, Matrix.Identity);
-            if (cameraVector.Z > 1 || cameraVector.Z < 0) return; //out of range or behind the camera
-            X = cameraVector.X;
-            BottomY = cameraVector.Y;//remember them
-
-            ////project for the top of the line
-            cameraVector = Viewer.GraphicsDevice.Viewport.Project(
-            TrItemLabel.Location.XNAMatrix.Translation + new Vector3((TrItemLabel.Location.TileX - Viewer.Camera.TileX) * 2048, 20, (-TrItemLabel.Location.TileZ + Viewer.Camera.TileZ) * 2048),
-                Viewer.Camera.XNAProjection, Viewer.Camera.XNAView, Matrix.Identity);
-
-            //want to draw the text at cameraVector.Y, but need to check if it overlap other texts in Material.AlignedTextB
-            //and determine the new location if conflict occurs
-            TopY = AlignVertical(cameraVector.Y, X, X + Font.MeasureString(TrItemLabel.ItemName).X, LineSpacing, Material.AlignedTextB);
-			TextFont.Draw(Material.SpriteBatch, new Point((int)X, (int)TopY), TrItemLabel.ItemName, LabelColor);
-
-            //draw a vertical line with length TopY + LineSpacing - BottomY
-            //the term LineSpacing is used so that the text is above the line head
-            Material.SpriteBatch.Draw(Material.Texture, new Vector2(X, BottomY), null, LabelColor,
-                           -(float)Math.PI / 2, Vector2.Zero, new Vector2(Math.Abs(TopY + LineSpacing - BottomY), 2),
-                           SpriteEffects.None, cameraVector.Z);
-
-        }
-
-        //helper function to make the train car and siding name align nicely on the screen
-        //the basic idea is to space the screen vertically as table cell, each cell holds a list of text assigned.
-        //new text in will check its destinated cell, if it overlap with a text in the cell, it will move up a cell and continue
-        //once it is determined in a cell, it will be pushed in the list of text of that cell, and the new Y will be returned.
-        float AlignVertical(float wantY, float startX, float endX, float spacing, List<Vector2>[] alignedTextY)
-        {
-            if (alignedTextY == null || wantY < 0) return wantY; //data checking
-            int position = (int)(wantY / spacing);//the cell of the text it wants in
-            if (position > alignedTextY.Length) return wantY;//position is larger than the number of cells
-            int desiredPosition = position;
-            while (position < alignedTextY.Length && position >= 0)
-            {
-                if (alignedTextY[position].Count == 0)
-                {
-                    alignedTextY[position].Add(new Vector2(startX, endX));//add info for the text (i.e. start and end location)
-                    if (position == desiredPosition) return wantY; //if it can be in the desired cell, use the desired Y instead of the cell Y, so the text won't jump up-down
-                    else return position * spacing;//the cell location is the new Y
-                }
-                bool conflict = false;
-                //check if it is intersect any one in the cell
-                foreach (Vector2 v in alignedTextY[position])
-                {
-                    //check conflict with a text, v.x is the start of the text, v.y is the end of the text
-                    if ((startX > v.X && startX < v.Y) || (endX > v.X && endX < v.Y) || (v.X > startX && v.X < endX) || (v.Y > startX && v.Y < endX))
-                    {
-                        conflict = true;
-                        break;
-                    }
-                }
-                if (conflict == false) //no conflict
-                {
-                    alignedTextY[position].Add(new Vector2(startX, endX));//add info for the text (i.e. start and end location)
-                    if (position == desiredPosition) return wantY;
-                    else return position * spacing;//the cell location is the new Y
-                }
-                position--;
-            }
-            if (position == desiredPosition) return wantY;
-            else return position * spacing;//the cell location is the new Y
-        }
-
     }
 }

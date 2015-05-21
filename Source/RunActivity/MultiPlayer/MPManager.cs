@@ -26,14 +26,16 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Security.Cryptography;
+using System.Diagnostics;
 using System.IO;
-using ORTS;
-using ORTS.Debugging;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
-using MSTS;
+using Orts.Parsers.Msts;
+using ORTS.Common;
+using ORTS.Debugging;
+using ORTS.Settings;
+using ORTS.Viewer3D;
 
 namespace ORTS.MultiPlayer
 {
@@ -41,13 +43,14 @@ namespace ORTS.MultiPlayer
 	class MPManager
 	{
 		public int version = 15;
-		double lastMoveTime = 0.0f;
-		public double lastSwitchTime = 0.0f;
-		double lastSendTime = 0.0f;
+        double lastMoveTime;
+        public double lastSwitchTime;
+        public double lastSyncTime = 0;
+        double lastSendTime;
 		string metric = "";
 		double metricbase = 1.0f;
 		public static OnlineTrains OnlineTrains = new OnlineTrains();
-		private static MPManager localUser = null;
+        private static MPManager localUser;
 
 		public List<Train> removedTrains;
 		private List<Train> addedTrains;
@@ -55,12 +58,13 @@ namespace ORTS.MultiPlayer
 		private List<Train> uncoupledTrains;
 
 		public bool weatherChanged = false;
-		public bool weatherChangHandled = false;
-		public int newWeather = -1;
-        public float newFog = -1f;
-        public float overCast = -1f;
+		public int weather = -1;
+        public float fogDistance = -1f;
+        public float pricipitationIntensity = -1f;
+        public float overcastFactor = -1f;
+        public double serverTimeDifference = 0;
 
-		public double lastPlayerAddedTime = 0.0f;
+        public double lastPlayerAddedTime;
 		public int MPUpdateInterval = 10;
 		static public bool AllowedManualSwitch = true;
 		public bool TrySwitch = true;
@@ -71,11 +75,8 @@ namespace ORTS.MultiPlayer
 		public List<string> aiderList;
 		public Dictionary<string, OnlinePlayer> lostPlayer = new Dictionary<string,OnlinePlayer>();
 		public bool NotServer = true;
-		public static DispatchViewer DispatcherWindow;
 		public bool CheckSpad = true;
 		public static bool PreferGreen = true;
-		Simulator Simulator;
-		Viewer3D Viewer;
 		public string MD5Check = "";
 
 		public void AddUncoupledTrains(Train t)
@@ -91,21 +92,6 @@ namespace ORTS.MultiPlayer
 			lock (uncoupledTrains)
 			{
 				uncoupledTrains.Remove(t);
-			}
-		}
-
-		public void MoveUncoupledTrains(MSGMove move)
-		{
-			if (uncoupledTrains != null && uncoupledTrains.Count > 0)
-			{
-				foreach (Train t in uncoupledTrains)
-				{
-					if (t != null)
-					{
-						if (Math.Abs(t.SpeedMpS) > 0.001) move.AddNewItem("0xUC" + t.Number, t);
-						else if (Math.Abs(t.LastReportedSpeed) > 0) move.AddNewItem("0xUC" + t.Number, t);
-					}
-				}
 			}
 		}
 
@@ -136,7 +122,7 @@ namespace ORTS.MultiPlayer
 			return localUser;
 		}
 
-		public void RequestControl()
+		public static void RequestControl()
 		{
 			try
 			{
@@ -148,7 +134,7 @@ namespace ORTS.MultiPlayer
 				{
 					train.TrainType = Train.TRAINTYPE.PLAYER; train.LeadLocomotive = Program.Simulator.PlayerLocomotive;
 					if (Program.Simulator.Confirmer != null)
-						Program.Simulator.Confirmer.Information("You gained back the control of your train");
+						Program.Simulator.Confirmer.Information(Viewer.Catalog.GetString("You gained back the control of your train"));
 					msgctl = new MSGControl(GetUserName(), "Confirm", train);
 					BroadCast(msgctl.ToString());
 				}
@@ -162,27 +148,8 @@ namespace ORTS.MultiPlayer
 			{ }
 		}
 
-
-		public void RequestSignalReset()
-		{
-			try
-			{
-				if (IsServer())
-				{
-					return;
-				}
-				else //client, send request
-				{
-					MSGResetSignal msgctl = new MSGResetSignal(GetUserName());
-					SendToServer(msgctl.ToString());
-				}
-			}
-			catch (Exception)
-			{ }
-		}
-
-		double previousSpeed = 0;
-		double begineZeroTime = 0;
+        double previousSpeed;
+        double begineZeroTime;
 		/// <summary>
 		/// Update. Determines what messages to send every some seconds
 		/// 1. every one second will send train location
@@ -200,8 +167,9 @@ namespace ORTS.MultiPlayer
 			}
 			else if (NotServer == false && Program.Server == null) //I am declared the server
 			{
+                /*
 				Program.Server = new Server(Program.Client.UserName + ' ' + Program.Client.Code, Program.Client);
-				if (Program.DebugViewer != null) Program.DebugViewer.firstShow = true;
+				if (Program.DebugViewer != null) Program.DebugViewer.firstShow = true;*/
 			}
 			//get key strokes and determine if some messages should be sent
 			handleUserInput();
@@ -284,7 +252,13 @@ namespace ORTS.MultiPlayer
 			}
 
 			//some players are removed
-			RemovePlayer();
+            //need to send a keep-alive message if have not sent one to the server for the last 30 seconds
+            if (IsServer() && newtime - lastSyncTime >= 60f)
+            {
+                Notify((new MSGMessage("All", "TimeCheck", Program.Simulator.ClockTime.ToString(System.Globalization.CultureInfo.InvariantCulture))).ToString());
+                lastSyncTime = newtime;
+            }
+            RemovePlayer();
 
 			//some players are disconnected more than 1 minute ago, will not care if they come back later
 			CleanLostPlayers();
@@ -312,10 +286,10 @@ namespace ORTS.MultiPlayer
 			var train = Locomotive.Train;
 			if (train == null ||train.TrainType == Train.TRAINTYPE.REMOTE) return;//no train or is remotely controlled
 
-			var spad = false;
+			//var spad = false;
 			var maxSpeed = Math.Abs(train.AllowedMaxSpeedMpS) + 3;//allow some margin of error (about 10km/h)
 			var speed = Math.Abs(Locomotive.SpeedMpS);
-			if (speed > maxSpeed) spad = true;
+			//if (speed > maxSpeed) spad = true;
 			//if (train.TMaspect == ORTS.Popups.TrackMonitorSignalAspect.Stop && Math.Abs(train.distanceToSignal) < 2*speed && speed > 5) spad = true; //red light and cannot stop within 2 seconds, if the speed is large
 
 #if !NEW_SIGNALLING
@@ -382,9 +356,6 @@ namespace ORTS.MultiPlayer
 		{
 			if (m!= null && Program.Client != null) Program.Client.Send(m);
 		}
-		static public void BroadcastSignal()
-		{
-		}
 
 #if !NEW_SIGNALLING
 		static public void BroadcastSignal(Signal s)
@@ -392,17 +363,9 @@ namespace ORTS.MultiPlayer
 
 		}
 #endif
-
-		public static void StopDispatcher()
-		{
-			if (DispatcherWindow != null) { if (MPManager.Instance().Viewer != null) MPManager.Instance().Viewer.DebugViewerEnabled = false; Stopped = true; DispatcherWindow.Visible = false; }
-		}
-		public static bool Stopped = false;
 		//nicely shutdown listening threads, and notify the server/other player
 		static public void Stop()
 		{
-			Stopped = true;
-			StopDispatcher();
 			if (Program.Client != null && Program.Server == null)
 			{
 				Program.Client.Send((new MSGQuit(GetUserName())).ToString()); //client notify server
@@ -419,7 +382,7 @@ namespace ORTS.MultiPlayer
 		}
 
 		//when two player trains connected, require decouple at speed 0.
-		public bool TrainOK2Decouple(Train t)
+		public static bool TrainOK2Decouple(Train t)
 		{
 			if (t == null) return false;
 			if (Math.Abs(t.SpeedMpS) < 0.001) return true;
@@ -437,7 +400,7 @@ namespace ORTS.MultiPlayer
 				if (count >= 2)
 				{
 					if (Program.Simulator.Confirmer != null)
-						Program.Simulator.Confirmer.Information("Cannot decouple: train has " + count + " players, need to completely stop.");
+						Program.Simulator.Confirmer.Information(Viewer.Catalog.GetPluralStringFmt("Cannot decouple: train has {0} player, need to completely stop.", "Cannot decouple: train has {0} players, need to completely stop.", count));
 					return false;
 				}
 			}
@@ -462,7 +425,7 @@ namespace ORTS.MultiPlayer
 				foreach (Train t in Program.Simulator.Trains)
 				{
 					if (Program.Simulator.PlayerLocomotive != null && t == Program.Simulator.PlayerLocomotive.Train) continue; //avoid broadcast player train
-					if (MPManager.Instance().FindPlayerTrain(t)) continue;
+					if (MPManager.FindPlayerTrain(t)) continue;
 					if (removedTrains.Contains(t)) continue;//this train is going to be removed, should avoid it.
 					MPManager.BroadCast((new MSGTrain(t, t.Number)).ToString());
 				}
@@ -475,20 +438,20 @@ namespace ORTS.MultiPlayer
         //create weather message
         public string GetEnvInfo()
         {
-            return (new MSGWeather(-1, overCast, newFog)).ToString();//update weather
+            return (new MSGWeather(-1, overcastFactor, pricipitationIntensity, fogDistance)).ToString();//update weather
 
         }
 
         //set weather message
         public void SetEnvInfo(float o, float f)
         {
-            newFog = f;
-            overCast = o;
+            fogDistance = f;
+            overcastFactor = o;
 
         }
 
         //this will be used in the server, in Simulator.cs
-		public bool TrainOK2Couple(Train t1, Train t2)
+		public static bool TrainOK2Couple(Train t1, Train t2)
 		{
 			//if (Math.Abs(t1.SpeedMpS) > 10 || Math.Abs(t2.SpeedMpS) > 10) return false; //we do not like high speed punch in MP, will mess up a lot.
 
@@ -574,7 +537,7 @@ namespace ORTS.MultiPlayer
 				List<string> removeLost = null;
 				foreach (var x in lostPlayer)
 				{
-					if (Program.Simulator.GameTime - x.Value.quitTime > 60)
+					if (Program.Simulator.GameTime - x.Value.quitTime > 180) //lost within 3 minutes will be held
 					{
 						if (removeLost == null) removeLost = new List<string>();
 						removeLost.Add(x.Key);
@@ -717,12 +680,12 @@ namespace ORTS.MultiPlayer
 			}
 		}
 
-		public Train FindPlayerTrain(string user)
+		public static Train FindPlayerTrain(string user)
 		{
 			return OnlineTrains.findTrain(user);
 		}
 
-		public bool FindPlayerTrain(Train t)
+		public static bool FindPlayerTrain(Train t)
 		{
 			return OnlineTrains.findTrain(t);
 		}
@@ -732,15 +695,17 @@ namespace ORTS.MultiPlayer
 			Notify((new MSGLocoChange(GetUserName(), lead.CarID, t)).ToString());
 		}
 		//count how many times a key has been stroked, thus know if the panto should be up or down, etc. for example, stroke 11 times means up, thus send event with id 1
-		int PantoSecondCount = 0;
-		int PantoFirstCount = 0;
-		int BellCount = 0;
-		int WiperCount = 0;
-		int HeadLightCount = 0;
+        int PantoSecondCount;
+        int PantoFirstCount;
+        int BellCount;
+        int WiperCount;
+        int HeadLightCount;
+        int DoorLeftCount;
+        int DoorRightCount;
+        int MirrorsCount;
 
 		public void handleUserInput()
 		{
-			TrainCar Locomotive = Program.Simulator.PlayerLocomotive;
 			//In Multiplayer, I maybe the helper, but I can request to be the controller
 			if (UserInput.IsPressed(UserCommands.GameRequestControl))
 			{
@@ -755,9 +720,19 @@ namespace ORTS.MultiPlayer
 
 			if (UserInput.IsPressed(UserCommands.ControlPantograph1)) Notify((new MSGEvent(GetUserName(), "PANTO1", (++PantoFirstCount)%2)).ToString());
 
-			if (UserInput.IsPressed(UserCommands.ControlBell)) Notify((new MSGEvent(GetUserName(), "BELL", (++BellCount)%2)).ToString());
+			if (UserInput.IsPressed(UserCommands.ControlBell)) Notify((new MSGEvent(GetUserName(), "BELL", 1)).ToString());
 
-			if (UserInput.IsPressed(UserCommands.ControlWiper)) Notify((new MSGEvent(GetUserName(), "WIPER", (++WiperCount) % 2)).ToString());
+            if (UserInput.IsReleased(UserCommands.ControlBell)) Notify((new MSGEvent(GetUserName(), "BELL", 0)).ToString());
+
+            if (UserInput.IsPressed(UserCommands.ControlBellToggle)) Notify((new MSGEvent(GetUserName(), "BELL", (++BellCount) % 2)).ToString());
+
+            if (UserInput.IsPressed(UserCommands.ControlWiper)) Notify((new MSGEvent(GetUserName(), "WIPER", (++WiperCount) % 2)).ToString());
+
+            if (UserInput.IsPressed(UserCommands.ControlDoorLeft)) Notify((new MSGEvent(GetUserName(), "DOORL", (++DoorLeftCount) % 2)).ToString());
+
+            if (UserInput.IsPressed(UserCommands.ControlDoorRight)) Notify((new MSGEvent(GetUserName(), "DOORR", (++DoorRightCount) % 2)).ToString());
+
+            if (UserInput.IsPressed(UserCommands.ControlMirror)) Notify((new MSGEvent(GetUserName(), "MIRRORS", (++MirrorsCount) % 2)).ToString());
 
 			if (UserInput.IsPressed(UserCommands.ControlHeadlightIncrease))
 			{
@@ -773,48 +748,20 @@ namespace ORTS.MultiPlayer
 
 		}
 
-		public void HandleDispatcherWindow(Simulator simulator, Viewer3D viewer)
-		{
-			Simulator = simulator;
-			Viewer = viewer;
-			Thread t = new Thread(StartDispatcher);
-			t.Start();
-		}
-
-		void StartDispatcher()
-		{
-			DispatcherWindow = new DispatchViewer(Simulator, Viewer);
-			Program.DebugViewer = DispatcherWindow;
-			DispatcherWindow.Show();
-			DispatcherWindow.Hide();
-			while (MPManager.Stopped != true)
-			{
-				if (Viewer.DebugViewerEnabled == true)
-				{
-					if (DispatcherWindow.Visible != true) DispatcherWindow.ShowDialog();
-					DispatcherWindow.Visible = true;
-				}
-				else
-				{
-					DispatcherWindow.Hide();
-				}
-				Thread.Sleep(100);
-			}
-			DispatcherWindow.Dispose();
-		}
         public TrainCar SubCar(string wagonFilePath, int length)
 		{
 			System.Console.WriteLine("Will substitute with your existing stocks\n.");
-			TrainCar car = null;
+            TrainCar car;
 			try
 			{
 				char type = 'w';
 				if (wagonFilePath.ToLower().Contains(".eng")) type = 'e';
 				string newWagonFilePath = SubMissingCar(length, type);
                 car = RollingStock.Load(Program.Simulator, newWagonFilePath);
-				car.Length = length;
+				car.CarLengthM = length;
 				car.RealWagFilePath = wagonFilePath;
-				if (Program.Simulator.Confirmer != null) Program.Simulator.Confirmer.Information("Missing car, have substituted with other one.");
+				if (Program.Simulator.Confirmer != null)
+                    Program.Simulator.Confirmer.Information(Viewer.Catalog.GetString("Missing car, have substituted with other one."));
 
 			}
 			catch (Exception error)
@@ -824,8 +771,8 @@ namespace ORTS.MultiPlayer
 			}
 			return car;
 		}
-		SortedList<double, string> coachList = null;
-		SortedList<double, string> engList = null;
+        SortedList<double, string> coachList;
+        SortedList<double, string> engList;
 
 		public string SubMissingCar(int length, char type)
 		{
@@ -855,7 +802,7 @@ namespace ORTS.MultiPlayer
 
 		}
 
-		SortedList<double, string> GetList(char type)
+		static SortedList<double, string> GetList(char type)
 		{
 			string ending = "*.eng";
 			if (type == 'w') ending = "*.wag";
@@ -873,21 +820,21 @@ namespace ORTS.MultiPlayer
 			foreach (string name in allEngines)
 			{
 				double len = 0.0f;
+				Microsoft.Xna.Framework.Vector3 def = new Microsoft.Xna.Framework.Vector3();
+
 				try
 				{
-					using (STFReader stf = new STFReader(Program.Simulator.BasePath + "\\trains\\trainset\\" + name, true))
-						while (!stf.Eof)
-						{
-							string token = stf.ReadItem();
-							if (stf.Tree.ToLower() == "wagon(size")
-							{
-								stf.MustMatch("(");
-								stf.ReadFloat(STFReader.UNITS.Distance, null);
-								stf.ReadFloat(STFReader.UNITS.Distance, null);
-								len = stf.ReadFloat(STFReader.UNITS.Distance, null);
-								break;
-							}
-						}
+					using (var stf = new STFReader(Program.Simulator.BasePath + "\\trains\\trainset\\" + name, false))
+						stf.ParseFile(new STFReader.TokenProcessor[] {
+							new STFReader.TokenProcessor("wagon", ()=>{
+								stf.ReadString();
+								stf.ParseBlock(new STFReader.TokenProcessor[] {
+									new STFReader.TokenProcessor("size", ()=>{ def = stf.ReadVector3Block(STFReader.UNITS.Distance, def); }),
+								});
+							}),
+						});
+
+					len = def.Z;
 					carList.Add(len + Program.Random.NextDouble() / 10.0f, name);
 				}
 				catch { }
@@ -908,10 +855,10 @@ namespace ORTS.MultiPlayer
 
 				MD5Check = Encoding.Unicode.GetString(retVal, 0, retVal.Length);
 			}
-			catch
+			catch (Exception e)
 			{
-				System.Console.WriteLine("Cannot get MD5 check of TDB file, server may not connect you");
-				MD5Check = "";
+				Trace.TraceWarning("{0} Cannot get MD5 check of TDB file, use NA instead but server may not connect you.", e.Message);
+				MD5Check = "NA";
 			}
 		}
 	}

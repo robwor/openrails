@@ -21,19 +21,27 @@
 ///    Richard Plokhaar / Signalsoft Rail Consultancy Ltd.
 /// 
 
-
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Text;
 using System.IO;
+using System.Linq;
 using System.Net;
-using Microsoft.Xna.Framework;
+using System.Text;
 using System.Windows.Forms;
-using MSTS;
+using Microsoft.Xna.Framework;
+using Orts.Formats.Msts;
+using Orts.Parsers.Msts;
+using ORTS.Common;
+using ORTS.Viewer3D;
+using ORTS.Viewer3D.Popups;
+using Control = System.Windows.Forms.Control;
+using Image = System.Drawing.Image;
+using GNU.Gettext;
+using GNU.Gettext.WinForms;
+
 namespace ORTS.Debugging
 {
 
@@ -62,7 +70,7 @@ namespace ORTS.Debugging
 	  /// <summary>
 	  /// True when the user is dragging the route view
 	  /// </summary>
-	  private bool Dragging = false;
+      private bool Dragging;
 	  private WorldPosition worldPos;
       float xScale = 1; 
       float yScale = 1; 
@@ -71,15 +79,15 @@ namespace ORTS.Debugging
 	  List<SwitchWidget> switchItemsDrawn;
 	  List<SignalWidget> signalItemsDrawn;
 
-	  public SwitchWidget switchPickedItem = null;
-	  public SignalWidget signalPickedItem = null;
-	  public bool switchPickedItemHandled = false;
-	  public double switchPickedTime = 0.0f;
-	  public bool signalPickedItemHandled = false;
-	  public double signalPickedTime = 0.0f;
+      public SwitchWidget switchPickedItem;
+      public SignalWidget signalPickedItem;
+      public bool switchPickedItemHandled;
+      public double switchPickedTime;
+      public bool signalPickedItemHandled;
+      public double signalPickedTime;
 	  public bool DrawPath = true; //draw train path
-	  ImageList imageList1 = null;
-	  public List<Train> selectedTrainList = null;
+      ImageList imageList1;
+      public List<Train> selectedTrainList;
 	  /// <summary>
 	  /// contains the last position of the mouse
 	  /// </summary>
@@ -93,28 +101,8 @@ namespace ORTS.Debugging
 
 	   //the train selected by leftclicking the mouse
 	public Train PickedTrain;
-      /// <summary>
-      /// True when the user has the "Move left" pressed.
-      /// </summary>
-      private bool LeftButtonDown = false;
 
       /// <summary>
-      /// True when the user has the "Move right" pressed.
-      /// </summary>
-      private bool RightButtonDown = false;
-
-      /// <summary>
-      /// True when the user has the "Move up" pressed.
-      /// </summary>
-      private bool UpButtonDown = false;
-
-      /// <summary>
-      /// True when the user has the "Move down" pressed.
-      /// </summary>
-      private bool DownButtonDown = false;
-
-
-       /// <summary>
       /// Defines the area to view, in meters.
       /// </summary>
       private RectangleF ViewWindow;
@@ -125,7 +113,7 @@ namespace ORTS.Debugging
       /// </summary>
       private Timer UITimer;
 
-      bool loaded = false;
+      bool loaded;
 	  TrackNode[] nodes;
 	  float minX = float.MaxValue;
 	  float minY = float.MaxValue;
@@ -133,13 +121,13 @@ namespace ORTS.Debugging
 	  float maxX = float.MinValue;
 	  float maxY = float.MinValue;
 
-	  Viewer3D Viewer;
+	  Viewer Viewer;
       /// <summary>
       /// Creates a new DebugViewerForm.
       /// </summary>
       /// <param name="simulator"></param>
       /// /// <param name="viewer"></param>
-      public DispatchViewer(Simulator simulator, Viewer3D viewer)
+      public DispatchViewer(Simulator simulator, Viewer viewer)
       {
          InitializeComponent();
 
@@ -199,12 +187,12 @@ namespace ORTS.Debugging
       }
 
 
-      public int RedrawCount = 0;
+      public int RedrawCount;
 	  private Font trainFont;
 	  private Font sidingFont;
 	  private SolidBrush trainBrush;
 	  private SolidBrush sidingBrush;
-	  private double lastUpdateTime = 0;
+      private double lastUpdateTime;
 
       /// <summary>
       /// When the user holds down the  "L", "R", "U", "D" buttons,
@@ -217,25 +205,6 @@ namespace ORTS.Debugging
       {
 		  if (Viewer.DebugViewerEnabled == false) { this.Visible = false; firstShow = true; return; }
 		  else this.Visible = true;
-         if (DownButtonDown)
-         {
-            ShiftViewDown();
-         }
-
-         if (UpButtonDown)
-         {
-            ShiftViewUp();
-         }
-
-         if (LeftButtonDown)
-         {
-            ShiftViewLeft();
-         }
-
-         if (RightButtonDown)
-         {
-            ShiftViewRight();
-         }
 
 		 if (Program.Simulator.GameTime - lastUpdateTime < 1) return;
 		 lastUpdateTime = Program.Simulator.GameTime;
@@ -251,6 +220,7 @@ namespace ORTS.Debugging
 			  // do this only once
 			  loaded = true;
 			  //trackSections.DataSource = new List<InterlockingTrack>(simulator.InterlockingSystem.Tracks.Values).ToArray();
+              Localizer.Localize(this, Viewer.Catalog);
 		  }
 
 		  switchItemsDrawn = new List<SwitchWidget>();
@@ -325,8 +295,8 @@ namespace ORTS.Debugging
 			  }
 		  }
 
-          var maxsize = maxX - minX > maxX - minX ? maxX - minX : maxX - minX;
-          maxsize = (int)maxsize / 100 * 100;
+          var maxsize = maxX - minX > maxY - minY ? maxX - minX : maxY - minY;
+          maxsize = (int)(maxsize / 100 +1 ) * 100;
           windowSizeUpDown.Maximum = (decimal)maxsize;
           Inited = true;
 
@@ -341,26 +311,23 @@ namespace ORTS.Debugging
 
 					  SignalItem si = item as SignalItem;
 					  
-					  if (si.sigObj >=0  && si.sigObj < simulator.Signals.SignalObjects.Length)
+					  if (si.SigObj >=0  && si.SigObj < simulator.Signals.SignalObjects.Length)
 					  {
-						  SignalObject s = simulator.Signals.SignalObjects[si.sigObj];
-						  if (s.isSignal && s.isSignalNormal()) signals.Add(new SignalWidget(si, s));
+						  SignalObject s = simulator.Signals.SignalObjects[si.SigObj];
+						  if (s != null && s.isSignal && s.isSignalNormal()) signals.Add(new SignalWidget(si, s));
 					  }
 				  }
 
 			  }
 			  if (item.ItemType == TrItem.trItemType.trSIDING || item.ItemType == TrItem.trItemType.trPLATFORM)
 			  {
-				  SidingItem s = item as SidingItem;
-
 				  sidings.Add(new SidingWidget(item));
-
 			  }
 		  }
           return;
 	  }
 
-	  bool Inited = false;
+      bool Inited;
 	  List<LineSegment> segments = new List<LineSegment>();
 	  List<SwitchWidget> switches;
 	  //List<PointF> buffers = new List<PointF>();
@@ -391,7 +358,7 @@ namespace ORTS.Debugging
 	  #endregion
 
 	  #region avatar
-	  Dictionary<string, Image> avatarList = null;
+      Dictionary<string, Image> avatarList;
 	  public void AddAvatar(string name, string url)
 	  {
 		  if (avatarList == null) avatarList = new Dictionary<string, Image>();
@@ -553,10 +520,10 @@ namespace ORTS.Debugging
 
 	  #region Draw
 	  public bool firstShow = true;
-	  public bool followTrain = false;
+      public bool followTrain;
 	  float subX, subY;
-      float oldWidth = 0;
-      float oldHeight = 0;
+      float oldWidth;
+      float oldHeight;
        //determine locations of buttons and boxes
       void DetermineLocations()
       {
@@ -662,11 +629,7 @@ namespace ORTS.Debugging
          {
 			 subX = minX + ViewWindow.X; subY = minY + ViewWindow.Y;
             g.Clear(Color.White);
-
-            // this is the total size of the entire viewable route (xRange == width, yRange == height in metres)
-            float xRange = maxX - minX;
-            float yRange = maxY - minY;
-
+            
             xScale = pictureBox1.Width / ViewWindow.Width;
             yScale = pictureBox1.Height/ ViewWindow.Height;
 
@@ -853,22 +816,24 @@ namespace ORTS.Debugging
 					if (t.LeadLocomotive != null)
 					{
 						worldPos = t.LeadLocomotive.WorldPosition;
-						name = t.LeadLocomotive.CarID;
+						name = GetTrainName(t.LeadLocomotive.CarID);
 						firstCar = t.LeadLocomotive;
 					}
 					else if (t.Cars != null && t.Cars.Count > 0)
 					{
 						worldPos = t.Cars[0].WorldPosition;
-						name = t.Cars[0].CarID;
+						name = GetTrainName(t.Cars[0].CarID);
+						if (t.TrainType == Train.TRAINTYPE.AI)
+							name = t.Number.ToString() + ":" +t.Name;
 						firstCar = t.Cars[0];
-
 					}
 					else continue;
 
 					if (xScale < 0.3 || t.FrontTDBTraveller == null || t.RearTDBTraveller == null)
 					{
 						worldPos = firstCar.WorldPosition;
-						scaledItem.X = (worldPos.TileX * 2048 + worldPos.Location.X - subX) * xScale; scaledItem.Y = pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - subY) * yScale;
+						scaledItem.X = (worldPos.TileX * 2048 -subX + worldPos.Location.X) * xScale; 
+						scaledItem.Y = pictureBox1.Height - (worldPos.TileZ * 2048 - subY + worldPos.Location.Z) * yScale;
 						if (scaledItem.X < -margin2 || scaledItem.X > IM_Width + margin2 || scaledItem.Y > IM_Height + margin2 || scaledItem.Y < -margin2) continue;
 						if (drawRed > ValidTrain) g.FillRectangle(Brushes.Gray, GetRect(scaledItem, 15f));
 						else
@@ -878,7 +843,7 @@ namespace ORTS.Debugging
 							scaledItem.Y -= 25;
 							DrawTrainPath(t, subX, subY, pathPen, g, scaledA, scaledB, pDist, mDist);
 						}
-						g.DrawString(GetTrainName(name), trainFont, trainBrush, scaledItem);
+						g.DrawString(name, trainFont, trainBrush, scaledItem);
 						continue;
 					}
 					var loc = t.FrontTDBTraveller.WorldLocation;
@@ -896,14 +861,14 @@ namespace ORTS.Debugging
 						var dist = t1.DistanceTo(worldPos.WorldLocation.TileX, worldPos.WorldLocation.TileZ, worldPos.WorldLocation.Location.X, worldPos.WorldLocation.Location.Y, worldPos.WorldLocation.Location.Z);
 						if (dist > 0)
 						{
-							t1.Move(dist - 1 + car.Length / 2);
+							t1.Move(dist - 1 + car.CarLengthM / 2);
 							x = (t1.TileX * 2048 + t1.Location.X - subX) * xScale; y = pictureBox1.Height - (t1.TileZ * 2048 + t1.Location.Z - subY) * yScale;
 							//x = (worldPos.TileX * 2048 + worldPos.Location.X - minX - ViewWindow.X) * xScale; y = pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - minY - ViewWindow.Y) * yScale;
 							if (x < -margin || x > IM_Width + margin || y > IM_Height + margin || y < -margin) continue;
 
 							scaledItem.X = x; scaledItem.Y = y;
 
-							t1.Move(-car.Length);
+							t1.Move(-car.CarLengthM);
 							x = (t1.TileX * 2048 + t1.Location.X - subX) * xScale; y = pictureBox1.Height - (t1.TileZ * 2048 + t1.Location.Z - subY) * yScale;
 							if (x < -margin || x > IM_Width + margin || y > IM_Height + margin || y < -margin) continue;
 
@@ -918,9 +883,10 @@ namespace ORTS.Debugging
 						}
 					}
 					worldPos = firstCar.WorldPosition;
-					scaledItem.X = (worldPos.TileX * 2048 + worldPos.Location.X - subX) * xScale; scaledItem.Y = -25 + pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - subY) * yScale;
+					scaledItem.X = (worldPos.TileX * 2048 -subX + worldPos.Location.X) * xScale; 
+					scaledItem.Y = -25 + pictureBox1.Height - (worldPos.TileZ * 2048 - subY + worldPos.Location.Z) * yScale;
 
-					g.DrawString(GetTrainName(name), trainFont, trainBrush, scaledItem);
+					g.DrawString(name, trainFont, trainBrush, scaledItem);
 
 				}
 				if (switchPickedItemHandled) switchPickedItem = null;
@@ -1031,7 +997,8 @@ namespace ORTS.Debugging
 		  }
 		  return position * spacing;
 	  }
-	  private string GetTrainName(string ID)
+	  
+	  static string GetTrainName(string ID)
 	  {
 		  int location = ID.LastIndexOf('-');
 		  if (location < 0) return ID;
@@ -1073,9 +1040,9 @@ namespace ORTS.Debugging
                     break;
             }
             trackNode = new Traveller(position);
-            var distance = 0f;
 
 #if !NEW_SIGNALLING
+            var distance = 0f;
             while (true)
             {
                 var signal = Program.Simulator.Signals.FindNearestSignal(trackNode);
@@ -1171,7 +1138,6 @@ namespace ORTS.Debugging
 						continue;
 
 					var switchObj = obj as SignallingDebugWindow.TrackSectionSwitch;
-					var signalObj = obj as SignallingDebugWindow.TrackSectionSignal;
 					if (switchObj != null)
 					{
 						for (var pin = switchObj.TrackNode.Inpins; pin < switchObj.TrackNode.Inpins + switchObj.TrackNode.Outpins; pin++)
@@ -1253,10 +1219,7 @@ namespace ORTS.Debugging
 					if (objDistance < initialNodeOffset || objDistance > initialNodeOffset + DisplayDistance)
 						continue;
 
-					var eolObj = obj as SignallingDebugWindow.TrackSectionEndOfLine;
 					var switchObj = obj as SignallingDebugWindow.TrackSectionSwitch;
-					var signalObj = obj as SignallingDebugWindow.TrackSectionSignal;
-
 					if (switchObj != null)
 					{
 						for (var pin = switchObj.TrackNode.Inpins; pin < switchObj.TrackNode.Inpins + switchObj.TrackNode.Outpins; pin++)
@@ -1298,22 +1261,11 @@ namespace ORTS.Debugging
       /// <param name="p">Center point of the dot, in pixels.</param>
       /// <param name="size">Size of the dot's diameter, in pixels</param>
       /// <returns></returns>
-      private RectangleF GetRect(PointF p, float size)
+      static RectangleF GetRect(PointF p, float size)
       {
          return new RectangleF(p.X - size / 2f, p.Y - size / 2f, size, size);
       }
 
-	  /// <summary>
-	  /// Generates a rectangle representing a rectangle being drawn.
-	  /// </summary>
-	  /// <param name="p">Center point of the rec, in pixels.</param>
-	  /// <param name="sizeX">Size of the rec's X, in pixels</param>
-	  /// <param name="sizeY">Size of the rec's Y, in pixels</param>
-	  /// <returns></returns>
-	  private RectangleF GetRect(PointF p, float sizeX, float sizeY)
-	  {
-		  return new RectangleF(p.X - sizeX / 2f, p.Y - sizeY / 2f, sizeX, sizeY);
-	  }
 	  /// <summary>
       /// Generates line segments from an array of TrVectorSection. Also computes 
       /// the bounds of the entire route being drawn.
@@ -1405,26 +1357,6 @@ namespace ORTS.Debugging
          GenerateView();
       }
 
-      private void leftButton_Click(object sender, EventArgs e)
-      {
-         ShiftViewLeft();
-      }
-
-      private void rightButton_Click(object sender, EventArgs e)
-      {
-         ShiftViewRight();
-      }
-
-      private void upButton_Click(object sender, EventArgs e)
-      {
-         ShiftViewUp();
-      }
-
-      private void downButton_Click(object sender, EventArgs e)
-      {
-         ShiftViewDown();
-      }
-
       private void ShiftViewUp()
       {
          ViewWindow.Offset(0, -ScrollSpeedY);
@@ -1505,9 +1437,9 @@ namespace ORTS.Debugging
 		  windowSizeUpDown.Value = tempValue;
 	  }
 
-	  private bool Zooming = false;
-	  private bool LeftClick = false;
-	  private bool RightClick = false;
+      private bool Zooming;
+      private bool LeftClick;
+      private bool RightClick;
 
 	  private void pictureBoxMouseDown(object sender, MouseEventArgs e)
 	  {
@@ -1721,9 +1653,12 @@ namespace ORTS.Debugging
 			  else continue;
 
 			  worldPos = firstCar.WorldPosition;
-			  tX = (worldPos.TileX * 2048 + worldPos.Location.X - subX) * xScale; tY = pictureBox1.Height - (worldPos.TileZ * 2048 + worldPos.Location.Z - subY) * yScale;
+			  tX = (worldPos.TileX * 2048 -subX + worldPos.Location.X) * xScale; 
+			  tY = pictureBox1.Height - (worldPos.TileZ * 2048 -subY + worldPos.Location.Z) * yScale;
+              float xSpeedCorr = Math.Abs(t.SpeedMpS) * xScale * 1.5f;
+              float ySpeedCorr = Math.Abs(t.SpeedMpS) * yScale * 1.5f;
 
-			  if (tX < x - range || tX > x + range || tY < y - range || tY > y + range) continue;
+			  if (tX < x - range-xSpeedCorr || tX > x + range+xSpeedCorr || tY < y - range-ySpeedCorr || tY > y + range+ySpeedCorr) continue;
 			  if (PickedTrain == null) PickedTrain = t;
 		  }
 		   //if a train is picked, will clear the avatar list selection
@@ -1782,81 +1717,6 @@ namespace ORTS.Debugging
 		  return true;
 	  }
 
-      private void leftButton_MouseDown(object sender, MouseEventArgs e)
-      {
-         LeftButtonDown = true;
-      }
-
-      private void leftButton_MouseLeave(object sender, EventArgs e)
-      {
-         LeftButtonDown = false;
-      }
-
-      private void leftButton_MouseUp(object sender, MouseEventArgs e)
-      {
-         LeftButtonDown = false;
-      }
-
-      private void rightButton_MouseUp(object sender, MouseEventArgs e)
-      {
-         RightButtonDown = false;
-      }
-
-      private void rightButton_MouseDown(object sender, MouseEventArgs e)
-      {
-         RightButtonDown = true;
-      }
-
-      private void rightButton_MouseLeave(object sender, EventArgs e)
-      {
-         RightButtonDown = false;
-      }
-
-      private void upButton_MouseUp(object sender, MouseEventArgs e)
-      {
-         UpButtonDown = false;
-      }
-
-      private void upButton_MouseDown(object sender, MouseEventArgs e)
-      {
-         UpButtonDown = true;
-      }
-
-      private void upButton_MouseLeave(object sender, EventArgs e)
-      {
-         UpButtonDown = false;
-      }
-
-      private void downButton_MouseUp(object sender, MouseEventArgs e)
-      {
-         DownButtonDown = false;
-      }
-
-      private void downButton_MouseDown(object sender, MouseEventArgs e)
-      {
-         DownButtonDown = true;
-      }
-
-      private void downButton_MouseLeave(object sender, EventArgs e)
-      {
-         DownButtonDown = false;
-      }
-
-      private void showSwitches_CheckedChanged(object sender, EventArgs e)
-      {
-         GenerateView();
-      }
-
-      private void showBuffers_CheckedChanged(object sender, EventArgs e)
-      {
-         GenerateView();
-      }
-
-      private void showSignals_CheckedChanged(object sender, EventArgs e)
-      {
-         GenerateView();
-      }
-
 	  private void chkAllowUserSwitch_CheckedChanged(object sender, EventArgs e)
 	  {
 		  MultiPlayer.MPManager.AllowedManualSwitch = chkAllowUserSwitch.Checked;
@@ -1875,17 +1735,6 @@ namespace ORTS.Debugging
 		  catch { }
 	  }
 	  
-	   private void highlightTrackShapes_CheckedChanged(object sender, EventArgs e)
-      {
-         GenerateView();
-      }
-
-      private void trackShapes_SelectedIndexChanged(object sender, EventArgs e)
-      {
-         GenerateView();
-      }
-
-
 	  private const int CP_NOCLOSE_BUTTON = 0x200;
 	  protected override CreateParams CreateParams
 	  {
@@ -2141,15 +1990,15 @@ namespace ORTS.Debugging
 #endif
 				  break;
 			  case 2:
-                  signal.holdState = SignalObject.HOLDSTATE.MANUAL_APPROACH;
+                  signal.holdState = SignalObject.HoldState.ManualApproach;
                   foreach (var sigHead in signal.SignalHeads)
                   {
-                      var drawstate1 = sigHead.def_draw_state(SignalHead.SIGASP.APPROACH_1);
-                      var drawstate2 = sigHead.def_draw_state(SignalHead.SIGASP.APPROACH_2);
-                      var drawstate3 = sigHead.def_draw_state(SignalHead.SIGASP.APPROACH_3);
-                      if (drawstate1 > 0) { sigHead.state = SignalHead.SIGASP.APPROACH_1; }
-                      else if (drawstate2 > 0) { sigHead.state = SignalHead.SIGASP.APPROACH_2; }
-                      else { sigHead.state = SignalHead.SIGASP.APPROACH_3; }
+                      var drawstate1 = sigHead.def_draw_state(MstsSignalAspect.APPROACH_1);
+                      var drawstate2 = sigHead.def_draw_state(MstsSignalAspect.APPROACH_2);
+                      var drawstate3 = sigHead.def_draw_state(MstsSignalAspect.APPROACH_3);
+                      if (drawstate1 > 0) { sigHead.state = MstsSignalAspect.APPROACH_1; }
+                      else if (drawstate2 > 0) { sigHead.state = MstsSignalAspect.APPROACH_2; }
+                      else { sigHead.state = MstsSignalAspect.APPROACH_3; }
                       sigHead.draw_state = sigHead.def_draw_state(sigHead.state);
                   }
 
@@ -2171,7 +2020,7 @@ namespace ORTS.Debugging
 #endif
 				  break;
 			  case 3:
-                  signal.holdState = SignalObject.HOLDSTATE.MANUAL_PASS;
+                  signal.holdState = SignalObject.HoldState.ManualPass;
                   foreach (var sigHead in signal.SignalHeads)
                   {
                       sigHead.SetLeastRestrictiveAspect();
@@ -2218,8 +2067,8 @@ namespace ORTS.Debugging
 			  }
 			  //aider selects and throws the switch, but need to confirm by the dispatcher
 			  MultiPlayer.MPManager.Notify((new MultiPlayer.MSGSwitch(MultiPlayer.MPManager.GetUserName(),
-				  nextSwitchTrack.TN.UiD.WorldTileX, nextSwitchTrack.TN.UiD.WorldTileZ, nextSwitchTrack.TN.UiD.WorldID, Selected, true)).ToString());
-			  Program.Simulator.Confirmer.Information("Switching Request Sent to the Server");
+				  nextSwitchTrack.TN.UiD.WorldTileX, nextSwitchTrack.TN.UiD.WorldTileZ, nextSwitchTrack.TN.UiD.WorldId, Selected, true)).ToString());
+			  Program.Simulator.Confirmer.Information(Viewer.Catalog.GetString("Switching Request Sent to the Server"));
 
 		  }
 		  //server throws the switch immediately
@@ -2300,7 +2149,7 @@ namespace ORTS.Debugging
 
 	  }
 
-	   public bool ClickedTrain = false;
+      public bool ClickedTrain;
 	  private void btnSeeInGameClick(object sender, EventArgs e)
 	  {
 		  if (PickedTrain != null) ClickedTrain = true;
@@ -2312,6 +2161,8 @@ namespace ORTS.Debugging
           int diffX = x -pictureBox1.Width/2;
           int diffY = y -pictureBox1.Height/2;
           ViewWindow.Offset(diffX / xScale, -diffY/yScale);
+          if (scale < windowSizeUpDown.Minimum) scale = windowSizeUpDown.Minimum;
+          if (scale > windowSizeUpDown.Maximum) scale = windowSizeUpDown.Maximum;
           windowSizeUpDown.Value = scale;
           GenerateView();
       }
@@ -2330,7 +2181,7 @@ namespace ORTS.Debugging
 	   public SignalObject Signal;
 
 	   public PointF Dir;
-	   public bool hasDir = false;
+       public bool hasDir;
 	   /// <summary>
 	   /// For now, returns true if any of the signal heads shows any "clear" aspect.
 	   /// This obviously needs some refinement.
@@ -2343,13 +2194,13 @@ namespace ORTS.Debugging
 
 			   foreach (var head in Signal.SignalHeads)
 			   {
-				   if (head.state == SignalHead.SIGASP.CLEAR_1 ||
-					   head.state == SignalHead.SIGASP.CLEAR_2)
+                   if (head.state == MstsSignalAspect.CLEAR_1 ||
+                       head.state == MstsSignalAspect.CLEAR_2)
 				   {
 					   returnValue = 0;
 				   }
-				   if (head.state == SignalHead.SIGASP.APPROACH_1 ||
-					   head.state == SignalHead.SIGASP.APPROACH_2 || head.state == SignalHead.SIGASP.APPROACH_3)
+                   if (head.state == MstsSignalAspect.APPROACH_1 ||
+                       head.state == MstsSignalAspect.APPROACH_2 || head.state == MstsSignalAspect.APPROACH_3)
 				   {
 					   returnValue = 1;
 				   }
@@ -2401,7 +2252,7 @@ namespace ORTS.Debugging
 	   public TrackNode Item;
 	   public uint main;
 #if false
-	   public dVector mainEnd = null;
+	   public dVector mainEnd;
 #endif
 	   /// <summary>
 	   /// 
@@ -2508,8 +2359,8 @@ namespace ORTS.Debugging
 	   public dVector A;
 	   public dVector B;
 	   public dVector C;
-	   //public float radius = 0.0f;
-	   public bool isCurved = false;
+	   //public float radius;
+       public bool isCurved;
 
 	   public float angle1, angle2;
 	   //public SectionCurve curve = null;
@@ -2522,7 +2373,6 @@ namespace ORTS.Debugging
 		   isCurved = false; 
 		   if (Section == null) return;
            //MySection = Section;
-		   
 		   uint k = Section.SectionIndex;
 		   TrackSection ts = Program.Simulator.TSectionDat.TrackSections.Get(k);
 		   if (ts != null)

@@ -18,12 +18,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Reflection;
-using MSTS;
-using Microsoft.Xna.Framework;
+using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Parsers.Msts;
 
 namespace ORTS
 {
@@ -79,7 +79,7 @@ namespace ORTS
                         if (hasFile && opfa.FileID == attr.FileID)
                         {
                             AttributeProcessor ap = new AttributeProcessor(initWhat, fi, stf, attr.DefaultValue);
-                            tp = new MSTS.STFReader.TokenProcessor(attr.Token, ap.P);
+                            tp = new STFReader.TokenProcessor(attr.Token, ap.P);
 
                             result.Add(tp);
                         }
@@ -102,13 +102,11 @@ namespace ORTS
         {
             FieldInfo[] fields = this.GetType().GetFields();
             object[] attrs;
-            ORTSPhysicsAttribute attr;
             foreach (FieldInfo fi in fields)
             {
                 attrs = fi.GetCustomAttributes(typeof(ORTSPhysicsAttribute), false);
                 if (attrs.Length > 0)
                 {
-                    attr = attrs[0] as ORTSPhysicsAttribute;
                     fi.SetValue(this, fi.GetValue(locoFrom));
                 }
             }
@@ -223,7 +221,7 @@ namespace ORTS
 
     public class AttributeProcessor
     {
-        public MSTS.STFReader.Processor P;
+        public STFReader.Processor P;
         private FieldInfo _fi;
 
         public AttributeProcessor(object setWhom, FieldInfo fi, STFReader stf, object defaultValue)
@@ -239,7 +237,7 @@ namespace ORTS
                         {
                             int? i = defaultValue as int?;
                             _fi.SetValue(setWhom,
-                                stf.ReadIntBlock(STFReader.UNITS.Any, i));
+                                stf.ReadIntBlock(i));
                             break;
                         }
                     case "bool":
@@ -269,7 +267,7 @@ namespace ORTS
                         {
                             double? d = defaultValue as double?;
                             _fi.SetValue(setWhom,
-                                stf.ReadDoubleBlock(STFReader.UNITS.Any, d));
+                                stf.ReadDoubleBlock(d));
                             break;
                         }
                     case "vector3":

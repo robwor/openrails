@@ -48,9 +48,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Xna.Framework;
-using MSTS;
-using ORTS.Popups;
+using Orts.Formats.Msts;
+using Orts.Parsers.Msts;
 
 namespace ORTS
 {
@@ -75,9 +74,15 @@ namespace ORTS
             THIS_SIG_MR,
             OPP_SIG_LR,
             OPP_SIG_MR,
+            NEXT_NSIG_LR,
             DIST_MULTI_SIG_MR,
             SIG_FEATURE,
             DEF_DRAW_STATE,
+            APPROACH_CONTROL_POSITION,
+            APPROACH_CONTROL_SPEED,
+            TRAINHASCALLON,
+            TRAINHASCALLON_RESTRICTED,
+            HASHEAD,
             DEBUG_HEADER,
             DEBUG_OUT,
             RETURN,
@@ -87,8 +92,10 @@ namespace ORTS
         {
             STATE,
             DRAW_STATE,
-            ENABLED,
-            BLOCK_STATE,
+            ENABLED,                         // read only
+            BLOCK_STATE,                     // read only
+            APPROACH_CONTROL_REQ_POSITION,   // read only
+            APPROACH_CONTROL_REQ_SPEED,      // read only
         }
 
         public enum SCRTermCondition
@@ -169,7 +176,7 @@ namespace ORTS
         /// Constructor
         ///
 
-        public SIGSCRfile(string RoutePath, IList<string> ScriptFiles, IDictionary<string, SignalType> SignalTypes)
+        public SIGSCRfile(string RoutePath, IList<string> ScriptFiles, IDictionary<string, Orts.Formats.Msts.SignalType> SignalTypes)
         {
 
             // Create required translators
@@ -201,7 +208,7 @@ namespace ORTS
 
 
 #if DEBUG_PRINT_PROCESS
-            TDB_debug_ref = new int[3] { 993, 986, 3674 };   /* signal tdb ref.no selected for print-out */
+            TDB_debug_ref = new int[5] { 7305, 7307, 7308, 7309, 7310 };   /* signal tdb ref.no selected for print-out */
 #endif
 
 #if DEBUG_PRINT_IN
@@ -234,18 +241,18 @@ namespace ORTS
 #if DEBUG_PRINT_IN
                         File.AppendAllText(din_fileLoc + @"sigscr.txt", "Reading file : " + fullName + "\n\n");
 #endif
-                        sigscrRead(scrStream, SignalTypes);
+                        sigscrRead(fullName, scrStream, SignalTypes);
                         scrStream.Close();
                     }
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    Trace.TraceWarning("File missing for signal scripts - {0}", fullName);
+                    Trace.TraceWarning("Cannot open file for signal scripts - {0} : {1}", fullName, ex.ToString());
                 }
 #else
                 // for test purposes : without exception catch
                 StreamReader scrStream = new StreamReader(fullName, true);
-                sigscrRead(scrStream, SignalTypes);
+                sigscrRead(fullName, scrStream, SignalTypes);
                 scrStream.Close();
 #endif
             }
@@ -261,7 +268,7 @@ namespace ORTS
         //
         //================================================================================================//
 
-        public void sigscrRead(StreamReader scrStream, IDictionary<string, SignalType> SignalTypes)
+        public void sigscrRead(string scrFileName, StreamReader scrStream, IDictionary<string, SignalType> SignalTypes)
         {
             scrReadInfo readInfo;
             string readLine;
@@ -323,7 +330,7 @@ namespace ORTS
                         {
                             if (Scripts.ContainsKey(thisType))
                             {
-                                Trace.TraceWarning("sigscr-file line {1} : Multiple definition of signaltype {0}", scriptname, scriptline.ToString());
+                                Trace.TraceWarning("Ignored duplicate SignalType script {2} in {0}:line {1}", scrFileName, readnumber, scriptname);
                             }
                             else
                             {
@@ -358,7 +365,7 @@ namespace ORTS
                         {
                             if (Scripts.ContainsKey(thisType))
                             {
-                                Trace.TraceWarning("sigscr-file line {1} : Multiple definition of signaltype {0}", scriptname, scriptline.ToString());
+                                Trace.TraceWarning("Ignored duplicate SignalType script {2} in {0}:line {1}", scrFileName, readnumber, scriptname);
                             }
                             else
                             {
@@ -367,7 +374,7 @@ namespace ORTS
                         }
                         else
                         {
-                            Trace.TraceWarning("sigscr-file line {1} : Unknown signal type : {0}", scriptname, scriptline.ToString());
+                            Trace.TraceWarning("Ignored unknown SignalType script {2} in {0}:line {1}", scrFileName, readnumber, scriptname);
                         }
 
                         while (!readLine.StartsWith("SCRIPT ") && readLine != null)
@@ -408,7 +415,7 @@ namespace ORTS
                 {
                     if (Scripts.ContainsKey(thisType))
                     {
-                        Trace.TraceWarning("sigscr-file line {1} : Multiple definition of signaltype {0}", scriptname, scriptline.ToString());
+                        Trace.TraceWarning("Ignored duplicate SignalType script {2} in {0}:line {1}", scrFileName, readnumber, scriptname);
                     }
                     else
                     {
@@ -417,7 +424,7 @@ namespace ORTS
                 }
                 else
                 {
-                    Trace.TraceWarning("sigscr-file line {1} : Unknown signal type : {0}", scriptname, scriptline.ToString());
+                    Trace.TraceWarning("Ignored unknown SignalType script {2} in {0}:line {1}", scrFileName, readnumber, scriptname);
                 }
             }
 
@@ -648,7 +655,7 @@ namespace ORTS
         //
         //================================================================================================//
 
-        public scrReadInfo scrReadLine(StreamReader scrStream, int lastline)
+        public static scrReadInfo scrReadLine(StreamReader scrStream, int lastline)
         {
             string readLine;
             string procLine = String.Empty;
@@ -1481,7 +1488,6 @@ namespace ORTS
                     // match open and close brackets - when matched, that is end of condition
 
                     int actbracks = 1;
-                    int actpos = openarray[0].Index;
 
                     int actopen = 1;
                     int openpos = actopen < openarray.Length ? openarray[actopen].Index : presentstring.Length + 1;
@@ -1559,7 +1565,7 @@ namespace ORTS
                 catch (Exception ex)
                 {
                     valid_func = false;
-                    Trace.TraceWarning("sigscr-file line {1} : Unknown function call : {0}\nDetails : {2}", 
+                    Trace.TraceWarning("sigscr-file line {1} : Unknown function call : {0}\nDetails : {2}",
                         FunctionStatement, linenumber.ToString(), ex.ToString());
 #if DEBUG_PRINT_IN
                     File.AppendAllText(din_fileLoc + @"sigscr.txt", "Unknown function call : " + FunctionStatement + "\n");
@@ -1678,8 +1684,8 @@ namespace ORTS
                         string partString = TermString.Substring(6);
                         try
                         {
-                            SignalObject.BLOCKSTATE Blockstate =
-                                    (SignalObject.BLOCKSTATE)Enum.Parse(typeof(SignalObject.BLOCKSTATE), partString, true);
+                            MstsBlockState Blockstate =
+                                    (MstsBlockState)Enum.Parse(typeof(MstsBlockState), partString, true);
                             TermParts = new SCRParameterType(SCRTermType.Block, (int)Blockstate);
                         }
                         catch (Exception Ex)
@@ -1704,13 +1710,13 @@ namespace ORTS
                         string partString = TermString.Substring(7);
                         try
                         {
-                            SignalHead.SIGASP Aspect =
-                                    (SignalHead.SIGASP)Enum.Parse(typeof(SignalHead.SIGASP), partString, true);
+                            MstsSignalAspect Aspect =
+                                    (MstsSignalAspect)Enum.Parse(typeof(MstsSignalAspect), partString, true);
                             TermParts = new SCRParameterType(SCRTermType.Sigasp, (int)Aspect);
                         }
                         catch (Exception Ex)
                         {
-                            Trace.TraceWarning("sigscr-file line {1} : Unknown Aspect : {0}\nDetails : {2}", 
+                            Trace.TraceWarning("sigscr-file line {1} : Unknown Aspect : {0}\nDetails : {2}",
                                 partString, linenumber.ToString(), Ex.ToString());
 #if DEBUG_PRINT_IN
                             File.AppendAllText(din_fileLoc + @"sigscr.txt", "Unknown Aspect : " + partString + "\n");
@@ -1729,13 +1735,13 @@ namespace ORTS
                         string partString = TermString.Substring(6);
                         try
                         {
-                            SignalHead.SIGFN Type =
-                                    (SignalHead.SIGFN)Enum.Parse(typeof(SignalHead.SIGFN), partString, true);
+                            MstsSignalFunction Type =
+                                    (MstsSignalFunction)Enum.Parse(typeof(MstsSignalFunction), partString, true);
                             TermParts = new SCRParameterType(SCRTermType.Sigfn, (int)Type);
                         }
                         catch (Exception Ex)
                         {
-                            Trace.TraceWarning("sigscr-file line {1} : Unknown Type : {0}]nDetails {2}", 
+                            Trace.TraceWarning("sigscr-file line {1} : Unknown Type : {0}]nDetails {2}",
                                 partString, linenumber.ToString(), Ex.ToString());
 #if DEBUG_PRINT_IN
                             File.AppendAllText(din_fileLoc + @"sigscr.txt", "Unknown Type : " + partString + "\n");
@@ -1754,12 +1760,12 @@ namespace ORTS
                         string partString = TermString.Substring(8);
                         try
                         {
-                            int sfIndex = MSTS.SignalShape.SignalSubObj.SignalSubTypes.IndexOf(partString);
+                            int sfIndex = Orts.Formats.Msts.SignalShape.SignalSubObj.SignalSubTypes.IndexOf(partString);
                             TermParts = new SCRParameterType(SCRTermType.Sigfeat, sfIndex);
                         }
                         catch (Exception Ex)
                         {
-                            Trace.TraceWarning("sigscr-file line {1} : Unknown SubType : {0}\nDetails {2}", 
+                            Trace.TraceWarning("sigscr-file line {1} : Unknown SubType : {0}\nDetails {2}",
                                 partString, linenumber.ToString(), Ex.ToString());
 #if DEBUG_PRINT_IN
                             File.AppendAllText(din_fileLoc + @"sigscr.txt", "Unknown SubType : " + partString + "\n");
@@ -2844,7 +2850,7 @@ namespace ORTS
 
         public void SH_update_basic(SignalHead thisHead)
         {
-            if (thisHead.mainSignal.block_state() == SignalObject.BLOCKSTATE.CLEAR)
+            if (thisHead.mainSignal.block_state() == MstsBlockState.CLEAR)
             {
                 thisHead.SetLeastRestrictiveAspect();
             }
@@ -3022,7 +3028,7 @@ namespace ORTS
                     switch (FloatType)
                     {
                         case SCRExternalFloats.STATE:
-                            thisHead.state = (SignalHead.SIGASP)tempvalue;
+                            thisHead.state = (MstsSignalAspect)tempvalue;
                             break;
 
                         case SCRExternalFloats.DRAW_STATE:
@@ -3153,7 +3159,7 @@ namespace ORTS
         //
         //================================================================================================//
 
-        public int SH_termvalue(SignalHead thisHead, SCRScripts.SCRParameterType thisParameter,
+        public static int SH_termvalue(SignalHead thisHead, SCRScripts.SCRParameterType thisParameter,
                     int[] localFloats, SIGSCRfile sigscr)
         {
 
@@ -3169,7 +3175,7 @@ namespace ORTS
                 //                        STATE
                 //                        DRAW_STATE
                 //                        ENABLED     
-                //                        BLOCK_STATE 
+                //                        BLOCK_STATE
 
                 case (SCRTermType.ExternalFloat):
                     SCRExternalFloats FloatType = (SCRExternalFloats)thisParameter.PartParameter;
@@ -3190,6 +3196,14 @@ namespace ORTS
 
                         case SCRExternalFloats.BLOCK_STATE:
                             return_value = (int)thisHead.mainSignal.block_state();
+                            break;
+
+                        case SCRExternalFloats.APPROACH_CONTROL_REQ_POSITION:
+                            return_value = thisHead.ApproachControlLimitPositionM.HasValue ? Convert.ToInt32(thisHead.ApproachControlLimitPositionM.Value) : -1;
+                            break;
+
+                        case SCRExternalFloats.APPROACH_CONTROL_REQ_SPEED:
+                            return_value = thisHead.ApproachControlLimitSpeedMpS.HasValue ? Convert.ToInt32(thisHead.ApproachControlLimitSpeedMpS.Value) : -1;
                             break;
 
                         default:
@@ -3229,6 +3243,7 @@ namespace ORTS
         //                        DIST_MULTI_SIG_MR
         //                        SIG_FEATURE
         //                        DEF_DRAW_STATE
+        //                        HASHEAD
         //                        DEBUG_HEADER   (does not return a value)
         //                        DEBUG_OUT      (does not return a value)
         //
@@ -3264,6 +3279,7 @@ namespace ORTS
             // switch on function
 
             SCRExternalFunctions thisFunction = thisTerm.Function;
+            String dumpfile = String.Empty;
 
             switch (thisFunction)
             {
@@ -3283,7 +3299,7 @@ namespace ORTS
                 // next_sig_lr
 
                 case (SCRExternalFunctions.NEXT_SIG_LR):
-                    return_value = (int)thisHead.next_sig_lr((SignalHead.SIGFN)parameter1_value);
+                    return_value = (int)thisHead.next_sig_lr((MstsSignalFunction)parameter1_value);
 #if DEBUG_PRINT_ENABLED
                     if (thisHead.mainSignal.enabledTrain != null)
                     {
@@ -3295,9 +3311,24 @@ namespace ORTS
 #if DEBUG_PRINT_PROCESS
                     if (TDB_debug_ref.Contains(thisHead.TDBIndex))
                     {
-                        File.AppendAllText(dpr_fileLoc + @"printproc.txt",
-                                        " NEXT_SIG_LR : Located signal : " +
-                                               thisHead.mainSignal.sigfound[parameter1_value].ToString() + "\n");
+                        var sob = new StringBuilder();
+                        sob.AppendFormat(" NEXT_SIG_LR : Located signal : {0}", thisHead.mainSignal.sigfound[parameter1_value].ToString());
+
+                        if (thisHead.mainSignal.sigfound[parameter1_value] > 0)
+                        {
+                            SignalObject otherSignal = thisHead.mainSignal.signalRef.SignalObjects[thisHead.mainSignal.sigfound[parameter1_value]];
+                            sob.AppendFormat(" (");
+
+                            foreach (SignalHead otherHead in otherSignal.SignalHeads)
+                            {
+                                sob.AppendFormat(" {0} ", otherHead.TDBIndex);
+                            }
+
+                            sob.AppendFormat(") ");
+                        }
+                        sob.AppendFormat("\n");
+
+                        File.AppendAllText(dpr_fileLoc + @"printproc.txt", sob.ToString());
                     }
 #endif
 
@@ -3306,7 +3337,7 @@ namespace ORTS
                 // next_sig_mr
 
                 case (SCRExternalFunctions.NEXT_SIG_MR):
-                    return_value = (int)thisHead.next_sig_mr((SignalHead.SIGFN)parameter1_value);
+                    return_value = (int)thisHead.next_sig_mr((MstsSignalFunction)parameter1_value);
 #if DEBUG_PRINT_ENABLED
                     if (thisHead.mainSignal.enabledTrain != null)
                     {
@@ -3326,10 +3357,10 @@ namespace ORTS
                     break;
 
                 // this_sig_lr
-                    
+
                 case (SCRExternalFunctions.THIS_SIG_LR):
                     bool sigfound_lr = false;
-                    SignalHead.SIGASP returnState_lr = thisHead.this_sig_lr((SignalHead.SIGFN)parameter1_value, ref sigfound_lr);
+                    MstsSignalAspect returnState_lr = thisHead.this_sig_lr((MstsSignalFunction)parameter1_value, ref sigfound_lr);
                     return_value = sigfound_lr ? (int)returnState_lr : -1;
                     break;
 
@@ -3337,19 +3368,20 @@ namespace ORTS
 
                 case (SCRExternalFunctions.THIS_SIG_MR):
                     bool sigfound_mr = false;
-                    SignalHead.SIGASP returnState_mr = thisHead.this_sig_mr((SignalHead.SIGFN)parameter1_value, ref sigfound_mr);
+                    MstsSignalAspect returnState_mr = thisHead.this_sig_mr((MstsSignalFunction)parameter1_value, ref sigfound_mr);
                     return_value = sigfound_mr ? (int)returnState_mr : -1;
                     break;
 
                 // opp_sig_lr
 
                 case (SCRExternalFunctions.OPP_SIG_LR):
-                    return_value = (int)thisHead.opp_sig_lr((SignalHead.SIGFN)parameter1_value);
+                    return_value = (int)thisHead.opp_sig_lr((MstsSignalFunction)parameter1_value);
 #if DEBUG_PRINT_ENABLED
                     if (thisHead.mainSignal.enabledTrain != null)
                     {
-                        SignalObject foundSignal;
-                        int dummy = (int)thisHead.opp_sig_lr((SignalHead.SIGFN)parameter1_value, ref SignalObject foundSignal);
+                        SignalObject foundSignal = null;
+                        int dummy = (int)thisHead.opp_sig_lr((MstsSignalFunction)parameter1_value, ref foundSignal);
+                        int foundRef = foundSignal != null ? foundSignal.thisRef : -1;
                         File.AppendAllText(dpe_fileLoc + @"printproc.txt",
                                 " OPP_SIG_LR : Located signal : " + foundRef.ToString() + "\n");
                     }
@@ -3358,7 +3390,7 @@ namespace ORTS
                     if (TDB_debug_ref.Contains(thisHead.TDBIndex))
                     {
                         SignalObject foundSignal = null;
-                        int dummy = (int)thisHead.opp_sig_lr((SignalHead.SIGFN)parameter1_value, ref foundSignal);
+                        int dummy = (int)thisHead.opp_sig_lr((MstsSignalFunction)parameter1_value, ref foundSignal);
                         int foundRef = foundSignal != null ? foundSignal.thisRef : -1;
                         File.AppendAllText(dpr_fileLoc + @"printproc.txt",
                                 " OPP_SIG_LR : Located signal : " + foundRef.ToString() + "\n");
@@ -3369,19 +3401,40 @@ namespace ORTS
                 // opp_sig_mr
 
                 case (SCRExternalFunctions.OPP_SIG_MR):
-                    return_value = (int)thisHead.opp_sig_mr((SignalHead.SIGFN)parameter1_value);
+                    return_value = (int)thisHead.opp_sig_mr((MstsSignalFunction)parameter1_value);
+                    break;
+
+                // next_nsig_lr
+
+                case (SCRExternalFunctions.NEXT_NSIG_LR):
+                    dumpfile = String.Empty;
+
+#if DEBUG_PRINT_ENABLED
+                    if (thisHead.mainSignal.enabledTrain != null)
+                    {
+                        dumpfile = String.Concat(dpe_fileLoc, "printproc.txt");
+                    }
+#endif
+
+#if DEBUG_PRINT_PROCESS
+                    if (TDB_debug_ref.Contains(thisHead.TDBIndex))
+                    {
+                        dumpfile = String.Concat(dpr_fileLoc,"printproc.txt");
+                    }
+#endif
+                    return_value = (int)thisHead.next_nsig_lr((MstsSignalFunction)parameter1_value, parameter2_value, dumpfile);
                     break;
 
                 // dist_multi_sig_mr
 
                 case (SCRExternalFunctions.DIST_MULTI_SIG_MR):
 
-                    String dumpfile = String.Empty;
+                    dumpfile = String.Empty;
 
 #if DEBUG_PRINT_ENABLED
                     if (thisHead.mainSignal.enabledTrain != null)
                     {
-                        dumpfile = String.Concat(dpr_fileLoc,"printproc.txt");
+                        dumpfile = String.Concat(dpe_fileLoc, "printproc.txt");
                     }
 #endif
 
@@ -3393,8 +3446,8 @@ namespace ORTS
 #endif
 
                     return_value = (int)thisHead.dist_multi_sig_mr(
-                            (SignalHead.SIGFN)parameter1_value,
-                            (SignalHead.SIGFN)parameter2_value,
+                            (MstsSignalFunction)parameter1_value,
+                            (MstsSignalFunction)parameter2_value,
                             dumpfile);
 
                     break;
@@ -3407,10 +3460,116 @@ namespace ORTS
                     return_value = Convert.ToInt32(temp_value);
                     break;
 
+                // approach control position
+
+                case (SCRExternalFunctions.APPROACH_CONTROL_POSITION):
+                    dumpfile = String.Empty;
+
+#if DEBUG_PRINT_ENABLED
+                    if (thisHead.mainSignal.enabledTrain != null)
+                    {
+                        dumpfile = String.Concat(dpe_fileLoc, "printproc.txt");
+                    }
+#endif
+
+#if DEBUG_PRINT_PROCESS
+                    if (TDB_debug_ref.Contains(thisHead.TDBIndex))
+                    {
+                        dumpfile = String.Concat(dpr_fileLoc, "printproc.txt");
+                    }
+#endif
+                    temp_value = thisHead.mainSignal.ApproachControlPosition(parameter1_value, dumpfile);
+                    return_value = Convert.ToInt32(temp_value);
+                    break;
+
+                // approach control speed
+
+                case (SCRExternalFunctions.APPROACH_CONTROL_SPEED):
+                    dumpfile = String.Empty;
+
+#if DEBUG_PRINT_ENABLED
+                    if (thisHead.mainSignal.enabledTrain != null)
+                    {
+                        dumpfile = String.Concat(dpe_fileLoc, "printproc.txt");
+                    }
+#endif
+
+#if DEBUG_PRINT_PROCESS
+                    if (TDB_debug_ref.Contains(thisHead.TDBIndex))
+                    {
+                        dumpfile = String.Concat(dpr_fileLoc, "printproc.txt");
+                    }
+#endif
+                    temp_value = thisHead.mainSignal.ApproachControlSpeed(parameter1_value, parameter2_value, dumpfile);
+                    return_value = Convert.ToInt32(temp_value);
+                    break;
+
+                // Check for CallOn
+
+                case (SCRExternalFunctions.TRAINHASCALLON):
+                    dumpfile = String.Empty;
+
+#if DEBUG_PRINT_ENABLED
+                    if (thisHead.mainSignal.enabledTrain != null)
+                    {
+                        dumpfile = String.Concat(dpe_fileLoc, "printproc.txt");
+                    }
+#endif
+
+#if DEBUG_PRINT_PROCESS
+                    if (TDB_debug_ref.Contains(thisHead.TDBIndex))
+                    {
+                        dumpfile = String.Concat(dpr_fileLoc, "printproc.txt");
+                    }
+#endif
+                    temp_value = thisHead.mainSignal.TrainHasCallOn(true, dumpfile);
+                    return_value = Convert.ToInt32(temp_value);
+                    break;
+
+                // Check for CallOn
+
+                case (SCRExternalFunctions.TRAINHASCALLON_RESTRICTED):
+                    dumpfile = String.Empty;
+
+#if DEBUG_PRINT_ENABLED
+                    if (thisHead.mainSignal.enabledTrain != null)
+                    {
+                        dumpfile = String.Concat(dpe_fileLoc, "printproc.txt");
+                    }
+#endif
+
+#if DEBUG_PRINT_PROCESS
+                    if (TDB_debug_ref.Contains(thisHead.TDBIndex))
+                    {
+                        dumpfile = String.Concat(dpr_fileLoc, "printproc.txt");
+                    }
+#endif
+                    temp_value = thisHead.mainSignal.TrainHasCallOn(false, dumpfile);
+                    return_value = Convert.ToInt32(temp_value);
+                    break;
+
+                case (SCRExternalFunctions.HASHEAD):
+                    return_value = thisHead.mainSignal.HasHead(parameter1_value);
+#if DEBUG_PRINT_ENABLED
+                    if (thisHead.mainSignal.enabledTrain != null)
+                    {
+                        File.AppendAllText(dpe_fileLoc + @"printproc.txt",
+                                " HASHEAD : required head : " + parameter1_value + " ; state :  " + return_value  + "\n");
+                    }
+#endif
+#if DEBUG_PRINT_PROCESS
+                    if (TDB_debug_ref.Contains(thisHead.TDBIndex))
+                    {
+                        File.AppendAllText(dpe_fileLoc + @"printproc.txt",
+                                " HASHEAD : required head : " + parameter1_value + " ; state :  " + return_value  + "\n");
+                    }
+#endif
+                    break;
+
                 // def_draw_state
 
                 case (SCRExternalFunctions.DEF_DRAW_STATE):
-                    return_value = thisHead.def_draw_state((SignalHead.SIGASP)parameter1_value);
+                    return_value = thisHead.def_draw_state((MstsSignalAspect)parameter1_value);
                     break;
 
                 // DEBUG routine : to be implemented later

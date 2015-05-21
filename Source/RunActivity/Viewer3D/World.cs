@@ -17,48 +17,61 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using Microsoft.Xna.Framework;
+using ORTS.Common;
+using System.Collections.Generic;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     public class World
     {
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
         public readonly WeatherControl WeatherControl;
-        public readonly SkyDrawer Sky;
-        public readonly PrecipDrawer Precipitation;
-        public readonly TerrainDrawer Terrain;
+        public readonly SkyViewer Sky;
+        public readonly MSTSSkyDrawer MSTSSky;
+        public readonly PrecipitationViewer Precipitation;
+        public readonly TerrainViewer Terrain;
         public readonly SceneryDrawer Scenery;
         public readonly TrainDrawer Trains;
-        public readonly RoadCarDrawer RoadCars;
+        public readonly RoadCarViewer RoadCars;
         public readonly SoundSource GameSounds;
         public readonly WorldSounds Sounds;
+
+        readonly int PerformanceInitialViewingDistance;
+        readonly int PerformanceInitialLODBias;
 
         int TileX;
         int TileZ;
         int VisibleTileX;
         int VisibleTileZ;
+        bool PerformanceTune;
 
         [CallOnThread("Render")]
-        public World(Viewer3D viewer)
+        public World(Viewer viewer)
         {
             Viewer = viewer;
+            PerformanceInitialViewingDistance = Viewer.Settings.ViewingDistance;
+            PerformanceInitialLODBias = Viewer.Settings.LODBias;
             // Control stuff first.
             WeatherControl = new WeatherControl(viewer);
             // Then drawers.
-            Sky = new SkyDrawer(viewer);
-            if (viewer.Settings.Precipitation)
-                Precipitation = new PrecipDrawer(viewer);
-            Terrain = new TerrainDrawer(viewer);
+            if (viewer.Settings.UseMSTSEnv)
+                MSTSSky = new MSTSSkyDrawer(viewer);
+            else
+                Sky = new SkyViewer(viewer);
+            Precipitation = new PrecipitationViewer(viewer, WeatherControl);
+            Terrain = new TerrainViewer(viewer);
             Scenery = new SceneryDrawer(viewer);
             Trains = new TrainDrawer(viewer);
-            RoadCars = new RoadCarDrawer(viewer);
+            RoadCars = new RoadCarViewer(viewer);
             // Then sound.
             if (viewer.Settings.SoundDetailLevel > 0)
             {
                 // Keep it silent while loading.
                 ALSoundSource.MuteAll();
                 // TODO: This looks kinda evil; do something about it.
-                GameSounds = new SoundSource(viewer, Events.Source.MSTSInGame, viewer.Simulator.RoutePath + "\\Sound\\ingame.sms");
+                GameSounds = new SoundSource(viewer, Events.Source.MSTSInGame, viewer.Simulator.RoutePath + "\\Sound\\ingame.sms", true);
+                Viewer.SoundProcess.AddSoundSources(GameSounds.SMSFolder + "\\" + GameSounds.SMSFileName, new List<SoundSourceBase>() { GameSounds });
                 Sounds = new WorldSounds(viewer);
             }
         }
@@ -77,8 +90,11 @@ namespace ORTS
                 Viewer.ShapeManager.Mark();
                 Viewer.MaterialManager.Mark();
                 Viewer.TextureManager.Mark();
-                Sky.Mark();
-                if (Precipitation != null) Precipitation.Mark();
+                if (Viewer.Settings.UseMSTSEnv)
+                    MSTSSky.Mark();
+                else
+                    Sky.Mark();
+                Precipitation.Mark();
                 Terrain.Mark();
                 Scenery.Mark();
                 Trains.Mark();
@@ -93,6 +109,55 @@ namespace ORTS
         [CallOnThread("Updater")]
         public void Update(ElapsedTime elapsedTime)
         {
+            if (PerformanceTune && Viewer.RenderProcess.IsActive)
+            {
+                // Work out how far we need to change the actual FPS to get to the target.
+                //   +ve = under-performing/too much detail
+                //   -ve = over-performing/not enough detail
+                var fpsTarget = Viewer.Settings.PerformanceTunerTarget - Viewer.RenderProcess.FrameRate.SmoothedValue;
+
+                // If vertical sync is on, we're capped to 60 FPS. This means we need to shift a target of 60FPS down to 57FPS.
+                if (Viewer.Settings.VerticalSync && Viewer.Settings.PerformanceTunerTarget > 55)
+                    fpsTarget -= 3;
+
+                // Summarise the FPS adjustment to: +1 (add detail), 0 (keep), -1 (remove detail).
+                var fpsChange = fpsTarget < -2.5 ? +1 : fpsTarget > 2.5 ? -1 : 0;
+
+                // If we're not vertical sync-limited, there's no point calculating the CPU change, just assume adding detail is okay.
+                var cpuTarget = 0f;
+                var cpuChange = 1;
+                if (Viewer.Settings.VerticalSync)
+                {
+                    // Work out how much spare CPU we have; the target is 90%.
+                    //   +ve = under-performing/too much detail
+                    //   -ve = over-performing/not enough detail
+                    var cpuTargetRender = Viewer.RenderProcess.Profiler.Wall.SmoothedValue - 90;
+                    var cpuTargetUpdater = Viewer.UpdaterProcess.Profiler.Wall.SmoothedValue - 90;
+                    cpuTarget = cpuTargetRender > cpuTargetUpdater ? cpuTargetRender : cpuTargetUpdater;
+
+                    // Summarise the CPS adjustment to: +1 (add detail), 0 (keep), -1 (remove detail).
+                    cpuChange = cpuTarget < -2.5 ? +1 : cpuTarget > 2.5 ? -1 : 0;
+                }
+
+                // Now we adjust the viewing distance to try and balance out the FPS.
+                var oldViewingDistance = Viewer.Settings.ViewingDistance;
+                if (fpsChange < 0)
+                    Viewer.Settings.ViewingDistance -= (int)(fpsTarget - 1.5);
+                else if (cpuChange < 0)
+                    Viewer.Settings.ViewingDistance -= (int)(cpuTarget - 1.5);
+                else if (fpsChange > 0 && cpuChange > 0)
+                    Viewer.Settings.ViewingDistance += (int)(-fpsTarget - 1.5);
+                Viewer.Settings.ViewingDistance = (int)MathHelper.Clamp(Viewer.Settings.ViewingDistance, 500, 10000);
+                Viewer.Settings.LODBias = (int)MathHelper.Clamp(PerformanceInitialLODBias + 100 * ((float)Viewer.Settings.ViewingDistance / PerformanceInitialViewingDistance - 1), -100, 100);
+
+                // If we've changed the viewing distance, we need to update the camera matricies.
+                if (oldViewingDistance != Viewer.Settings.ViewingDistance)
+                    Viewer.Camera.ScreenChanged();
+
+                // Flag as done, so the next load prep (every 250ms) can trigger us again.
+                PerformanceTune = false;
+            }
+            WeatherControl.Update(elapsedTime);
             Scenery.Update(elapsedTime);
         }
 
@@ -105,13 +170,17 @@ namespace ORTS
             RoadCars.LoadPrep();
             VisibleTileX = Viewer.Camera.TileX;
             VisibleTileZ = Viewer.Camera.TileZ;
+            PerformanceTune = Viewer.Settings.PerformanceTuner;
         }
 
         [CallOnThread("Updater")]
         public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-            Sky.PrepareFrame(frame, elapsedTime);
-            if (Precipitation != null) Precipitation.PrepareFrame(frame, elapsedTime);
+            if (Viewer.Settings.UseMSTSEnv)
+                MSTSSky.PrepareFrame(frame, elapsedTime);
+            else
+                Sky.PrepareFrame(frame, elapsedTime);
+            Precipitation.PrepareFrame(frame, elapsedTime);
             Terrain.PrepareFrame(frame, elapsedTime);
             Scenery.PrepareFrame(frame, elapsedTime);
             Trains.PrepareFrame(frame, elapsedTime);

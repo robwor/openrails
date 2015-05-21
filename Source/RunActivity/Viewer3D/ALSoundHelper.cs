@@ -17,15 +17,13 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
-//#define ENUMERATION
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Diagnostics;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     public enum PlayMode
     {
@@ -52,7 +50,12 @@ namespace ORTS
         public int Frequency { get; private set; }
         public int BitsPerSample { get; private set; }
         public int Channels { get; private set; }
-        public bool IsExternal {get; private set; }
+        public bool IsExternal { get; private set; }
+        public bool IsReleasedWithJump { get; private set; }
+        /// <summary>
+        /// How many SoundItems use this. When it falls back to 0, SoundPiece can be disposed
+        /// </summary>
+        public int RefCount = 1;
 
         private int[] BufferIDs;
         private int[] BufferLens;
@@ -64,19 +67,27 @@ namespace ORTS
         private bool _isSingle;
         private int _length;
 
-        public int NextBuffer = 0;
+        /// <summary>
+        /// Next buffer to queue when streaming
+        /// </summary>
+        public int NextBuffer;
+        /// <summary>
+        /// Number of CUE points displayed by Sound Debug Form
+        /// </summary>
+        public int NumCuePoints;
 
         /// <summary>
         /// Constructs a Sound Piece
         /// </summary>
-        /// <param name="Name">Name of the wave file to open</param>
-        /// <param name="IsExternal">True if external sound, must be converted to mono</param>
-        public SoundPiece(string Name, bool IsExternal)
+        /// <param name="name">Name of the wave file to open</param>
+        /// <param name="isExternal">True if external sound, must be converted to mono</param>
+        /// <param name="isReleasedWithJump">True if sound possibly be released with jump</param>
+        public SoundPiece(string name, bool isExternal, bool isReleasedWithJump)
         {
-            this.Name = Name;
-            this.IsExternal = IsExternal;
-            WaveFileData wfd = new WaveFileData();
-            if (!wfd.OpenWavFile(Name, ref BufferIDs, ref BufferLens, IsExternal))
+            Name = name;
+            IsExternal = isExternal;
+            IsReleasedWithJump = isReleasedWithJump;
+            if (!WaveFileData.OpenWavFile(Name, ref BufferIDs, ref BufferLens, IsExternal, isReleasedWithJump, ref NumCuePoints))
             {
                 BufferIDs = new int[1];
                 BufferIDs[0] = 0;
@@ -112,6 +123,9 @@ namespace ORTS
             }
         }
 
+        /// <summary>
+        /// Has no CUE points
+        /// </summary>
         public bool isSingle
         {
             get
@@ -136,6 +150,11 @@ namespace ORTS
             }
         }
 
+        /// <summary>
+        /// Check if buffer belongs to this sound piece
+        /// </summary>
+        /// <param name="bufferID">ID of the buffer to check</param>
+        /// <returns>True if buffer belongs here</returns>
         public bool isMine(int bufferID)
         {
             return (bufferID != 0 && BufferIDs.Any(value => bufferID == value));
@@ -161,6 +180,10 @@ namespace ORTS
             return bufferID != BufferIDs.Last() && bufferID == BufferIDs.LastOrDefault(value => value > 0);
         }
 
+        /// <summary>
+        /// Queue all buffers as AL_STREAMING
+        /// </summary>
+        /// <param name="soundSourceID"></param>
         public void QueueAll(int soundSourceID)
         {
             for (int i = 0; i < BufferIDs.Length; i++)
@@ -168,9 +191,13 @@ namespace ORTS
                     OpenAL.alSourceQueueBuffers(soundSourceID, 1, ref BufferIDs[i]);
         }
 
+        /// <summary>
+        /// Queue only the next buffer as AL_STREAMING
+        /// </summary>
+        /// <param name="soundSourceID"></param>
         public void Queue2(int soundSourceID)
         {
-            if (!isValid)
+            if (!isValid || isSingle)
                 return;
             if (BufferIDs[NextBuffer] != 0)
                 OpenAL.alSourceQueueBuffers(soundSourceID, 1, ref BufferIDs[NextBuffer]);
@@ -180,11 +207,24 @@ namespace ORTS
                 NextBuffer++;
         }
 
+        /// <summary>
+        /// Queue only the final buffer as AL_STREAMING
+        /// </summary>
+        /// <param name="soundSourceID"></param>
         public void Queue3(int soundSourceID)
         {
             if (isValid && !isSingle && BufferIDs[BufferIDs.Length - 1] != 0)
                 OpenAL.alSourceQueueBuffers(soundSourceID, 1, ref BufferIDs[BufferIDs.Length - 1]);
             NextBuffer = 0;
+        }
+
+        /// <summary>
+        /// Assign buffer to OpenAL sound source as AL_STATIC type for soft looping
+        /// </summary>
+        /// <param name="soundSourceID"></param>
+        public void SetBuffer(int soundSourceID)
+        {
+            OpenAL.alSourcei(soundSourceID, OpenAL.AL_BUFFER, BufferIDs[0]);
         }
 
         /// <summary>
@@ -231,49 +271,111 @@ namespace ORTS
     /// </summary>
     public struct SoundItem
     {
+        /// <summary>
+        /// Wave data to use. A Sound Piece may used by multiple Sound Items
+        /// </summary>
         public SoundPiece SoundPiece;
+        /// <summary>
+        /// Currently executing sound command
+        /// </summary>
         public PlayMode PlayMode;
-        public PlayState PlayState;
+        /// <summary>
+        /// Frequency
+        /// </summary>
         public float Pitch;
+        /// <summary>
+        /// Whether can utilize OpenAL Soft Loop Points extension
+        /// </summary>
+        public bool SoftLoopPoints;
 
-        // Caching of Pieces
-        private static Dictionary<string, SoundPiece> AllPieces = new Dictionary<string, SoundPiece>();
-        public static void DisposeAll()
+        private PlayState _playState;
+        public PlayState PlayState
         {
-            foreach (SoundPiece sp in AllPieces.Values)
+            get { return _playState; }
+            set
             {
-                sp.Dispose();
+                if (value == PlayState.NOP && _playState != PlayState.NOP && SoundPiece != null)
+                    SoundPiece.RefCount--;
+                _playState = value;
             }
-
-            AllPieces.Clear();
         }
 
         /// <summary>
-        /// Sets the Item's piece by its name
-        /// Tries to open if not found in cache
+        /// Cache containing all wave data
+        /// </summary>
+        public static Dictionary<string, SoundPiece> AllPieces = new Dictionary<string, SoundPiece>();
+
+        /// <summary>
+        /// Sets the Item's piece by its name.
+        /// Tries to load the file if not found in cache
         /// </summary>
         /// <param name="Name">Name of the file</param>
         /// <param name="IsExternal">True if external sound</param>
-        public void SetPiece(string name, bool IsExternal)
+        /// <param name="isReleasedWithJump">True if sound possibly be released with jump</param>
+        public void SetPiece(string name, bool IsExternal, bool isReleasedWithJump)
         {
             if (string.IsNullOrEmpty(name))
                 return;
 
-            string n = name;
-            if (IsExternal)
-                n += ".x";
+            SoftLoopPoints = false;
+            string n = GetKey(name, IsExternal, isReleasedWithJump);
 
             if (AllPieces.ContainsKey(n))
             {
                 SoundPiece = AllPieces[n];
+                SoundPiece.RefCount++;
+                if (SoundPiece.RefCount < 1)
+                    SoundPiece.RefCount = 1;
             }
             else
             {
-                SoundPiece = new SoundPiece(name, IsExternal);
+                SoundPiece = new SoundPiece(name, IsExternal, isReleasedWithJump);
                 AllPieces.Add(n, SoundPiece);
             }
         }
 
+        /// <summary>
+        /// Delete wave data from cache if is no longer in use
+        /// </summary>
+        /// <param name="name">File name</param>
+        /// <param name="isExternal">True if external sound</param>
+        /// <param name="isReleasedWithJump">True if sound possibly be released with jump</param>
+        public static void Sweep(string name, bool isExternal, bool isReleasedWithJump)
+        {
+            if (name == null || name == string.Empty)
+                return;
+
+            string key = GetKey(name, isExternal, isReleasedWithJump);
+            if (AllPieces.ContainsKey(key) && AllPieces[key].RefCount < 1)
+            {
+                AllPieces[key].Dispose();
+                AllPieces.Remove(key);
+            }
+        }
+
+        /// <summary>
+        /// Generate unique key for storing wave data in cache
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="isExternal"></param>
+        /// <param name="isReleasedWithJump"></param>
+        /// <returns></returns>
+        public static string GetKey(string name, bool isExternal, bool isReleasedWithJump)
+        {
+            string key = name;
+            if (isReleasedWithJump)
+                key += ".j";
+            if (isExternal)
+                key += ".x";
+            return key;
+        }
+
+        /// <summary>
+        /// Whether is close to exhausting while playing
+        /// </summary>
+        /// <param name="soundSourceID"></param>
+        /// <param name="bufferID"></param>
+        /// <returns></returns>
         public bool IsCheckpoint(int soundSourceID, int bufferID)
         {
             return SoundPiece.IsCheckpoint(soundSourceID, bufferID, Pitch);
@@ -304,7 +406,6 @@ namespace ORTS
             }
             else if (IsCheckpoint(soundSourceID, bufferID))
             {
-                OpenAL.alSourceUnqueueBuffers(soundSourceID, 1, ref bufferID);
                 OpenAL.alGetSourcei(soundSourceID, OpenAL.AL_BUFFERS_QUEUED, out buffersQueued);
                 if (buffersQueued < 2)
                     SoundPiece.Queue2(soundSourceID);
@@ -317,7 +418,7 @@ namespace ORTS
         }
 
         /// <summary>
-        /// Initializes the playing of the item by its mode
+        /// Initializes the playing of the item, considering its PlayMode
         /// </summary>
         /// <param name="soundSourceID">ID of the AL sound source</param>
         public void InitItemPlay(int soundSourceID)
@@ -328,20 +429,74 @@ namespace ORTS
                 case PlayMode.OneShot:
                 case PlayMode.Loop:
                     {
-                        SoundPiece.QueueAll(soundSourceID);
-                        PlayState = PlayState.Playing;
+                        int type;
+                        OpenAL.alGetSourcei(soundSourceID, OpenAL.AL_SOURCE_TYPE, out type);
+                        if (type == OpenAL.AL_STATIC)
+                        {
+                            int state;
+                            OpenAL.alGetSourcei(soundSourceID, OpenAL.AL_SOURCE_STATE, out state);
+                            if (state != OpenAL.AL_PLAYING)
+                            {
+                                OpenAL.alSourcei(soundSourceID, OpenAL.AL_BUFFER, OpenAL.AL_NONE);
+                                type = OpenAL.AL_UNDETERMINED;
+                            }
+                        }
+
+                        if (type != OpenAL.AL_STATIC)
+                        {
+                            SoundPiece.QueueAll(soundSourceID);
+                            PlayState = PlayState.Playing;
+                            SoftLoopPoints = false;
+                        }
                         break;
                     }
                 case PlayMode.LoopRelease:
                     {
-                        SoundPiece.NextBuffer = 0;
-                        SoundPiece.Queue2(soundSourceID);
-                        PlayState = PlayState.Playing;
+                        if (SoundPiece.isSingle)
+                        {
+                            // Utilizing AL_LOOP_POINTS_SOFT. We need to set a static buffer instead of queueing that.
+                            int state;
+                            OpenAL.alGetSourcei(soundSourceID, OpenAL.AL_SOURCE_STATE, out state);
+                            if (state != OpenAL.AL_PLAYING)
+                            {
+                                OpenAL.alSourceStop(soundSourceID);
+                                OpenAL.alSourcei(soundSourceID, OpenAL.AL_BUFFER, OpenAL.AL_NONE);
+                                SoundPiece.SetBuffer(soundSourceID);
+                                OpenAL.alSourcePlay(soundSourceID);
+                                OpenAL.alSourcei(soundSourceID, OpenAL.AL_LOOPING, OpenAL.AL_TRUE);
+                                PlayState = PlayState.Playing;
+                                SoftLoopPoints = true;
+                            }
+                        }
+                        else
+                        {
+                            int type;
+                            OpenAL.alGetSourcei(soundSourceID, OpenAL.AL_SOURCE_TYPE, out type);
+                            if (type == OpenAL.AL_STATIC)
+                            {
+                                int state;
+                                OpenAL.alGetSourcei(soundSourceID, OpenAL.AL_SOURCE_STATE, out state);
+                                if (state != OpenAL.AL_PLAYING)
+                                {
+                                    OpenAL.alSourcei(soundSourceID, OpenAL.AL_BUFFER, OpenAL.AL_NONE);
+                                    type = OpenAL.AL_UNDETERMINED;
+                                }
+                            }
+
+                            if (type != OpenAL.AL_STATIC)
+                            {
+                                SoundPiece.NextBuffer = 0;
+                                SoundPiece.Queue2(soundSourceID);
+                                PlayState = PlayState.Playing;
+                                SoftLoopPoints = false;
+                            }
+                        }
                         break;
                     }
                 default:
                     {
                         PlayState = PlayState.NOP;
+                        SoftLoopPoints = false;
                         break;
                     }
             }
@@ -367,138 +522,106 @@ namespace ORTS
     /// </summary>
     public class ALSoundSource : IDisposable
     {
-        private static int refCount = 0;
         private const int QUEUELENGHT = 16;
 
-        int SoundSourceID = -1;
-        bool _isEnv = false;
-        bool _isSlowRolloff = false;
-        bool _isLooping = false;
-        float _distanceFactor = 10;
+        /// <summary>
+        /// ID generated automatically by OpenAL, when activated
+        /// </summary>
+        public int SoundSourceID = -1;
+        bool Looping;
+        float RolloffFactor = 1;
 
         private SoundItem[] SoundQueue = new SoundItem[QUEUELENGHT];
-        private int QueueHeader = 0;
-        private int QueueTail = 0;
+        /// <summary>
+        /// Next command is to be inserted here in queue
+        /// </summary>
+        private int QueueHeader;
+        /// <summary>
+        /// Currently processing command in queue
+        /// </summary>
+        private int QueueTail;
 
-        public bool NeedsFrequentUpdate = false;
+        /// <summary>
+        /// Whether needs active management, or let just OpenAL do the job
+        /// </summary>
+        public bool NeedsFrequentUpdate;
 
-        private static void Initialize()
-        {
-            if (refCount == 0)
-            {
-#if ENUMERATION
-                if (OpenAL.alcIsExtensionPresent(IntPtr.Zero, "ALC_ENUMERATION_EXT") == OpenAL.AL_TRUE)
-                {
-                    string deviceList = OpenAL.alcGetString(IntPtr.Zero, OpenAL.ALC_DEVICE_SPECIFIER);
-                    string[] split = deviceList.Split('\0');
-                    Trace.TraceInformation("___devlist {0}",deviceList);
-                }
-#endif
-                int[] attribs = new int[0];
-                IntPtr device = OpenAL.alcOpenDevice(null);
-                IntPtr context = OpenAL.alcCreateContext(device, attribs);
-                OpenAL.alcMakeContextCurrent(context);
+        /// <summary>
+        /// Attached TrainCar
+        /// </summary>
+        private TrainCar Car;
 
-                Trace.TraceInformation("OpenAL " + OpenAL.alGetString(OpenAL.AL_VERSION) 
-                    + " using device " + OpenAL.alGetString(OpenAL.AL_RENDERER)
-                    + " by " + OpenAL.alGetString(OpenAL.AL_VENDOR));
-            }
-
-            refCount++;
-        }
-
-        private static void Uninitialize()
-        {
-            refCount--;
-            if (refCount == 0)
-            {
-                SoundItem.DisposeAll();
-            }
-        }
+        /// <summary>
+        /// Whether world position should be ignored
+        /// </summary>
+        private bool Ignore3D;
 
         /// <summary>
         /// Constructs a new AL sound source
         /// </summary>
         /// <param name="isEnv">True if environment sound</param>
-        /// <param name="isSlowRolloff">True if stationary, slow roll off sound</param>
-        /// <param name="distanceFactor">The number indicating the fade speed by the distance</param>
-        public ALSoundSource(bool isEnv, bool isSlowRolloff, float distanceFactor)
+        /// <param name="rolloffFactor">The number indicating the fade speed by the distance</param>
+        public ALSoundSource(bool isEnv, float rolloffFactor)
         {
-            Initialize();
             SoundSourceID = -1;
             SoundQueue[QueueTail].PlayState = PlayState.NOP;
-            _isEnv = isEnv;
-            _isSlowRolloff = isSlowRolloff;
-            if (distanceFactor != 10000)
-                _distanceFactor = 1 / (distanceFactor / 350);
+            RolloffFactor = rolloffFactor;
         }
 
-        private bool _nxtUpdate = false;
-        private bool _MustActivate = false;
-
-        public static int _ActiveCount = 0;
-        private static bool _MustWarn = true;
+        private bool MustActivate;
+        public static int ActiveCount;
+        private static bool MustWarn = true;
+        /// <summary>
+        /// Tries allocating a new OpenAL SoundSourceID, warns if failed, and sets OpenAL attenuation parameters
+        /// </summary>
         private void TryActivate()
         {
-            if (_MustActivate)
+            if (!MustActivate || SoundSourceID != -1)
+                return;
+
+            OpenAL.alGenSources(1, out SoundSourceID);
+
+            if (SoundSourceID == -1)
             {
-                if (SoundSourceID == -1)
+                if (MustWarn)
                 {
-                    OpenAL.alGenSources(1, out SoundSourceID);
-                    // Reset state
-                    if (SoundSourceID != -1)
-                    {
-                        _ActiveCount++;
-                        _MustActivate = false;
-                        _MustWarn = true;
-
-                        //OpenAL.alSourcef(SoundSourceID, OpenAL.AL_MAX_DISTANCE, _distanceFactor);
-                        OpenAL.alSourcef(SoundSourceID, OpenAL.AL_REFERENCE_DISTANCE, 5f); // meter - below is no attenuation
-                        OpenAL.alSourcef(SoundSourceID, OpenAL.AL_MAX_GAIN, 1);
-                        if (_isSlowRolloff)
-                        {
-                            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_ROLLOFF_FACTOR, .4f);
-                        }
-                        else
-                        {
-                            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_ROLLOFF_FACTOR, _distanceFactor);
-                        }
-
-                        if (_Active)
-                            SetVolume(_Volume);
-                        else
-                            SetVolume(0);
-
-                        OpenAL.alSourcef(SoundSourceID, OpenAL.AL_PITCH, _PlaybackSpeed);
-                        OpenAL.alSourcei(SoundSourceID, OpenAL.AL_LOOPING, _isLooping ? 1 : 0);
-                    }
-                    else if (_MustWarn)
-                    {
-                        Trace.TraceWarning("Sound stream activation failed at number {0}", _ActiveCount);
-                        _MustWarn = false;
-                    }
+                    Trace.TraceWarning("Sound stream activation failed at number {0}", ActiveCount);
+                    MustWarn = false;
                 }
+                return;
             }
+
+            ActiveCount++;
+            MustActivate = false;
+            MustWarn = true;
+
+            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_MAX_DISTANCE, SoundSource.MaxDistanceM);
+            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_REFERENCE_DISTANCE, SoundSource.ReferenceDistanceM);
+            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_MAX_GAIN, 1f);
+            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_ROLLOFF_FACTOR, RolloffFactor);
+            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_PITCH, _PlaybackSpeed);
+            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_LOOPING, Looping ? OpenAL.AL_TRUE : OpenAL.AL_FALSE);
+
+            InitPosition();
+            SetVolume();
         }
 
-        private void SetVolume(float volume)
+        /// <summary>
+        /// Set OpenAL gain
+        /// </summary>
+        /// <param name="volume"></param>
+        private void SetVolume()
         {
-            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_GAIN, volume);
+            OpenAL.alSourcef(SoundSourceID, OpenAL.AL_GAIN, Active ? Volume : 0);
         }
 
-        public void SetPosition(float[] position)
+        /// <summary>
+        /// Set whether to ignore 3D position of sound source
+        /// </summary>
+        /// <param name="sound2D"></param>
+        public void InitPosition()
         {
-            OpenAL.alSourcefv(SoundSourceID, OpenAL.AL_POSITION, position);
-        }
-
-        public void SetVelocity(float[] velocity)
-        {
-            OpenAL.alSourcefv(SoundSourceID, OpenAL.AL_VELOCITY, velocity);
-        }
-
-        public void Set2D(bool sound2D)
-        {
-            if (sound2D)
+            if (Ignore3D)
             {
                 OpenAL.alSourcei(SoundSourceID, OpenAL.AL_SOURCE_RELATIVE, OpenAL.AL_TRUE);
                 OpenAL.alSourcef(SoundSourceID, OpenAL.AL_DOPPLER_FACTOR, 0);
@@ -509,51 +632,50 @@ namespace ORTS
             {
                 OpenAL.alSourcei(SoundSourceID, OpenAL.AL_SOURCE_RELATIVE, OpenAL.AL_FALSE);
                 OpenAL.alSourcef(SoundSourceID, OpenAL.AL_DOPPLER_FACTOR, 1);
+
+                if (Car != null && !Car.SoundSourceIDs.Contains(SoundSourceID))
+                    Car.SoundSourceIDs.Add(SoundSourceID);
             }
         }
 
-        public bool HardActive
+        /// <summary>
+        /// Queries a new <see cref="SoundSourceID"/> from OpenAL, if one is not allocated yet.
+        /// </summary>
+        /// <param name="ignore3D"></param>
+        /// <param name="car"></param>
+        public void HardActivate(bool ignore3D, TrainCar car)
         {
-            get
-            {
-                return SoundSourceID != -1;
-            }
-            set
-            {
-                if (SoundSourceID == -1 && value)
-                {
-                    _MustActivate = true;
-                    TryActivate();
-                }
-                else if (SoundSourceID != -1 && !value)
-                {
-                    Stop();
-                    OpenAL.alDeleteSources(1, ref SoundSourceID);
-                    SoundSourceID = -1;
-                    _ActiveCount--;
-                }
+            Ignore3D = ignore3D;
+            Car = car;
+            MustActivate = true;
+            TryActivate();
 
-                if (SoundSourceID == -1)
-                    HardCleanQueue();
-            }
+            if (SoundSourceID == -1)
+                HardCleanQueue();
         }
 
-        private bool _Active = false;
-        public bool Active
+        /// <summary>
+        /// Frees up the allocated <see cref="SoundSourceID"/>, and cleans the playing queue.
+        /// </summary>
+        public void HardDeactivate()
         {
-            get
+            if (SoundSourceID != -1)
             {
-                return _Active;
+                if (Car != null)
+                    Car.SoundSourceIDs.Remove(SoundSourceID);
+
+                Stop();
+                OpenAL.alDeleteSources(1, ref SoundSourceID);
+                SoundSourceID = -1;
+                ActiveCount--;
             }
-            set
-            {
-                _Active = value;
-                if (_Active)
-                    SetVolume(_Volume);
-                else
-                    SetVolume(0);
-            }
+
+            if (SoundSourceID == -1)
+                HardCleanQueue();
         }
+
+        private bool _Active;
+        public bool Active { get { return _Active; } set { _Active = value; SetVolume(); } }
 
         private float _Volume = 1f;
         public float Volume
@@ -569,10 +691,7 @@ namespace ORTS
                 if (_Volume != newval)
                 {
                     _Volume = newval;
-                    if (_Active)
-                    {
-                        SetVolume(_Volume);
-                    }
+                    SetVolume();
                     XCheckVolumeAndState();
                 }
             }
@@ -595,6 +714,9 @@ namespace ORTS
         }
 
         public float SampleRate { get; private set; }
+        /// <summary>
+        /// Get predicted playing state, not just the copy of OpenAL's
+        /// </summary>
         public bool isPlaying { get; private set; }
 
         /// <summary>
@@ -607,16 +729,8 @@ namespace ORTS
                 if (SoundSourceID == -1)
                 {
                     TryActivate();
-
-                    if (_nxtUpdate)
-                    {
-                        _nxtUpdate = false;
-                    }
-                    else
-                    {
-                        NeedsFrequentUpdate = false;
-                        return;
-                    }
+                    NeedsFrequentUpdate = false;
+                    return;
                 }
 
                 SkipProcessed();
@@ -627,124 +741,134 @@ namespace ORTS
                     return;
                 }
 
-                // Find the number of processed buffers and unqueue them
                 int p;
                 OpenAL.alGetSourcei(SoundSourceID, OpenAL.AL_BUFFERS_PROCESSED, out p);
                 while (p > 0)
                 {
-                    int rb = OpenAL.alSourceUnqueueBuffer(SoundSourceID);
+                    OpenAL.alSourceUnqueueBuffer(SoundSourceID);
                     p--;
                 }
 
                 switch (SoundQueue[QueueTail % QUEUELENGHT].PlayState)
                 {
                     case PlayState.Playing:
+                        switch (SoundQueue[QueueTail % QUEUELENGHT].PlayMode)
                         {
-                            switch (SoundQueue[QueueTail % QUEUELENGHT].PlayMode)
-                            {
-                                // Determine next action if available
-                                case PlayMode.LoopRelease:
-                                case PlayMode.Release:
-                                case PlayMode.ReleaseWithJump:
-                                    {
-                                        if (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayState == PlayState.New
-                                            && (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.Release
-                                            || SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.ReleaseWithJump))
-                                        {
-                                            SoundQueue[QueueTail % QUEUELENGHT].PlayMode = SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode;
-                                        }
+                            // Determine next action if available
+                            case PlayMode.LoopRelease:
+                            case PlayMode.Release:
+                            case PlayMode.ReleaseWithJump:
+                                if (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayState == PlayState.New
+                                    && (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.Release
+                                    || SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.ReleaseWithJump))
+                                {
+                                    SoundQueue[QueueTail % QUEUELENGHT].PlayMode = SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode;
+                                }
 
-                                        if (SoundQueue[QueueTail % QUEUELENGHT].Update(SoundSourceID, _PlaybackSpeed))
-                                        {
-                                            Start(); // Restart if buffers had been exhausted because of large update time
-                                            NeedsFrequentUpdate = true; // We still queueing fast
-                                        }
-                                        else
-                                        {
-                                            LeaveLoop();
-                                            SoundQueue[QueueTail % QUEUELENGHT].LeaveItemPlay(SoundSourceID);
-                                            Start(); // Restart if buffers had been exhausted because of large update time
-                                            NeedsFrequentUpdate = false; // Queued the last chunk, get rest
-                                        }
+                                if (SoundQueue[QueueTail % QUEUELENGHT].Update(SoundSourceID, _PlaybackSpeed))
+                                {
+                                    Start(); // Restart if buffers had been exhausted because of large update time
+                                    NeedsFrequentUpdate = SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.IsReleasedWithJump;
+                                }
+                                else
+                                {
+                                    LeaveLoop();
+                                    SoundQueue[QueueTail % QUEUELENGHT].LeaveItemPlay(SoundSourceID);
+                                    Start(); // Restart if buffers had been exhausted because of large update time
+                                    NeedsFrequentUpdate = false; // Queued the last chunk, get rest
+                                    isPlaying = false;
+                                }
 
-                                        break;
-                                    }
-                                case PlayMode.Loop:
-                                case PlayMode.OneShot:
+                                break;
+                            case PlayMode.Loop:
+                            case PlayMode.OneShot:
+                                if (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayState == PlayState.New
+                                    && (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.Release
+                                    || SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.ReleaseWithJump))
+                                {
+                                    SoundQueue[QueueTail % QUEUELENGHT].PlayMode = SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode;
+                                    SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayState = PlayState.NOP;
+                                    LeaveLoop();
+                                    isPlaying = false;
+                                }
+                                else if (SoundQueue[QueueTail % QUEUELENGHT].PlayMode == PlayMode.Loop)
+                                {
+                                    // The reason of the following is that at Loop type of playing we mustn't EnterLoop() immediately after
+                                    // InitItemPlay(), because an other buffer might be playing at that time, and we don't want to loop
+                                    // that one. We have to be sure the current loop's buffer is being played already, and all the previous
+                                    // ones had been unqueued. This often happens at e.g. Variable2 frequency curves with multiple Loops and
+                                    // Releases following each other when increasing throttle.
+                                    int bufferID;
+                                    OpenAL.alGetSourcei(SoundSourceID, OpenAL.AL_BUFFER, out bufferID);
+                                    if (SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.isMine(bufferID))
                                     {
-                                        if (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayState == PlayState.New
-                                            && (SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.Release
-                                            || SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode == PlayMode.ReleaseWithJump))
-                                        {
-                                            SoundQueue[QueueTail % QUEUELENGHT].PlayMode = SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayMode;
-                                            SoundQueue[(QueueTail + 1) % QUEUELENGHT].PlayState = PlayState.NOP;
-                                            LeaveLoop();
-                                        }
-                                        else if (SoundQueue[QueueTail % QUEUELENGHT].PlayMode == PlayMode.Loop)
-                                        {
-                                            // The reason of the following is that at Loop type of playing we mustn't EnterLoop() immediately after
-                                            // InitItemPlay(), because an other buffer might be playing at that time, and we don't want to loop
-                                            // that one. We have to be sure the current loop's buffer is being played already, and all the previous
-                                            // ones had been unqueued. This often happens at e.g. Variable2 frequency curves with multiple Loops and
-                                            // Releases following each other when increasing throttle.
-                                            int bufferID;
-                                            OpenAL.alGetSourcei(SoundSourceID, OpenAL.AL_BUFFER, out bufferID);
-                                            if (SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.isMine(bufferID))
-                                            {
-                                                EnterLoop();
-                                                NeedsFrequentUpdate = false; // Start unattended looping by OpenAL
-                                            }
-                                            else
-                                            {
-                                                LeaveLoop(); // Just in case. Wait one more cycle for our buffer,
-                                                NeedsFrequentUpdate = true; // and watch carefully
-                                            }
-                                        }
-                                        else if (SoundQueue[QueueTail % QUEUELENGHT].PlayMode == PlayMode.OneShot)
-                                        {
-                                            NeedsFrequentUpdate = false;
-                                            if (SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.isLast(SoundSourceID))
-                                                SoundQueue[QueueTail % QUEUELENGHT].PlayState = PlayState.NOP;
-                                        }
-                                        break;
+                                        EnterLoop();
+                                        isPlaying = true;
+                                        NeedsFrequentUpdate = false; // Start unattended looping by OpenAL
                                     }
-                            }
-                            break;
+                                    else
+                                    {
+                                        LeaveLoop(); // Just in case. Wait one more cycle for our buffer,
+                                        isPlaying = false;
+                                        NeedsFrequentUpdate = true; // and watch carefully
+                                    }
+                                }
+                                else if (SoundQueue[QueueTail % QUEUELENGHT].PlayMode == PlayMode.OneShot)
+                                {
+                                    NeedsFrequentUpdate = false;
+                                    int state;
+                                    OpenAL.alGetSourcei(SoundSourceID, OpenAL.AL_SOURCE_STATE, out state);
+                                    if (state != OpenAL.AL_PLAYING)
+                                    {
+                                        SoundQueue[QueueTail % QUEUELENGHT].PlayState = PlayState.NOP;
+                                        isPlaying = false;
+                                    }
+                                }
+                                break;
                         }
+                        break;
                     // Found a playable item, play it
                     case PlayState.New:
+                        // Only if it is a Play command
+                        if (SoundQueue[QueueTail % QUEUELENGHT].PlayMode != PlayMode.Release
+                            && SoundQueue[QueueTail % QUEUELENGHT].PlayMode != PlayMode.ReleaseWithJump)
                         {
-                            // Only if it is a Play command
-                            if (SoundQueue[QueueTail % QUEUELENGHT].PlayMode != PlayMode.Release
-                                && SoundQueue[QueueTail % QUEUELENGHT].PlayMode != PlayMode.ReleaseWithJump)
+                            int bufferID;
+                            OpenAL.alGetSourcei(SoundSourceID, OpenAL.AL_BUFFER, out bufferID);
+                            // Wait with initialization of a sound piece similar to the previous one, while that is still in queue.
+                            // Otherwise we might end up with queueing the same buffers hundreds of times.
+                            if (!isPlaying || !SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.isMine(bufferID))
                             {
-                                FlushBuffers();
                                 SoundQueue[QueueTail % QUEUELENGHT].InitItemPlay(SoundSourceID);
                                 SampleRate = SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.Frequency;
 
                                 Start();
-                                NeedsFrequentUpdate = true;
+                                NeedsFrequentUpdate = SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.IsReleasedWithJump;
                             }
-                            // Otherwise mark as done
-                            else
-                            {
-                                SoundQueue[QueueTail % QUEUELENGHT].PlayState = PlayState.NOP;
-                                NeedsFrequentUpdate = false;
-                            }
-                            break;
                         }
-                    case PlayState.NOP:
+                        // Otherwise mark as done
+                        else
                         {
+                            SoundQueue[QueueTail % QUEUELENGHT].PlayState = PlayState.NOP;
+                            isPlaying = false;
                             NeedsFrequentUpdate = false;
-                            break;
                         }
+                        break;
+                    case PlayState.NOP:
+                        NeedsFrequentUpdate = false;
+                        LeaveLoop();
+                        isPlaying = false;
+
+                        break;
                 }
 
                 XCheckVolumeAndState();
             }
         }
 
-        // Skip processed commands
+        /// <summary>
+        /// Clear processed commands from queue
+        /// </summary>
         private void SkipProcessed()
         {
             while (SoundQueue[QueueTail % QUEUELENGHT].PlayState == PlayState.NOP && QueueHeader != QueueTail)
@@ -762,8 +886,8 @@ namespace ORTS
                 SoundQueue[QueueTail % QUEUELENGHT].PlayMode == PlayMode.Release ||
                 SoundQueue[QueueTail % QUEUELENGHT].PlayMode == PlayMode.ReleaseWithJump))
             {
-                SoundQueue[QueueTail % QUEUELENGHT].PlayState = PlayState.NOP;
                 Stop();
+                SoundQueue[QueueTail % QUEUELENGHT].PlayState = PlayState.NOP;
                 NeedsFrequentUpdate = false;
             }
         }
@@ -775,7 +899,8 @@ namespace ORTS
         /// <param name="Name">Name of the wave to play</param>
         /// <param name="Mode">Mode of the play</param>
         /// <param name="isExternal">Indicator of external sound</param>
-        public void Queue(string Name, PlayMode Mode, bool isExternal)
+        /// <param name="isReleasedWithJumpOrOneShotRepeated">Indicator if sound may be released with jump (LoopRelease), or is repeated command (OneShot)</param>
+        public void Queue(string Name, PlayMode Mode, bool isExternal, bool isReleasedWithJumpOrOneShotRepeated)
         {
             lock (SoundQueue)
             {
@@ -789,14 +914,9 @@ namespace ORTS
                     else if (Mode == PlayMode.Loop || Mode == PlayMode.LoopRelease)
                     {
                         // Cannot optimize, put into Queue
-                        SoundQueue[QueueHeader % QUEUELENGHT].SetPiece(Name, isExternal);
+                        SoundQueue[QueueHeader % QUEUELENGHT].SetPiece(Name, isExternal, isReleasedWithJumpOrOneShotRepeated);
                         SoundQueue[QueueHeader % QUEUELENGHT].PlayState = PlayState.New;
-
-                        // If single, it can't LoopReleased, play one shot instead
-                        if (SoundQueue[QueueHeader % QUEUELENGHT].SoundPiece.isSingle && Mode == PlayMode.LoopRelease)
-                            SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = PlayMode.Loop;
-                        else
-                            SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = Mode;
+                        SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = Mode;
 
                         QueueHeader++;
                     }
@@ -810,63 +930,67 @@ namespace ORTS
 
                     PlayMode prevMode = prev.PlayMode;
 
-                    // Ignore repeated Loop commands
-                    if (prevMode == Mode && Mode != PlayMode.OneShot)
-                    {
-                        if (prev.SoundPiece != null && prev.SoundPiece.Name == Name)
-                            return;
-                    }
+                    // Ignore repeated commands
+                    // In case we play OneShot, enable repeating same file only by defining it multiple times in sms, otherwise disable.
+                    if (prevMode == Mode && (Mode != PlayMode.OneShot || isReleasedWithJumpOrOneShotRepeated)
+                        && prev.SoundPiece != null && prev.SoundPiece.Name == Name)
+                        return;
+
+                    var optimized = false;
 
                     if (prev.PlayState == PlayState.New)
                     {
                         // Optimize play modes
                         switch (prev.PlayMode)
                         {
-                            // Whole loop
                             case PlayMode.Loop:
+                                if (Mode == PlayMode.Release || Mode == PlayMode.ReleaseWithJump)
                                 {
-                                    // If interrupted, becomes OneShot
-                                    if (Mode == PlayMode.Release || Mode == PlayMode.ReleaseWithJump)
-                                    {
-                                        prevMode = PlayMode.OneShot;
-                                    }
-                                    break;
+                                    prevMode = Mode;
                                 }
+                                break;
                             case PlayMode.LoopRelease:
-                            case PlayMode.OneShot:
+                                if (prev.SoundPiece.Name == Name && Mode == PlayMode.Loop)
                                 {
-                                    if (prev.SoundPiece.Name == Name && Mode == PlayMode.Loop)
-                                    {
-                                        prevMode = Mode;
-                                    }
-                                    break;
+                                    prevMode = Mode;
                                 }
+                                else if (Mode == PlayMode.Release || Mode == PlayMode.ReleaseWithJump)
+                                {
+                                    // If interrupted, release it totally. Repeated looping sounds are "parked" with new state,
+                                    // so a release command should completely eliminate them
+                                    prevMode = Mode;
+                                }
+                                break;
+                            case PlayMode.OneShot:
+                                if (prev.SoundPiece.Name == Name && Mode == PlayMode.Loop)
+                                {
+                                    prevMode = Mode;
+                                }
+                                break;
                         }
 
                         if (prevMode != SoundQueue[(QueueHeader - 1) % QUEUELENGHT].PlayMode)
                         {
                             SoundQueue[(QueueHeader - 1) % QUEUELENGHT].PlayMode = prevMode;
-                            return;
+                            optimized = true;
                         }
                     }
+
+                    // If releasing, then release all older loops as well:
+                    if (QueueHeader - 1 > QueueTail && (Mode == PlayMode.Release || Mode == PlayMode.ReleaseWithJump))
+                    {
+                        for (var i = QueueHeader - 1; i > QueueTail; i--)
+                            if (SoundQueue[(i - 1) % QUEUELENGHT].PlayMode == PlayMode.Loop || SoundQueue[(i - 1) % QUEUELENGHT].PlayMode == PlayMode.LoopRelease)
+                                SoundQueue[(i - 1) % QUEUELENGHT].PlayMode = Mode;
+                    }
+                    if (optimized)
+                        return;
                 }
 
                 // Cannot optimize, put into Queue
-                SoundQueue[QueueHeader % QUEUELENGHT].SetPiece(Name, isExternal);
+                SoundQueue[QueueHeader % QUEUELENGHT].SetPiece(Name, isExternal, Mode == PlayMode.LoopRelease && isReleasedWithJumpOrOneShotRepeated);
                 SoundQueue[QueueHeader % QUEUELENGHT].PlayState = PlayState.New;
-
-                // If single, it can't LoopReleased, play loop instead
-                if (Mode != PlayMode.Release && Mode != PlayMode.ReleaseWithJump)
-                {
-                    if (SoundQueue[QueueHeader % QUEUELENGHT].SoundPiece.isSingle && Mode == PlayMode.LoopRelease)
-                        SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = PlayMode.Loop;
-                    else
-                        SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = Mode;
-                }
-                else
-                {
-                    SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = Mode;
-                }
+                SoundQueue[QueueHeader % QUEUELENGHT].PlayMode = Mode;
 
                 QueueHeader++;
             }
@@ -931,6 +1055,9 @@ namespace ORTS
             }
         }
 
+        /// <summary>
+        /// Start OpenAL playback
+        /// </summary>
         private void Start()
         {
             int state;
@@ -941,43 +1068,44 @@ namespace ORTS
             isPlaying = true;
         }
 
+        /// <summary>
+        /// Stop OpenAL playback and flush buffers
+        /// </summary>
         public void Stop()
         {
             OpenAL.alSourceStop(SoundSourceID);
-            FlushBuffers();
+            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_BUFFER, OpenAL.AL_NONE); 
             SkipProcessed();
             isPlaying = false;
         }
 
-        public void FlushBuffers()
-        {
-            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_BUFFER, 0);
-        }
-
+        /// <summary>
+        /// Instruct OpenAL to enter looping playback mode
+        /// </summary>
         private void EnterLoop()
         {
-            if (_isLooping)
+            if (Looping)
                 return;
 
-            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_LOOPING, 1);
-            _isLooping = true;
+            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_LOOPING, OpenAL.AL_TRUE);
+            Looping = true;
         }
 
+        /// <summary>
+        /// Instruct OpenAL to leave looping playback
+        /// </summary>
         private void LeaveLoop()
         {
-            if (!_isLooping)
-                return;
-
-            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_LOOPING, 0);
-            _isLooping = false;
+            OpenAL.alSourcei(SoundSourceID, OpenAL.AL_LOOPING, OpenAL.AL_FALSE);
+            Looping = false;
         }
 
-        private static bool _Muted = false;
+        private static bool _Muted;
+        /// <summary>
+        /// Sets OpenAL master gain to 100%
+        /// </summary>
         public static void UnMuteAll()
         {
-            if (refCount == 0)
-                Initialize();
-
             if (_Muted)
             {
                 OpenAL.alListenerf(OpenAL.AL_GAIN, 1);
@@ -985,11 +1113,11 @@ namespace ORTS
             }
         }
 
+        /// <summary>
+        /// Sets OpenAL master gain to zero
+        /// </summary>
         public static void MuteAll()
         {
-            if (refCount == 0)
-                Initialize();
-
             if (!_Muted)
             {
                 OpenAL.alListenerf(OpenAL.AL_GAIN, 0);
@@ -997,10 +1125,46 @@ namespace ORTS
             }
         }
 
+        /// <summary>
+        /// Collect data for Sound Debug Form
+        /// </summary>
+        /// <returns></returns>
+        public string[] GetPlayingData()
+        {
+            string[] retval = new string[4];
+            retval[0] = SoundSourceID.ToString();
+
+            if (SoundQueue[QueueTail % QUEUELENGHT].SoundPiece != null)
+            {
+                retval[1] = SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.Name.Split('\\').Last();
+                retval[2] = SoundQueue[QueueTail % QUEUELENGHT].SoundPiece.NumCuePoints.ToString();
+            }
+            else
+            {
+                retval[1] = "(none)";
+                retval[2] = "0";
+            }
+
+            if (SoundQueue[QueueTail % QUEUELENGHT].PlayState != PlayState.NOP)
+            {
+                retval[3] = String.Format("{0} {1}{2}", 
+                    SoundQueue[QueueTail % QUEUELENGHT].PlayState,
+                    SoundQueue[QueueTail % QUEUELENGHT].PlayMode,
+                    SoundQueue[QueueTail % QUEUELENGHT].SoftLoopPoints ? "Soft" : "");
+            }
+            else
+            {
+                retval[3] = String.Format("Stopped {0}", SoundQueue[QueueTail % QUEUELENGHT].PlayMode);
+            }
+
+            retval[3] += " " + (QueueHeader - QueueTail).ToString();
+
+            return retval;
+        }
+
         public void Dispose()
         {
             if (SoundSourceID != -1) OpenAL.alDeleteSources(1, ref SoundSourceID);
-            Uninitialize();
         }
     }
 }

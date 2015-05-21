@@ -21,7 +21,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
-using MSTS;
+using Orts.Formats.Msts;
+using ORTS.Viewer3D;
 
 namespace ORTS
 {
@@ -74,12 +75,12 @@ namespace ORTS
 
         public static string GetTextureFile(Simulator simulator, TextureFlags textureFlags, string texturePath, string textureName)
         {
-            var alternativePath = "";
+            var alternativePath = @"\";
             if ((textureFlags & TextureFlags.Snow) != 0 || (textureFlags & TextureFlags.SnowTrack) != 0)
                 if (IsSnow(simulator))
                     alternativePath = @"\Snow\";
                 else
-                    alternativePath = "";
+                    alternativePath = @"\";
             else if ((textureFlags & TextureFlags.Spring) != 0 && simulator.Season == SeasonType.Spring && simulator.Weather != WeatherType.Snow)
                 alternativePath = @"\Spring\";
             else if ((textureFlags & TextureFlags.Autumn) != 0 && simulator.Season == SeasonType.Autumn && simulator.Weather != WeatherType.Snow)
@@ -93,13 +94,11 @@ namespace ORTS
             else if ((textureFlags & TextureFlags.WinterSnow) != 0 && simulator.Season == SeasonType.Winter && simulator.Weather == WeatherType.Snow)
                 alternativePath = @"\WinterSnow\";
 
-            if (alternativePath.Length > 0 && File.Exists(texturePath + alternativePath + textureName)) return texturePath + alternativePath + textureName;
-            if (File.Exists(texturePath + @"\" + textureName)) return texturePath + @"\" + textureName;
-            //if (File.Exists(textureName)) return textureName; //some may use \program\content\*.ace
-            return null;
+            if (alternativePath.Length > 0) return texturePath + alternativePath + textureName;
+            return texturePath + @"\" + textureName;
         }
 
-        static bool IsSnow(Simulator simulator)
+        public static bool IsSnow(Simulator simulator)
         {
             // MSTS shows snow textures:
             //   - In winter, no matter what the weather is.
@@ -162,7 +161,7 @@ namespace ORTS
             else
                 Trace.TraceWarning("Skipped unknown lighting model index {1} in shape {0}", lod.Name, lod.LightModelName);
 
-            if ((lod.ESD_Alternative_Texture & 0x1) != 0)
+            if ((lod.ESD_Alternative_Texture & (int)TextureFlags.Night) != 0)
                 options |= SceneryMaterialOptions.NightTexture;
 
             return options;

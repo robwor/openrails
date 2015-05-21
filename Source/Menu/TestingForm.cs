@@ -25,7 +25,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
+using GNU.Gettext;
+using GNU.Gettext.WinForms;
 using ORTS.Menu;
+using ORTS.Settings;
 using Path = System.IO.Path;
 
 namespace ORTS
@@ -54,23 +57,30 @@ namespace ORTS
             }
         }
 
-        SortableBindingList<TestActivity> TestActivities = new SortableBindingList<TestActivity>();
         Task<SortableBindingList<TestActivity>> TestActivityLoader;
 
         Task<int> TestActivitiesRunner;
         bool ClearedLogs;
 
-        readonly string SummaryFilePath = Path.Combine(Program.UserDataFolder, "TestingSummary.csv");
-        readonly string LogFilePath = Path.Combine(Program.UserDataFolder, "TestingLog.txt");
+        readonly MainForm MainForm;
+        readonly UserSettings Settings;
+		readonly string SummaryFilePath = Path.Combine(UserSettings.UserDataFolder, "TestingSummary.csv");
+		readonly string LogFilePath = Path.Combine(UserSettings.UserDataFolder, "TestingLog.txt");
 
-        public TestingForm()
+        public TestingForm(MainForm mainForm, UserSettings settings)
         {
             InitializeComponent();  // Needed so that setting StartPosition = CenterParent is respected.
+
+            GettextResourceManager catalog = new GettextResourceManager("Menu");
+            Localizer.Localize(this, catalog);
 
             // Windows 2000 and XP should use 8.25pt Tahoma, while Windows
             // Vista and later should use 9pt "Segoe UI". We'll use the
             // Message Box font to allow for user-customizations, though.
             Font = SystemFonts.MessageBoxFont;
+
+            MainForm = mainForm;
+            Settings = settings;
 
             UpdateButtons();
 
@@ -101,9 +111,9 @@ namespace ORTS
 
             TestActivityLoader = new Task<SortableBindingList<TestActivity>>(this, () =>
             {
-                return new SortableBindingList<TestActivity>((from f in Folder.GetFolders()
+                return new SortableBindingList<TestActivity>((from f in Folder.GetFolders(Settings)
                                                               from r in Route.GetRoutes(f)
-                                                              from a in Activity.GetActivities(r)
+                                                              from a in Activity.GetActivities(f, r)
                                                               where !(a is ORTS.Menu.ExploreActivity)
                                                               orderby a.Name
                                                               select new TestActivity(f, r, a)).ToList());
@@ -175,7 +185,7 @@ namespace ORTS
                     parameters += " /Skip-User-Settings";
 
                 var processStartInfo = new ProcessStartInfo();
-                processStartInfo.FileName = Path.Combine(Application.StartupPath, Program.RunActivityProgram);
+                processStartInfo.FileName = MainForm.RunActivityProgram;
                 processStartInfo.WindowStyle = ProcessWindowStyle.Normal;
                 processStartInfo.WorkingDirectory = Application.StartupPath;
 
@@ -232,7 +242,7 @@ namespace ORTS
             UpdateButtons();
         }
 
-        void ShowGridRow(DataGridView grid, int rowIndex)
+        static void ShowGridRow(DataGridView grid, int rowIndex)
         {
             var displayedRowCount = grid.DisplayedRowCount(false);
             if (grid.FirstDisplayedScrollingRowIndex > rowIndex)

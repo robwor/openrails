@@ -22,21 +22,23 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using ORTS.Common;
+using ORTS.Viewer3D.RollingStock;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     public class TrainDrawer
     {
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
 
         // THREAD SAFETY:
         //   All accesses must be done in local variables. No modifications to the objects are allowed except by
         //   assignment of a new instance (possibly cloned and then modified).
         public Dictionary<TrainCar, TrainCarViewer> Cars = new Dictionary<TrainCar, TrainCarViewer>();
-        public List<TrainCar> VisibleCars = new List<TrainCar>();
+        List<TrainCar> VisibleCars = new List<TrainCar>();
         TrainCar PlayerCar;
 
-        public TrainDrawer(Viewer3D viewer)
+        public TrainDrawer(Viewer viewer)
         {
             Viewer = viewer;
         }
@@ -51,7 +53,9 @@ namespace ORTS
                 var newCars = new Dictionary<TrainCar, TrainCarViewer>();
                 foreach (var car in visibleCars)
                 {
-					try
+                    if (Viewer.LoaderProcess.Terminated)
+                        break;
+                    try
 					{
 						if (cars.ContainsKey(car))
 							newCars.Add(car, cars[car]);
@@ -64,9 +68,18 @@ namespace ORTS
                     }
                 }
                 Cars = newCars;
-            }
+				//for those cars not visible now, will unload them (to remove attached sound)
+				foreach (var car in cars)
+				{
+					if (!visibleCars.Contains(car.Key))
+					{
+						car.Value.Unload();
+					}
+				}
+			}
 
             // Ensure the player locomotive has a cab view loaded and anything else they need.
+            cars = Cars;
             if (PlayerCar != null && cars.ContainsKey(PlayerCar))
                 cars[PlayerCar].LoadForPlayer();
         }
@@ -127,13 +140,18 @@ namespace ORTS
         TrainCarViewer LoadCar(TrainCar car)
         {
             Trace.Write("C");
-            var carViewer = car.GetViewer(Viewer);
-            if (car.Lights != null)
-                carViewer.lightDrawer = new LightDrawer(Viewer, car);
+            TrainCarViewer carViewer =
+                car is MSTSDieselLocomotive ? new MSTSDieselLocomotiveViewer(Viewer, car as MSTSDieselLocomotive) :
+                car is MSTSElectricLocomotive ? new MSTSElectricLocomotiveViewer(Viewer, car as MSTSElectricLocomotive) :
+                car is MSTSSteamLocomotive ? new MSTSSteamLocomotiveViewer(Viewer, car as MSTSSteamLocomotive) :
+                car is MSTSLocomotive ? new MSTSLocomotiveViewer(Viewer, car as MSTSLocomotive) :
+                car is MSTSWagon ? new MSTSWagonViewer(Viewer, car as MSTSWagon) :
+                null;
+            carViewer.lightDrawer = new LightViewer(Viewer, car);
             return carViewer;
         }
 
-        float ApproximateDistance(WorldLocation a, WorldLocation b)
+        static float ApproximateDistance(WorldLocation a, WorldLocation b)
         {
             var dx = a.Location.X - b.Location.X;
             var dz = a.Location.Z - b.Location.Z;

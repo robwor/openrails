@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -30,9 +30,11 @@ using System.Diagnostics;
 using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using MSTS;
+using Orts.Formats.Msts;
+using ORTS.Common;
+using ORTS.Processes;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     public class Wire
     {
@@ -40,11 +42,10 @@ namespace ORTS
         /// Decompose and add a wire on top of MSTS track section
         /// </summary>
         /// <param name="viewer">Viewer reference.</param>
-        /// <param name="dTrackList">DynatrackDrawer list.</param>
-        /// <param name="dTrackObj">Dynamic track section to decompose.</param>
+        /// <param name="trackList">DynamicTrackViewer list.</param>
+        /// <param name="trackObj">Dynamic track section to decompose.</param>
         /// <param name="worldMatrixInput">Position matrix.</param>
-        public static int DecomposeStaticWire(Viewer3D viewer, List<DynatrackDrawer> dTrackList, TrackObj dTrackObj,
-            WorldPosition worldMatrixInput)
+        public static int DecomposeStaticWire(Viewer viewer, List<DynamicTrackViewer> trackList, TrackObj trackObj, WorldPosition worldMatrixInput)
         {
             // The following vectors represent local positioning relative to root of original (5-part) section:
             Vector3 localV = Vector3.Zero; // Local position (in x-z plane)
@@ -61,13 +62,13 @@ namespace ORTS
             worldMatrix.XNAMatrix.Translation = Vector3.Zero; // worldMatrix now rotation-only
             try
             {
-                if (viewer.Simulator.TSectionDat.TrackShapes.Get(dTrackObj.SectionIdx).RoadShape == true) return 1;
+                if (viewer.Simulator.TSectionDat.TrackShapes.Get(trackObj.SectionIdx).RoadShape == true) return 1;
             }
             catch (Exception)
             {
                 return 0;
             }
-            SectionIdx[] SectionIdxs = viewer.Simulator.TSectionDat.TrackShapes.Get(dTrackObj.SectionIdx).SectionIdxs;
+            SectionIdx[] SectionIdxs = viewer.Simulator.TSectionDat.TrackShapes.Get(trackObj.SectionIdx).SectionIdxs;
 
             foreach (SectionIdx id in SectionIdxs)
             {
@@ -111,7 +112,6 @@ namespace ORTS
                         else left = radius * Vector3.Cross(Vector3.Up, heading); // Vector from PC to O
                         Matrix rot = Matrix.CreateRotationY(-section.SectionCurve.Angle * 3.14f / 180); // Heading change (rotation about O)
 
-                        Matrix rot2 = Matrix.CreateRotationY(-(90 - section.SectionCurve.Angle) * 3.14f / 180); // Heading change (rotation about O)
                         displacement = Traveller.MSTSInterpolateAlongCurve(localV, left, rot,
                                                 worldMatrix.XNAMatrix, out localProjectedV);
 
@@ -122,22 +122,21 @@ namespace ORTS
                     nextRoot.XNAMatrix.Translation = sectionOrigin + displacement;
                     root.XNAMatrix.Translation += Vector3.Transform(trackLoc, worldMatrix.XNAMatrix);
                     //nextRoot.XNAMatrix.Translation += Vector3.Transform(trackLoc, worldMatrix.XNAMatrix);
-                    dTrackList.Add(new WireDrawer(viewer, root, nextRoot, radius, length));
+                    trackList.Add(new WireViewer(viewer, root, nextRoot, radius, length));
                     localV = localProjectedV; // Next subsection
                 }
             }
             return 1;
-        } // end DecomposeStaticWire
+        }
 
         /// <summary>
         /// Decompose and add a wire on top of MSTS track section converted from dynamic tracks
         /// </summary>
         /// <param name="viewer">Viewer reference.</param>
-        /// <param name="dTrackList">DynatrackDrawer list.</param>
-        /// <param name="dTrackObj">Dynamic track section to decompose.</param>
+        /// <param name="trackList">DynamicTrackViewer list.</param>
+        /// <param name="trackObj">Dynamic track section to decompose.</param>
         /// <param name="worldMatrixInput">Position matrix.</param>
-        public static void DecomposeConvertedDynamicWire(Viewer3D viewer, List<DynatrackDrawer> dTrackList, TrackObj dTrackObj,
-            WorldPosition worldMatrixInput)
+        public static void DecomposeConvertedDynamicWire(Viewer viewer, List<DynamicTrackViewer> trackList, TrackObj trackObj, WorldPosition worldMatrixInput)
         {
             // The following vectors represent local positioning relative to root of original (5-part) section:
             Vector3 localV = Vector3.Zero; // Local position (in x-z plane)
@@ -157,7 +156,7 @@ namespace ORTS
 
             try
             {
-                path = viewer.Simulator.TSectionDat.TSectionIdx.TrackPaths[dTrackObj.SectionIdx];
+                path = viewer.Simulator.TSectionDat.TSectionIdx.TrackPaths[trackObj.SectionIdx];
             }
             catch (Exception)
             {
@@ -204,7 +203,6 @@ namespace ORTS
                     else left = radius * Vector3.Cross(Vector3.Up, heading); // Vector from PC to O
                     Matrix rot = Matrix.CreateRotationY(-section.SectionCurve.Angle * 3.14f / 180); // Heading change (rotation about O)
 
-                    Matrix rot2 = Matrix.CreateRotationY(-(90 - section.SectionCurve.Angle) * 3.14f / 180); // Heading change (rotation about O)
                     displacement = Traveller.MSTSInterpolateAlongCurve(localV, left, rot,
                                             worldMatrix.XNAMatrix, out localProjectedV);
 
@@ -215,28 +213,28 @@ namespace ORTS
                 nextRoot.XNAMatrix.Translation = sectionOrigin + displacement;
                 root.XNAMatrix.Translation += Vector3.Transform(trackLoc, worldMatrix.XNAMatrix);
                 nextRoot.XNAMatrix.Translation += Vector3.Transform(trackLoc, worldMatrix.XNAMatrix);
-                dTrackList.Add(new WireDrawer(viewer, root, nextRoot, radius, length));
+                trackList.Add(new WireViewer(viewer, root, nextRoot, radius, length));
                 localV = localProjectedV; // Next subsection
             }
-        } // end DecomposeStaticWire
+        }
+
         /// <summary>
         /// Decompose and add a wire on top of MSTS track section
         /// </summary>
         /// <param name="viewer">Viewer reference.</param>
-        /// <param name="dTrackList">DynatrackDrawer list.</param>
-        /// <param name="dTrackObj">Dynamic track section to decompose.</param>
+        /// <param name="trackList">DynamicTrackViewer list.</param>
+        /// <param name="trackObj">Dynamic track section to decompose.</param>
         /// <param name="worldMatrixInput">Position matrix.</param>
-        public static void DecomposeDynamicWire(Viewer3D viewer, List<DynatrackDrawer> dTrackList, DyntrackObj dTrackObj,
-            WorldPosition worldMatrixInput)
+        public static void DecomposeDynamicWire(Viewer viewer, List<DynamicTrackViewer> trackList, DyntrackObj trackObj, WorldPosition worldMatrixInput)
         {
-            // DYNAMIC TRACK
-            // =============
+            // DYNAMIC WIRE
+            // ============
             // Objectives:
             // 1-Decompose multi-subsection DT into individual sections.  
             // 2-Create updated transformation objects (instances of WorldPosition) to reflect 
             //   root of next subsection.
             // 3-Distribute elevation change for total section through subsections. (ABANDONED)
-            // 4-For each meaningful subsection of dtrack, build a separate DynatrackMesh.
+            // 4-For each meaningful subsection of dtrack, build a separate WirePrimitive.
             //
             // Method: Iterate through each subsection, updating WorldPosition for the root of
             // each subsection.  The rotation component changes only in heading.  The translation 
@@ -250,23 +248,20 @@ namespace ORTS
 
             WorldPosition worldMatrix = new WorldPosition(worldMatrixInput); // Make a copy so it will not be messed
 
-            float realRun; // Actual run for subsection based on path
-
-
             WorldPosition nextRoot = new WorldPosition(worldMatrix); // Will become initial root
             Vector3 sectionOrigin = worldMatrix.XNAMatrix.Translation; // Save root position
             worldMatrix.XNAMatrix.Translation = Vector3.Zero; // worldMatrix now rotation-only
 
             // Iterate through all subsections
-            for (int iTkSection = 0; iTkSection < dTrackObj.trackSections.Count; iTkSection++)
+            for (int iTkSection = 0; iTkSection < trackObj.trackSections.Count; iTkSection++)
             {
                 float length = 0, radius = -1;
 
-                length = dTrackObj.trackSections[iTkSection].param1; // meters if straight; radians if curved
+                length = trackObj.trackSections[iTkSection].param1; // meters if straight; radians if curved
                 if (length == 0.0) continue; // Consider zero-length subsections vacuous
 
                 // Create new DT object copy; has only one meaningful subsection
-                DyntrackObj subsection = new DyntrackObj(dTrackObj, iTkSection);
+                DyntrackObj subsection = new DyntrackObj(trackObj, iTkSection);
 
                 // Create a new WorldPosition for this subsection, initialized to nextRoot,
                 // which is the WorldPosition for the end of the last subsection.
@@ -286,7 +281,6 @@ namespace ORTS
                     localProjectedV = localV + length * heading;
                     displacement = Traveller.MSTSInterpolateAlongStraight(localV, heading, length,
                                                             worldMatrix.XNAMatrix, out localProjectedV);
-                    realRun = length;
                 }
                 else // Curved section
                 {   // Both heading and translation change 
@@ -302,38 +296,34 @@ namespace ORTS
 
                     heading = Vector3.Transform(heading, rot); // Heading change
                     nextRoot.XNAMatrix = rot * nextRoot.XNAMatrix; // Store heading change
-                    realRun = radius * ((length > 0) ? length : -length); // Actual run (meters)
                 }
 
                 // Update nextRoot with new translation component
                 nextRoot.XNAMatrix.Translation = sectionOrigin + displacement;
 
 
-                // Create a new DynatrackDrawer for the subsection
-                dTrackList.Add(new WireDrawer(viewer, root, nextRoot, radius, length));
+                // Create a new WireViewer for the subsection
+                trackList.Add(new WireViewer(viewer, root, nextRoot, radius, length));
                 localV = localProjectedV; // Next subsection
             }
-        } // end DecomposeDynamicWire
+        }
+    }
 
-    } // end class Wires
-
-    public class WireDrawer : DynatrackDrawer
+    public class WireViewer : DynamicTrackViewer
     {
-        public WireDrawer(Viewer3D viewer, WorldPosition position, WorldPosition endPosition, float radius, float angle)
+        public WireViewer(Viewer viewer, WorldPosition position, WorldPosition endPosition, float radius, float angle)
             : base(viewer, position, endPosition)
         {
 
             // Instantiate classes
-            dtrackMesh = new WireMesh(viewer.RenderProcess, position, endPosition, radius, angle);
-        } // end DynatrackDrawer constructor
-
-
-    } // end WireDrawer
+            Primitive = new WirePrimitive(viewer, position, endPosition, radius, angle);
+        }
+    }
 
     public class LODWire : LOD
     {
-        public LODWire(float cutoffRadius)
-            : base(cutoffRadius)
+        public LODWire(float cutOffRadius)
+            : base(cutOffRadius)
         {
         }
     }
@@ -341,8 +331,8 @@ namespace ORTS
     public class LODItemWire : LODItem
     {
         // NumVertices and NumSegments used for sizing vertex and index buffers
-        public uint VerticalNumVertices = 0;                     // Total independent vertices in LOD
-        public uint VerticalNumSegments = 0;                     // Total line segment count in LOD
+        public uint VerticalNumVertices;                     // Total independent vertices in LOD
+        public uint VerticalNumSegments;                     // Total line segment count in LOD
         public ArrayList VerticalPolylines = new ArrayList();  // Array of arrays of vertices 
 
         /// <summary>
@@ -351,19 +341,17 @@ namespace ORTS
         public LODItemWire(string name)
             : base(name)
         {
-        } // end LODItem() constructor
+        }
 
-        public void VerticalAccum(int count)
+        public void VerticalAccumulate(int count)
         {
             // Accumulates total independent vertices and total line segments
             // Used for sizing of vertex and index buffers
             VerticalNumVertices += (uint)count;
             VerticalNumSegments += (uint)count - 1;
-        } // end Accum
-
-    } // end class LODItemWire
-
-
+        }
+    }
+    
     // Dynamic Wire profile class
     public class WireProfile : TrProfile
     {
@@ -372,8 +360,8 @@ namespace ORTS
         /// <summary>
         /// WireProfile constructor (default - builds from self-contained data)
         /// </summary>
-        public WireProfile(RenderProcess RenderProcess) // Nasty: void return type is not allowed. (See MSDN for compiler error CS0542.)
-            : base(RenderProcess, 0)//call the dummy base constructor so that no data is pre-populated
+        public WireProfile(Viewer viewer) // Nasty: void return type is not allowed. (See MSDN for compiler error CS0542.)
+            : base(viewer, 0)//call the dummy base constructor so that no data is pre-populated
         {
             LODMethod = LODMethods.ComponentAdditive;
             LODWire lod; // Local LOD instance 
@@ -385,11 +373,14 @@ namespace ORTS
 
             lod = new LODWire(800.0f); // Create LOD for railsides with specified CutoffRadius
             lodItem = new LODItemWire("Wire");
-            if (File.Exists(RenderProcess.Viewer.Simulator.RoutePath + "\\Textures\\overheadwire.ace"))
+            var normalvalue = 0.707f;
+            if (File.Exists(viewer.Simulator.RoutePath + "\\Textures\\overheadwire.ace"))
+            {
                 lodItem.TexName = "overheadwire.ace";
+            }
             else
             {
-                Trace.TraceInformation("Ignored missing overheadwire.ace, using default. You can copy the overheadwire.ace from OR\'s AddOns folder to {0}\\Textures", RenderProcess.Viewer.Simulator.RoutePath);
+                Trace.TraceInformation("Ignored missing overheadwire.ace, using default. You can copy the overheadwire.ace from OR\'s AddOns folder to {0}\\Textures", viewer.Simulator.RoutePath);
                 lodItem.TexName = "..\\..\\..\\global\\textures\\dieselsmoke.ace";
             }
             lodItem.ShaderName = "TexDiff";
@@ -398,69 +389,63 @@ namespace ORTS
             lodItem.TexAddrModeName = "Wrap";
             lodItem.ESD_Alternative_Texture = 0;
             lodItem.MipMapLevelOfDetailBias = 0;
-            lodItem.LoadMaterial(RenderProcess, lodItem);
+            LODItem.LoadMaterial(viewer, lodItem);
 
-            float topHeight = (float)RenderProcess.Viewer.Simulator.TRK.Tr_RouteFile.OverheadWireHeight;
+            float topHeight = (float)viewer.Simulator.TRK.Tr_RouteFile.OverheadWireHeight;
 
             float u1 = 0.25f, v1 = 0.25f;
             pl = new Polyline(this, "TopWire", 5);
             pl.DeltaTexCoord = new Vector2(0.00f, 0.00f);
 
-            pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -1f, 0f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(0.01f, topHeight + 0.02f, 0.0f, 0f, 1f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, 1f, 0f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, 0f, -1f, 0f, u1, v1));
-            pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -1f, 0f, 0f, u1, v1));
-            lodItem.Polylines.Add(pl); 
+            pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -normalvalue, normalvalue, 0f, u1, v1));
+            pl.Vertices.Add(new Vertex(0.01f, topHeight + 0.02f, 0.0f, normalvalue, normalvalue, 0f, u1, v1));
+            pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, normalvalue, -normalvalue, 0f, u1, v1));
+            pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, -normalvalue, -normalvalue, 0f, u1, v1));
+            pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -normalvalue, normalvalue, 0f, u1, v1));
+            lodItem.Polylines.Add(pl);
             lodItem.Accum(pl.Vertices.Count);
 
-            if (RenderProcess.Viewer.Settings.DoubleWire)
+            if (viewer.Settings.DoubleWire)
             {
                 pl = new Polyline(this, "TopWire1", 5);
                 pl.DeltaTexCoord = new Vector2(0.00f, 0.00f);
                 topHeight += 1.0f;
 
-                pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -1f, 0f, 0f, u1, v1));
-                pl.Vertices.Add(new Vertex(0.01f, topHeight + 0.02f, 0.0f, 0f, 1f, 0f, u1, v1));
-                pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, 1f, 0f, 0f, u1, v1));
-                pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, 0f, -1f, 0f, u1, v1));
-                pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.04f, 0.0f, -1f, 0f, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -normalvalue, normalvalue, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(0.01f, topHeight + 0.02f, 0.0f, normalvalue, normalvalue, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(0.01f, topHeight, 0.0f, normalvalue, -normalvalue, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(-0.01f, topHeight, 0.0f, -normalvalue, -normalvalue, 0f, u1, v1));
+                pl.Vertices.Add(new Vertex(-0.01f, topHeight + 0.02f, 0.0f, -normalvalue, normalvalue, 0f, u1, v1));
                 lodItem.Polylines.Add(pl);
                 lodItem.Accum(pl.Vertices.Count);
 
                 vertical = new Polyline(this, "TopWireVertical", 5);
                 vertical.DeltaTexCoord = new Vector2(0.00f, 0.00f);
 
-                vertical.Vertices.Add(new Vertex(-0.008f, topHeight, 0.008f, 0f, 0f, 1f, u1, v1));
-                vertical.Vertices.Add(new Vertex(-.008f, topHeight, -.008f, -1f, 0f, 0f, u1, v1));
-                vertical.Vertices.Add(new Vertex(.008f, topHeight, -.008f, 0f, 0f, -1f, u1, v1));
-                vertical.Vertices.Add(new Vertex(.008f, topHeight, .008f, 1f, 0f, 0f, u1, v1));
-                vertical.Vertices.Add(new Vertex(-.008f, topHeight, .008f, 1f, 0f, 0f, u1, v1));
+                vertical.Vertices.Add(new Vertex(-0.008f, topHeight, 0.008f, -normalvalue, 0f, normalvalue, u1, v1));
+                vertical.Vertices.Add(new Vertex(-.008f, topHeight, -.008f, normalvalue, 0f, normalvalue, u1, v1));
+                vertical.Vertices.Add(new Vertex(.008f, topHeight, -.008f, normalvalue, 0f, -normalvalue, u1, v1));
+                vertical.Vertices.Add(new Vertex(.008f, topHeight, .008f, -normalvalue, 0f, -normalvalue, u1, v1));
+                vertical.Vertices.Add(new Vertex(-.008f, topHeight, .008f, -normalvalue, 0f, normalvalue, u1, v1));
                 lodItem.VerticalPolylines = new ArrayList();
                 lodItem.VerticalPolylines.Add(vertical);
-                lodItem.VerticalAccum(vertical.Vertices.Count);
+                lodItem.VerticalAccumulate(vertical.Vertices.Count);
             }
 
 
             lod.LODItems.Add(lodItem); // Append to LODItems array 
             base.LODs.Add(lod); // Append this lod to LODs array
+        }
+    }
 
-        } // end WireProfile() constructor
-
-
-    } // end class WireProfile
-
-
-
-
-    public class WireMesh : DynatrackMesh
+    public class WirePrimitive : DynamicTrackPrimitive
     {
         static WireProfile WireProfile;
-        public WireMesh(RenderProcess renderProcess, WorldPosition worldPosition,
+        public WirePrimitive(Viewer viewer, WorldPosition worldPosition,
         WorldPosition endPosition, float radius, float angle)
             : base()
         {
-            // DynatrackMesh is responsible for creating a mesh for a section with a single subsection.
+            // WirePrimitive is responsible for creating a mesh for a section with a single subsection.
             // It also must update worldPosition to reflect the end of this subsection, subsequently to
             // serve as the beginning of the next subsection.
 
@@ -488,7 +473,7 @@ namespace ORTS
 
             if (WireProfile == null)
             {
-                WireProfile = new WireProfile(renderProcess);
+                WireProfile = new WireProfile(viewer);
             }
             TrProfile = WireProfile;
 
@@ -513,7 +498,7 @@ namespace ORTS
                 for (int iLODItem = 0; iLODItem < lod.LODItems.Count; iLODItem++)
                 {
                     // Build vertexList and triangleListIndices
-                    ShapePrimitives[primIndex] = BuildMesh(renderProcess.Viewer, worldPosition, iLOD, iLODItem);
+                    ShapePrimitives[primIndex] = BuildPrimitive(viewer, iLOD, iLODItem);
                     primIndex++;
                 }
                 lod.PrimIndexStop = primIndex; // 1 above last index for this LOD
@@ -522,29 +507,25 @@ namespace ORTS
 
             if (DTrackData.IsCurved == 0) ObjectRadius = 0.5f * DTrackData.param1; // half-length
             else ObjectRadius = DTrackData.param2 * (float)Math.Sin(0.5 * Math.Abs(DTrackData.param1)); // half chord length
-
-
-        } // end WireMesh constructor
-
-
+        }
+        
         /// <summary>
         /// Builds a Wire LOD to WireProfile specifications as one vertex buffer and one index buffer.
         /// The order in which the buffers are built reflects the nesting in the TrProfile.  The nesting order is:
         /// (Polylines (Vertices)).  All vertices and indices are built contiguously for an LOD.
         /// </summary>
         /// <param name="viewer">Viewer.</param>
-        /// <param name="worldPosition">WorldPosition.</param>
-        /// <param name="iLOD">Index of LOD mesh to be generated from profile.</param>
-        /// <param name="iLODItem">Index of LOD mesh to be generated from profile.</param>
-        public new ShapePrimitive BuildMesh(Viewer3D viewer, WorldPosition worldPosition, int iLOD, int iLODItem)
+        /// <param name="lodIndex">Index of LOD mesh to be generated from profile.</param>
+        /// <param name="lodItemIndex">Index of LOD mesh to be generated from profile.</param>
+        public ShapePrimitive BuildPrimitive(Viewer viewer, int lodIndex, int lodItemIndex)
         {
             // Call for track section to initialize itself
             if (DTrackData.IsCurved == 0) LinearGen();
             else CircArcGen();
 
             // Count vertices and indices
-            LODWire lod = (LODWire)TrProfile.LODs[iLOD];
-            LODItemWire lodItem = (LODItemWire)lod.LODItems[iLODItem];
+            LODWire lod = (LODWire)TrProfile.LODs[lodIndex];
+            LODItemWire lodItem = (LODItemWire)lod.LODItems[lodItemIndex];
             NumVertices = (int)(lodItem.NumVertices * (NumSections + 1) + 2 * lodItem.VerticalNumVertices * NumSections);
             NumIndices = (short)(lodItem.NumSegments * NumSections * 6 + lodItem.VerticalNumSegments * NumSections * 6);
             // (Cells x 2 triangles/cell x 3 indices/triangle)
@@ -596,10 +577,10 @@ namespace ORTS
                         }
                         VertexIndex++;
                         plv++;
-                    } // end foreach v  
-                } // end foreach pl
+                    }
+                }
                 OldRadius = radius; // Get ready for next segment
-            } // end for i
+            }
 
             if (lodItem.VerticalPolylines != null && lodItem.VerticalPolylines.Count > 0)
             {
@@ -677,22 +658,22 @@ namespace ORTS
                             }
                             VertexIndex++;
                             plv++;
-                        } // end foreach v  
-                    } // end foreach pl
+                        }
+                    }
 
                     if (i != 0)
                     {
                         OldRadius = radius; // Get ready for next segment
                         coveredLength += SegmentLength;
                     }
-                } // end for i
+                }
             }
 
             // Create and populate a new ShapePrimitive
             var indexBuffer = new IndexBuffer(viewer.GraphicsDevice, typeof(short), NumIndices, BufferUsage.WriteOnly);
             indexBuffer.SetData(TriangleListIndices);
             return new ShapePrimitive(lodItem.LODMaterial, new SharedShape.VertexBufferSet(VertexList, viewer.GraphicsDevice), indexBuffer, 0, NumVertices, NumIndices / 3, new[] { -1 }, 0);
-        } // end BuildMesh
+        }
 
         /// <summary>
         /// Initializes member variables for straight track sections.
@@ -711,7 +692,7 @@ namespace ORTS
 
             SegmentLength = DTrackData.param1 / NumSections; // Length of each mesh segment (meters)
             DDY = new Vector3(0, DTrackData.deltaY / NumSections, 0); // Incremental elevation change
-        } // end LinearGen
+        }
 
         /// <summary>
         /// Initializes member variables for circular arc track sections.
@@ -748,8 +729,7 @@ namespace ORTS
             // The local center for the curve lies to the left or right of the local origin and ON THE BASE PLANE
             center = DTrackData.param2 * (DTrackData.param1 < 0 ? Vector3.Left : Vector3.Right);
             sectionRotation = Matrix.CreateRotationY(-SegmentLength); // Rotation per iteration (constant)
-        } // end CircArcGen
-
+        }
 
         /// <summary>
         /// Generates vertices for a vertical section (straight track).
@@ -773,137 +753,3 @@ namespace ORTS
 
     }
 }
-
-//code from previous implementation
-
-#if false
-namespace ORTS
-{
-    /// <summary>
-    /// Created by a Viewer
-    /// </summary>
-    public class WireDrawer
-    {
-        private Viewer3D Viewer;  // the viewer that we are tracking
-        int viewerTileX, viewerTileZ;  // position of the viewer updated once per frame
-        List<WirePrimitive> WirePrimitives = new List<WirePrimitive>();  // the currently loaded wire geometry
-        //WireMaterial WireMaterial;
-
-        /// <summary>
-        /// Called once after the graphics device is ready
-        /// to load any static graphics content, background 
-        /// processes haven't started yet.
-        /// Executes in the RenderProcess thread.
-        /// </summary>
-        public WireDrawer(Viewer3D viewer)
-        {
-            Viewer = viewer;
-
-            // load any static content, ie spritebatches, textures, etc
-
-            // if all wire uses the same material,  create your material here.
-            WireMaterial WireMaterial = new WireMaterial(viewer.RenderProcess);
-        }
-
-        /// <summary>
-        /// Called 10 times per second when its safe to read volatile data
-        /// from the simulator and viewer classes in preparation
-        /// for the Load call.  Copy data to local storage for use 
-        /// in the next load call.
-        /// Executes in the UpdaterProcess thread.
-        /// </summary>
-        public void LoadPrep()
-        {
-            viewerTileX = Viewer.Camera.TileX;
-            viewerTileZ = Viewer.Camera.TileZ;
-
-            // read any other volatile data that will be needed by Load
-        }
-
-        /// <summary>
-        /// Called 10 times a second to load graphics content
-        /// that comes and goes as the player and trains move.
-        /// Called from background LoaderProcess Thread
-        /// Do not access volatile data from the simulator 
-        /// and viewer classes during the Load call ( see
-        /// LoadPrep() )
-        /// Executes in the LoaderProcess thread.
-        /// Do not read volatile data managed by the UpdaterProcess
-        /// </summary>
-        public void Load(RenderProcess renderProcess)
-        {
-            // This is where the wire primitives list is updated and procedural geometry (perhaps line lists ) is created
-            // Unload from WirePrimitives, any wire geometry that is out of viewing range from the 
-            // Add to WirePrimitives, geometry for wire coming into viewing range
-            // ie for each track segment (TDB) that is in range
-            //        WirePrimitives.Add(new WirePrimitive(....));
-
-        }
-
-
-        /// <summary>
-        /// Called every frame to update animations and load the frame contents .
-        /// Note:  this doesn't actually draw on the screen surface, but 
-        /// instead prepares a list of drawing primitives that will be rendered
-        /// later in RenderFrame.Draw() by the RenderProcess thread.
-        /// elapsedTime represents the the time since the last call to PrepareFrame
-        /// Executes in the UpdaterProcess thread.
-        /// </summary>
-        public void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
-        {
-            // THREAD SAFETY WARNING - LoaderProcess could write to WirePrimitives list at any time
-            // its probably not OK to iterate through this list because LoaderProcess could change its size at any time
-            foreach ( WirePrimitive wirePrimitive in WirePrimitives)
-            {
-                // if ( wire primitive is in field of view of camera )
-                //    frame.AddPrimitive( WireMaterial, wireprimitive, wireprimitive.xnaMatrix );
-            }
-        }
-    } // SceneryDrawer
-
-
-    /// <summary>
-    /// This encapsulates any shaders, sprites, etc needed by the material.
-    /// </summary>
-	public class WireMaterial : Material
-	{
-		public WireMaterial(RenderProcess renderProcess)
-			: base(null)
-		{
-			// create a shader if necessary
-			// load any static textures etc
-		}
-
-		/// <summary>
-		/// Called by RenderFrame.Draw() in the RenderProcess thread for each primitive
-		/// that was loaded by PrepareFrame
-		/// </summary>
-        public override void Render(GraphicsDevice graphicsDevice, IEnumerable<RenderItem> renderItems, ref Matrix XNAViewMatrix, ref Matrix XNAProjectionMatrix)
-		{
-			foreach(var item in renderItems)
-			    item.RenderPrimitive.Draw(graphicsDevice);
-		}
-	}
-
-    public class WirePrimitive : RenderPrimitive
-    {
-        //Matrix xnaMatrix;
-        // LineLists etc
-
-        /// <summary>
-        /// This is when the object actually renders itself onto the screen.
-        /// Do not reference any volatile data.
-        /// Executes in the RenderProcess thread called from the Render method of the material class
-        /// </summary>
-        public override void Draw(GraphicsDevice graphicsDevice)
-        {
-            // do any draw calls on the graphics device 
-            // ie graphicsDevice.Draw( .... )
-        }
-    }
-
-
-
-
-}
-#endif

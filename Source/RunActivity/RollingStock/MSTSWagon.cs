@@ -27,13 +27,19 @@
  *  
  */
 
+//#define ALLOW_ORTS_SPECIFIC_ENG_PARAMETERS
+
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Diagnostics;
 using Microsoft.Xna.Framework;
-using MSTS;
+using Orts.Formats.Msts;
+using Orts.Parsers.Msts;
+using ORTS.Common;
+using ORTS.Scripting.Api;
+using ORTS.Viewer3D;
 
 namespace ORTS
 {
@@ -49,32 +55,48 @@ namespace ORTS
     
     public class MSTSWagon: TrainCar
     {
-		public bool Pan = false;     // false = down; some wagon has pantograph
-		public bool Pan1Up = false; // if the forwards pantograph is up
-        public bool Pan2Up = false; // if the backwards pantograph is up
-        public bool DoorLeftOpen = false;
-		public bool DoorRightOpen = false;
-		public bool MirrorOpen = false;
-
+        public Pantographs Pantographs;
+        public bool AuxPowerOn;
+        public bool DoorLeftOpen;
+        public bool DoorRightOpen;
+        public bool MirrorOpen;
+        public bool IsRollerBearing; // Has roller bearings
+        public bool IsLowTorqueRollerBearing; // Has low torque roller bearings
+        public bool IsFrictionBearing; //Has friction (or solid bearings)
+        public bool IsStandStill = true;  // Used for MSTS type friction
+        public bool IsDavisFriction = true; // Default to new Davis type friction
+        public bool IsLowSpeed = true; // set indicator for low speed operation  0 - 5mph
+       
         // simulation parameters
-        public float Variable1 = 0.0f;  // used to convey status to soundsource
-        public float Variable2 = 0.0f;
-        public float Variable3 = 0.0f;
-
+        public float Variable1;  // used to convey status to soundsource
+        public float Variable2;
+        public float Variable3;
+        
         // wag file data
-        public string MainShapeFileName = null;
-        public string FreightShapeFileName = null;
-        public float FreightAnimHeight = 0;
-        public string InteriorShapeFileName = null; // passenger view shape file name
-        public string MainSoundFileName = null;
-        public string InteriorSoundFileName = null;
+        public string MainShapeFileName;
+        public string FreightShapeFileName;
+        public float FreightAnimMaxLevelM;
+        public float FreightAnimMinLevelM;
+        public string Cab3DShapeFileName; // 3DCab view shape file name
+        public string InteriorShapeFileName; // passenger view shape file name
+        public string MainSoundFileName;
+        public string InteriorSoundFileName;
+        public string Cab3DSoundFileName;
         public float WheelRadiusM = 1;          // provide some defaults in case it's missing from the wag
         public float DriverWheelRadiusM = 1.5f;    // provide some defaults in case i'ts missing from the wag
-        public float Friction0N = 0;    // static friction
-        public bool IsStandStill = true;
-        public float DavisAN = 0;       // davis equation constant
-        public float DavisBNSpM = 0;    // davis equation constant for speed
-        public float DavisCNSSpMM = 0;  // davis equation constant for speed squared
+        float StaticFrictionFactorLb;    // factor to multiply friction by to determine static or starting friction - will vary depending upon whether roller or friction bearing
+        public float Friction0N;        // static friction
+        float Friction5N;               // Friction at 5mph
+        public float DavisAN;           // davis equation constant
+        public float DavisBNSpM;        // davis equation constant for speed
+        public float DavisCNSSpMM;      // davis equation constant for speed squared
+        public float SteamLocoMechFrictN; // Steam locomotive mechanical friction
+        float FrictionC1; // MSTS Friction parameters
+        float FrictionE1; // MSTS Friction parameters
+        float FrictionV2; // MSTS Friction parameters
+        float FrictionC2; // MSTS Friction parameters
+        float FrictionE2; // MSTS Friction parameters
+        float FrictionSpeedMpS; // Train current speed value for friction calculations
         public List<MSTSCoupling> Couplers = new List<MSTSCoupling>();
         public float Adhesion1 = .27f;   // 1st MSTS adhesion value
         public float Adhesion2 = .49f;   // 2nd MSTS adhesion value
@@ -84,49 +106,136 @@ namespace ORTS
         public float Curtius_KnifflerC = 0.161f;             //                                      speedMpS * 3.6 + B
         public float AdhesionK = 0.7f;   //slip characteristics slope
         //public AntislipControl AntislipControl = AntislipControl.None;
-        public float AxleInertiaKgm2 = 0;   //axle inertia
-        public float WheelSpeedMpS = 0;
-        public float SlipWarningTresholdPercent = 70;
+        public float AxleInertiaKgm2;    //axle inertia
+        public float WheelSpeedMpS;
+        public float SlipWarningThresholdPercent = 70;
         public float NumWheelsBrakingFactor = 4;   // MSTS braking factor loosely based on the number of braked wheels. Not used yet.
+        float CentreOfGravityM; // Lateral Centre of gravity
+        float Gauge1M; // temporary variable for the track gauge
+        float Gauge2M; // temporary variable for the track gauge
+        float TrackGaugeM = 1435.0f; // Gauge of track
+        float XCoGM; // Centre of Gravity - X value
+        float YCoGM; // Centre of Gravity - Y value
+        float ZCoGM; // Centre of Gravity - Z value
+        float UnbalancedSuperElevationM; // Unbalanced Superelevation
+        float RigidWheelBaseM;
+        float WagonNumWheels;
+        float WheelBase1M;
+        float WheelBase2M;
+        public bool IsPassenger;
+        public bool IsEngine;
+        string WagonType;
+
+        /// <summary>
+        /// True if vehicle is equipped with an additional emergency brake reservoir
+        /// </summary>
+        public bool EmergencyReservoirPresent;
+        /// <summary>
+        /// True if triple valve is capable of releasing brake gradually
+        /// </summary>
+        public bool DistributorPresent;
+        /// <summary>
+        /// True if equipped with handbrake. (Not common for older steam locomotives.)
+        /// </summary>
+        public bool HandBrakePresent;
+        /// <summary>
+        /// Number of available retainer positions. (Used on freight cars, mostly.) Might be 0, 3 or 4.
+        /// </summary>
+        public int RetainerPositions;
+        
+        /// <summary>
+        /// Attached steam locomotive in case this wagon is a tender
+        /// </summary>
+        public MSTSSteamLocomotive TendersSteamLocomotive { get; private set; }
+        
+        public List<IntakePoint> IntakePointList = new List<IntakePoint>();
 
         public MSTSBrakeSystem MSTSBrakeSystem { get { return (MSTSBrakeSystem)base.BrakeSystem; } }
+
+        // Get steam locomotive friction from steam folder
+        protected virtual float GetSteamLocoMechFrictN()
+        {
+            return 0f;
+        }
 
         public MSTSWagon(Simulator simulator, string wagFilePath)
             : base(simulator, wagFilePath)
         {
-            if (CarManager.LoadedCars.ContainsKey(wagFilePath))
+            Pantographs = new Pantographs(this);
+        }
+
+        public void Load()
+        {
+            if (CarManager.LoadedCars.ContainsKey(WagFilePath))
             {
-                InitializeFromCopy(CarManager.LoadedCars[wagFilePath]);
+                Copy(CarManager.LoadedCars[WagFilePath]);
             }
             else
             {
-                InitializeFromWagFile(wagFilePath);
-                CarManager.LoadedCars.Add(wagFilePath, this);
+                LoadFromWagFile(WagFilePath);
+                CarManager.LoadedCars.Add(WagFilePath, this);
             }
+
+            GetMeasurementUnits();
         }
 
         /// <summary>
         /// This initializer is called when we haven't loaded this type of car before
         /// and must read it new from the wag file.
         /// </summary>
-        public virtual void InitializeFromWagFile(string wagFilePath)
+        public virtual void LoadFromWagFile(string wagFilePath)
         {
             string dir = Path.GetDirectoryName(wagFilePath);
             string file = Path.GetFileName(wagFilePath);
             string orFile = dir + @"\openrails\" + file;
             if (File.Exists(orFile))
                 wagFilePath = orFile;
+
             using (STFReader stf = new STFReader(wagFilePath, true))
+            {
                 while (!stf.Eof)
                 {
-                    string token = stf.ReadItem();
+                    stf.ReadItem();
                     Parse(stf.Tree.ToLower(), stf);
                 }
-             if (BrakeSystem == null)
-                    BrakeSystem = new AirSinglePipe(this);
+            }
+
+            var wagonFolderSlash = Path.GetDirectoryName(WagFilePath) + @"\";
+            if (MainShapeFileName != null && !File.Exists(wagonFolderSlash + MainShapeFileName))
+            {
+                Trace.TraceWarning("{0} references non-existent shape {1}", WagFilePath, wagonFolderSlash + MainShapeFileName);
+                MainShapeFileName = string.Empty;
+            }
+            if (FreightShapeFileName != null && !File.Exists(wagonFolderSlash + FreightShapeFileName))
+            {
+                Trace.TraceWarning("{0} references non-existent shape {1}", WagFilePath, wagonFolderSlash + FreightShapeFileName);
+                FreightShapeFileName = null;
+            }
+            if (InteriorShapeFileName != null && !File.Exists(wagonFolderSlash + InteriorShapeFileName))
+            {
+                Trace.TraceWarning("{0} references non-existent shape {1}", WagFilePath, wagonFolderSlash + InteriorShapeFileName);
+                InteriorShapeFileName = null;
+            }
+
+            if (BrakeSystem == null)
+                BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
         }
 
-        string brakeSystemType = null;
+        public void GetMeasurementUnits()
+        {
+            IsMetric = Simulator.Settings.Units == "Metric" || (Simulator.Settings.Units == "Automatic" && System.Globalization.RegionInfo.CurrentRegion.IsMetric) ||
+                (Simulator.Settings.Units == "Route" && Simulator.TRK.Tr_RouteFile.MilepostUnitsMetric);
+            IsUK = Simulator.Settings.Units == "UK";
+        }
+
+        public override void Initialize()
+        {
+            Pantographs.Initialize();
+
+            base.Initialize();
+        }
+
+        string brakeSystemType;
 
         /// <summary>
         /// Parse the wag file parameters required for the simulator and viewer classes
@@ -136,32 +245,88 @@ namespace ORTS
             switch (lowercasetoken)
             {
                 case "wagon(wagonshape": MainShapeFileName = stf.ReadStringBlock(null); break;
-		        case "wagon(type":
-		            stf.MustMatch("(");
-		            string typeString = stf.ReadString();
-		            IsFreight = String.Compare(typeString,"Freight") == 0 ? true : false;
-		            break;
+                case "wagon(type":
+                    stf.MustMatch("(");
+                    string typeString = stf.ReadString();
+                    IsFreight = String.Compare(typeString,"Freight") == 0;
+                    IsTender = String.Compare(typeString,"Tender") == 0;
+                    IsPassenger = String.Compare(typeString, "Carriage") == 0;
+                    IsEngine = String.Compare(typeString, "Engine") == 0;
+                    break;
                 case "wagon(freightanim":
                     stf.MustMatch("(");
                     FreightShapeFileName = stf.ReadString();
-                    FreightAnimHeight = stf.ReadFloat(STFReader.UNITS.Distance, null) - stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    FreightAnimMaxLevelM = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    FreightAnimMinLevelM = stf.ReadFloat(STFReader.UNITS.Distance, null);
                     stf.SkipRestOfBlock();
                     break;
                 case "wagon(size":
                     stf.MustMatch("(");
-                    stf.ReadFloat(STFReader.UNITS.Distance, null);
-                    Height = stf.ReadFloat(STFReader.UNITS.Distance, null);
-                    Length = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    CarWidthM = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    CarHeightM = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    CarLengthM = stf.ReadFloat(STFReader.UNITS.Distance, null);
                     stf.SkipRestOfBlock();
                     break;
-                case "wagon(mass": MassKG = stf.ReadFloatBlock(STFReader.UNITS.Mass, null); break;
+                case "wagon(ortstrackgauge":
+                    stf.MustMatch("(");
+                    Gauge1M = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    Gauge2M = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(centreofgravity":
+                    stf.MustMatch("(");
+                    XCoGM = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    YCoGM = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    ZCoGM = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(ortsunbalancedsuperelevation": UnbalancedSuperElevationM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
+                case "wagon(ortsrigidwheelbase":  
+                    stf.MustMatch("(");
+                    WheelBase1M = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    WheelBase2M = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(mass": MassKG = stf.ReadFloatBlock(STFReader.UNITS.Mass, null); if (MassKG < 0.1f) MassKG = 0.1f; break;
                 case "wagon(wheelradius": WheelRadiusM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
                 case "engine(wheelradius": DriverWheelRadiusM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
                 case "wagon(sound": MainSoundFileName = stf.ReadStringBlock(null); break;
-                case "wagon(friction": ParseFriction(stf); break;
+                case "wagon(ortsdavis_a": DavisAN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
+                case "wagon(ortsdavis_b": DavisBNSpM = stf.ReadFloatBlock(STFReader.UNITS.Resistance, null); break;
+                case "wagon(ortsdavis_c": DavisCNSSpMM = stf.ReadFloatBlock(STFReader.UNITS.ResistanceDavisC, null); break;
+                case "wagon(ortsbearingtype":
+                    stf.MustMatch("(");
+                    string typeString2 = stf.ReadString();
+                    IsRollerBearing = String.Compare(typeString2,"Roller") == 0;
+                    IsLowTorqueRollerBearing = String.Compare(typeString2, "Low") == 0;
+                    IsFrictionBearing = String.Compare(typeString2, "Friction") == 0;
+                    break;
+                case "wagon(friction":
+                    stf.MustMatch("(");
+                    FrictionC1 = stf.ReadFloat(STFReader.UNITS.Resistance, null);
+                    FrictionE1 = stf.ReadFloat(STFReader.UNITS.None, null);
+                    FrictionV2 = stf.ReadFloat(STFReader.UNITS.Speed, null);
+                    FrictionC2 = stf.ReadFloat(STFReader.UNITS.Resistance, null);
+                    FrictionE2 = stf.ReadFloat(STFReader.UNITS.None, null);
+                    stf.SkipRestOfBlock();
+                    ; break;
                 case "wagon(brakesystemtype":
                     brakeSystemType = stf.ReadStringBlock(null).ToLower();
                     BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
+                    break;
+                case "wagon(brakeequipmenttype":
+                    foreach (var equipment in stf.ReadStringBlock("").ToLower().Replace(" ", "").Split(','))
+                    {
+                        switch (equipment)
+                        {
+                            case "distributor":
+                            case "graduated_release_triple_valve": DistributorPresent = true; break;
+                            case "emergency_brake_reservoir": EmergencyReservoirPresent = true; break;
+                            case "handbrake": HandBrakePresent = true; break;
+                            case "retainer_3_position": RetainerPositions = 3; break;
+                            case "retainer_4_position": RetainerPositions = 4; break;
+                        }
+                    }
                     break;
                 case "wagon(coupling":
                     Couplers.Add(new MSTSCoupling());
@@ -184,56 +349,56 @@ namespace ORTS
                     Couplers[Couplers.Count - 1].SetR0(stf.ReadFloat(STFReader.UNITS.Distance, null), stf.ReadFloat(STFReader.UNITS.Distance, null));
                     stf.SkipRestOfBlock();
                     break;
-                case "wagon(adhesion":  // Permits correct spelling
                 case "wagon(adheasion":
                     stf.MustMatch("(");
-                    Adhesion1 = stf.ReadFloat(STFReader.UNITS.Any, null);
-                    Adhesion2 = stf.ReadFloat(STFReader.UNITS.Any, null);
-                    Adhesion3 = stf.ReadFloat(STFReader.UNITS.Any, null);
-                    stf.ReadFloat(STFReader.UNITS.Any, null);
+                    Adhesion1 = stf.ReadFloat(STFReader.UNITS.None, null);
+                    Adhesion2 = stf.ReadFloat(STFReader.UNITS.None, null);
+                    Adhesion3 = stf.ReadFloat(STFReader.UNITS.None, null);
+                    stf.ReadFloat(STFReader.UNITS.None, null);
                     stf.SkipRestOfBlock();
                     break;
-                case "wagon(or_adhesion(curtius_kniffler":   
-                    stf.MustMatch("(");                      //e.g. Wagon ( OR_adhesion ( Curtius_Kniffler ( 7.5 44 0.161 0.7 ) ) )
-                    Curtius_KnifflerA = stf.ReadFloat(STFReader.UNITS.Any, 7.5f);   if (Curtius_KnifflerA <= 0) Curtius_KnifflerA = 7.5f;
-                    Curtius_KnifflerB = stf.ReadFloat(STFReader.UNITS.Any, 44.0f);  if (Curtius_KnifflerB <= 0) Curtius_KnifflerB = 44.0f;
-                    Curtius_KnifflerC = stf.ReadFloat(STFReader.UNITS.Any, 0.161f); if (Curtius_KnifflerC <= 0) Curtius_KnifflerA = 0.161f;
-                    AdhesionK = stf.ReadFloat(STFReader.UNITS.Any, 0.7f);           if (AdhesionK <= 0) AdhesionK = 0.7f;
-                    stf.SkipRestOfBlock();
-                    break;
-                case "wagon(or_adhesion(slipwarningtreshold":
+                case "wagon(ortsadhesion(ortscurtius_kniffler":
+                    //e.g. Wagon ( ORTSAdhesion ( ORTSCurtius_Kniffler ( 7.5 44 0.161 0.7 ) ) )
                     stf.MustMatch("(");
-                    SlipWarningTresholdPercent = stf.ReadFloat(STFReader.UNITS.Any, 70.0f); if (SlipWarningTresholdPercent <= 0) SlipWarningTresholdPercent = 70.0f ; 
-                    stf.ReadFloat(STFReader.UNITS.Any, null);
+                    Curtius_KnifflerA = stf.ReadFloat(STFReader.UNITS.None, 7.5f); if (Curtius_KnifflerA <= 0) Curtius_KnifflerA = 7.5f;
+                    Curtius_KnifflerB = stf.ReadFloat(STFReader.UNITS.None, 44.0f); if (Curtius_KnifflerB <= 0) Curtius_KnifflerB = 44.0f;
+                    Curtius_KnifflerC = stf.ReadFloat(STFReader.UNITS.None, 0.161f); if (Curtius_KnifflerC <= 0) Curtius_KnifflerC = 0.161f;
+                    AdhesionK = stf.ReadFloat(STFReader.UNITS.None, 0.7f); if (AdhesionK <= 0) AdhesionK = 0.7f;
                     stf.SkipRestOfBlock();
                     break;
-                case "wagon(or_adhesion(antislip":
+                case "wagon(ortsadhesion(ortsslipwarningthreshold":
+                    stf.MustMatch("(");
+                    SlipWarningThresholdPercent = stf.ReadFloat(STFReader.UNITS.None, 70.0f); if (SlipWarningThresholdPercent <= 0) SlipWarningThresholdPercent = 70.0f;
+                    stf.ReadFloat(STFReader.UNITS.None, null);
+                    stf.SkipRestOfBlock();
+                    break;
+                case "wagon(ortsadhesion(ortsantislip":
                     stf.MustMatch("(");
                     //AntislipControl = stf.ReadStringBlock(null);
                     stf.SkipRestOfBlock();
                     break;
-                case "wagon(or_adhesion(wheelset(axle(inertia":
+                case "wagon(ortsadhesion(wheelset(axle(ortsinertia":
                     stf.MustMatch("(");                    
-                    AxleInertiaKgm2 = stf.ReadFloat(STFReader.UNITS.Any, null);
+                    AxleInertiaKgm2 = stf.ReadFloat(STFReader.UNITS.RotationalInertia, null);
                     stf.SkipRestOfBlock();
                     break;
-                case "wagon(or_adhesion(wheelset(axle(radius":
+                case "wagon(ortsadhesion(wheelset(axle(ortsradius":
                     stf.MustMatch("(");
                     // <CJComment> Shouldn't this be "WheelRadiusM = " ? </CJComment>
                     AxleInertiaKgm2 = stf.ReadFloatBlock(STFReader.UNITS.Distance, null);
                     stf.SkipRestOfBlock();
                     break;
                 case "wagon(lights":
-                    if (Simulator.Settings.TrainLights)
-                    {
-                        try { Lights = new LightCollection(stf); }
-                        catch { Lights = null; }
-                    }
-                    else
-                        stf.SkipBlock();
+                    Lights = new LightCollection(stf);
                     break;
-                case "wagon(inside": ParseWagonInside(stf); break;
+                case "wagon(inside": HasInsideView = true;  ParseWagonInside(stf); break;
+                case "wagon(orts3dcab": Parse3DCab(stf); break;
                 case "wagon(numwheels": NumWheelsBrakingFactor = stf.ReadFloatBlock(STFReader.UNITS.None, 4.0f); break;
+                case "wagon(ortspantographs":
+                    Pantographs.Parse(lowercasetoken, stf);
+                    break;
+                case "wagon(intakepoint": IntakePointList.Add(new IntakePoint(stf)); break;
+                case "wagon(passengercapacity": HasPassengerCapacity = true;  break;
                 default:
                     if (MSTSBrakeSystem != null)
                         MSTSBrakeSystem.Parse(lowercasetoken, stf);
@@ -248,24 +413,54 @@ namespace ORTS
         /// 
         /// IMPORTANT NOTE:  everything you initialized in parse, must be initialized here
         /// </summary>
-        public virtual void InitializeFromCopy(MSTSWagon copy)
+        public virtual void Copy(MSTSWagon copy)
         {
             MainShapeFileName = copy.MainShapeFileName;
-            FreightShapeFileName = copy.FreightShapeFileName;
-            FreightAnimHeight = copy.FreightAnimHeight;
+            HasPassengerCapacity = copy.HasPassengerCapacity;
             IsFreight = copy.IsFreight;
-            InteriorShapeFileName = copy.InteriorShapeFileName;
-            MainSoundFileName = copy.MainSoundFileName;
-            InteriorSoundFileName = copy.InteriorSoundFileName;
+            IsTender = copy.IsTender;
+            IsPassenger = copy.IsPassenger;
+            IsEngine = copy.IsEngine;
+            FreightShapeFileName = copy.FreightShapeFileName;
+            FreightAnimMaxLevelM = copy.FreightAnimMaxLevelM;
+            FreightAnimMinLevelM = copy.FreightAnimMinLevelM;
+            CarWidthM = copy.CarWidthM;
+            CarHeightM = copy.CarHeightM;
+            CarLengthM = copy.CarLengthM;
+            Gauge1M = copy.Gauge1M;
+            Gauge2M = copy.Gauge2M;
+            XCoGM = copy.XCoGM;
+            YCoGM = copy.YCoGM;
+            ZCoGM = copy.ZCoGM;
+            UnbalancedSuperElevationM = copy.UnbalancedSuperElevationM;
+            WheelBase1M = copy.WheelBase1M;
+            WheelBase2M = copy.WheelBase2M;
+            MassKG = copy.MassKG;
             WheelRadiusM = copy.WheelRadiusM;
             DriverWheelRadiusM = copy.DriverWheelRadiusM;
-            Friction0N = copy.Friction0N;
+            MainSoundFileName = copy.MainSoundFileName;
             DavisAN = copy.DavisAN;
             DavisBNSpM = copy.DavisBNSpM;
             DavisCNSSpMM = copy.DavisCNSSpMM;
-            Length = copy.Length;
-			Height = copy.Height;
-            MassKG = copy.MassKG;
+            FrictionC1 = copy.FrictionC1;
+            FrictionE1 = copy.FrictionE1;
+            FrictionV2 = copy.FrictionV2;
+            FrictionC2 = copy.FrictionC2;
+            FrictionE2 = copy.FrictionE2;
+            IsDavisFriction = copy.IsDavisFriction;
+            IsRollerBearing = copy.IsRollerBearing;
+            IsLowTorqueRollerBearing = copy.IsLowTorqueRollerBearing;
+            IsFrictionBearing = copy.IsFrictionBearing;
+            brakeSystemType = copy.brakeSystemType;
+            BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
+            EmergencyReservoirPresent = copy.EmergencyReservoirPresent;
+            DistributorPresent = copy.DistributorPresent;
+            HandBrakePresent = copy.HandBrakePresent;
+            RetainerPositions = copy.RetainerPositions;
+            InteriorShapeFileName = copy.InteriorShapeFileName;
+            InteriorSoundFileName = copy.InteriorSoundFileName;
+            Cab3DShapeFileName = copy.Cab3DShapeFileName;
+            Cab3DSoundFileName = copy.Cab3DSoundFileName;
             Adhesion1 = copy.Adhesion1;
             Adhesion2 = copy.Adhesion2;
             Adhesion3 = copy.Adhesion3;
@@ -274,22 +469,29 @@ namespace ORTS
             Curtius_KnifflerC = copy.Curtius_KnifflerC;
             AdhesionK = copy.AdhesionK;
             AxleInertiaKgm2 = copy.AxleInertiaKgm2;
-            SlipWarningTresholdPercent = copy.SlipWarningTresholdPercent;
+            SlipWarningThresholdPercent = copy.SlipWarningThresholdPercent;
             Lights = copy.Lights;
-            foreach (ViewPoint passengerViewPoint in copy.PassengerViewpoints)
+            foreach (PassengerViewPoint passengerViewPoint in copy.PassengerViewpoints)
                 PassengerViewpoints.Add(passengerViewPoint);
             foreach (ViewPoint headOutViewPoint in copy.HeadOutViewpoints)
                 HeadOutViewpoints.Add(headOutViewPoint);
+            if (copy.CabViewpoints != null)
+            {
+                CabViewpoints = new List<PassengerViewPoint>();
+                foreach (PassengerViewPoint cabViewPoint in copy.CabViewpoints)
+                CabViewpoints.Add(cabViewPoint);
+            }
             foreach (MSTSCoupling coupler in copy.Couplers)
                 Couplers.Add(coupler);
 
-            brakeSystemType = copy.brakeSystemType;
-            BrakeSystem = MSTSBrakeSystem.Create(brakeSystemType, this);
+            Pantographs.Copy(copy.Pantographs);
+
             MSTSBrakeSystem.InitializeFromCopy(copy.BrakeSystem);
         }
+
         private void ParseWagonInside(STFReader stf)
         {
-            ViewPoint passengerViewPoint = new ViewPoint();
+            PassengerViewPoint passengerViewPoint = new PassengerViewPoint();
             stf.MustMatch("(");
             stf.ParseBlock(new STFReader.TokenProcessor[] {
                 new STFReader.TokenProcessor("sound", ()=>{ InteriorSoundFileName = stf.ReadStringBlock(null); }),
@@ -298,74 +500,29 @@ namespace ORTS
                 new STFReader.TokenProcessor("rotationlimit", ()=>{ passengerViewPoint.RotationLimit = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
                 new STFReader.TokenProcessor("startdirection", ()=>{ passengerViewPoint.StartDirection = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
             });
+            // Set initial direction
+            passengerViewPoint.RotationXRadians = MathHelper.ToRadians(passengerViewPoint.StartDirection.X);
+            passengerViewPoint.RotationYRadians = MathHelper.ToRadians(passengerViewPoint.StartDirection.Y);
             PassengerViewpoints.Add(passengerViewPoint);
         }
-        public void ParseFriction(STFReader stf)
+        private void Parse3DCab(STFReader stf)
         {
+            PassengerViewPoint passengerViewPoint = new PassengerViewPoint();
             stf.MustMatch("(");
-            float c1 = stf.ReadFloat(STFReader.UNITS.Resistance, null);
-            float e1 = stf.ReadFloat(STFReader.UNITS.None, null);
-            float v2 = stf.ReadFloat(STFReader.UNITS.Speed,null);
-            float c2 = stf.ReadFloat(STFReader.UNITS.Resistance, null);
-            float e2 = stf.ReadFloat(STFReader.UNITS.None, null);
-            stf.SkipRestOfBlock();
-            if (v2 < 0 || v2 > 4.4407f)
-            {   // not fcalc ignore friction and use default davis equation
-                // Starting Friction 
-                //
-                //                      Above Freezing   Below Freezing
-                //    Journal Bearing      25 lb/ton        35 lb/ton   (short ton)
-                //     Roller Bearing       5 lb/ton        15 lb/ton
-                //
-                // [2009-10-25 from http://www.arema.org/publications/pgre/ ]
-                //Friction0N = MassKG * 30f /* lb/ton */ * 4.84e-3f;  // convert lbs/short-ton to N/kg 
-                DavisAN = 6.3743f * MassKG / 1000 + 128.998f * 4;
-                DavisBNSpM = .49358f * MassKG / 1000;
-                DavisCNSSpMM = .11979f * 100 / 10.76f;
-                Friction0N = DavisAN * 2.0f;            //More firendly to high load trains and the new physics
-            }
-            else
-            {   // probably fcalc, recover approximate davis equation
-                float mps1 = v2;
-                float mps2 = 80 * .44704f;
-                float s = mps2 - mps1;
-                float x1 = mps1 * mps1;
-                float x2 = mps2 * mps2;
-                float sx = (x2 - x1) / 2;
-                float y0 = c1 * (float)Math.Pow(mps1, e1) + c2 * mps1;
-                float y1 = c2 * (float)Math.Pow(mps1, e2) * mps1;
-                float y2 = c2 * (float)Math.Pow(mps2, e2) * mps2;
-                float sy = y0 * (mps2 - mps1) + (y2 - y1) / (1 + e2);
-                y1 *= mps1;
-                y2 *= mps2;
-                float syx = y0 * (x2 - x1) / 2 + (y2 - y1) / (2 + e2);
-                x1 *= mps1;
-                x2 *= mps2;
-                float sx2 = (x2 - x1) / 3;
-                y1 *= mps1;
-                y2 *= mps2;
-                float syx2 = y0 * (x2 - x1) / 3 + (y2 - y1) / (3 + e2);
-                x1 *= mps1;
-                x2 *= mps2;
-                float sx3 = (x2 - x1) / 4;
-                x1 *= mps1;
-                x2 *= mps2;
-                float sx4 = (x2 - x1) / 5;
-                float s1 = syx - sy * sx / s;
-                float s2 = sx * sx2 / s - sx3;
-                float s3 = sx2 - sx * sx / s;
-                float s4 = syx2 - sy * sx2 / s;
-                float s5 = sx2 * sx2 / s - sx4;
-                float s6 = sx3 - sx * sx2 / s;
-                DavisCNSSpMM = (s1 * s6 - s3 * s4) / (s3 * s5 - s2 * s6);
-                DavisBNSpM = (s1 + DavisCNSSpMM * s2) / s3;
-                DavisAN = (sy - DavisBNSpM * sx - DavisCNSSpMM * sx2) / s;
-                Friction0N = c1;
-                if (e1 < 0)
-                    Friction0N *= (float)Math.Pow(.0025 * .44704, e1);
-            }
+            stf.ParseBlock(new STFReader.TokenProcessor[] {
+                new STFReader.TokenProcessor("sound", ()=>{ Cab3DSoundFileName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("orts3dcabfile", ()=>{ Cab3DShapeFileName = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("orts3dcabheadpos", ()=>{ passengerViewPoint.Location = stf.ReadVector3Block(STFReader.UNITS.Distance, new Vector3()); }),
+                new STFReader.TokenProcessor("rotationlimit", ()=>{ passengerViewPoint.RotationLimit = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
+                new STFReader.TokenProcessor("startdirection", ()=>{ passengerViewPoint.StartDirection = stf.ReadVector3Block(STFReader.UNITS.None, new Vector3()); }),
+            });
+            // Set initial direction
+            passengerViewPoint.RotationXRadians = MathHelper.ToRadians(passengerViewPoint.StartDirection.X);
+            passengerViewPoint.RotationYRadians = MathHelper.ToRadians(passengerViewPoint.StartDirection.Y);
+            if (this.CabViewpoints == null) CabViewpoints = new List<PassengerViewPoint>();
+            CabViewpoints.Add(passengerViewPoint);
         }
-        public float ParseFloat(string token)
+        public static float ParseFloat(string token)
         {   // is there a better way to ignore any suffix?
             while (token.Length > 0)
             {
@@ -390,6 +547,10 @@ namespace ORTS
             outf.Write(Variable1);
             outf.Write(Variable2);
             outf.Write(Variable3);
+            outf.Write(IsDavisFriction);
+            outf.Write(IsRollerBearing);
+            outf.Write(IsLowTorqueRollerBearing);
+            outf.Write(IsFrictionBearing);
             outf.Write(Friction0N);
             outf.Write(DavisAN);
             outf.Write(DavisBNSpM);
@@ -397,6 +558,7 @@ namespace ORTS
             outf.Write(Couplers.Count);
             foreach (MSTSCoupling coupler in Couplers)
                 coupler.Save(outf);
+            Pantographs.Save(outf);
             base.Save(outf);
         }
 
@@ -409,6 +571,10 @@ namespace ORTS
             Variable1 = inf.ReadSingle();
             Variable2 = inf.ReadSingle();
             Variable3 = inf.ReadSingle();
+            IsDavisFriction = inf.ReadBoolean();
+            IsRollerBearing = inf.ReadBoolean();
+            IsLowTorqueRollerBearing = inf.ReadBoolean();
+            IsFrictionBearing = inf.ReadBoolean();
             Friction0N = inf.ReadSingle();
             DavisAN = inf.ReadSingle();
             DavisBNSpM = inf.ReadSingle();
@@ -419,31 +585,203 @@ namespace ORTS
                 Couplers.Add(new MSTSCoupling());
                 Couplers[i].Restore(inf);
             }
+            Pantographs.Restore(inf);
             base.Restore(inf);
+
+            // always set aux power on due to error in PowerSupplyClass
+            AuxPowerOn = true;
         }
 
-
-        public override TrainCarViewer GetViewer(Viewer3D viewer)
-        {
-            // warning - don't assume there is only one viewer, or that there are any viewers at all.
-            // Best practice is not to give the TrainCar class any knowledge of its viewers.
-            return new MSTSWagonViewer(viewer, this);
-        }
-
-        public override void Update( float elapsedClockSeconds )
+        public override void Update(float elapsedClockSeconds)
         {
             base.Update(elapsedClockSeconds);
 
-            float s = Math.Abs(SpeedMpS);
-            if (s > 0.1)
-                IsStandStill = false;
-            if (s == 0.0)
-                IsStandStill = true;
+            if (IsDavisFriction == true) // test to see if OR thinks that Davis Values have been entered in WG file.
+            {
+                if (DavisAN == 0 || DavisBNSpM == 0 || DavisCNSSpMM == 0) // If Davis parameters are not defined in WAG file, then set falg to use default friction values
+                    IsDavisFriction = false; // set to false - indicating that Davis friction is not used
+            }
 
-            if(IsStandStill)
-                FrictionForceN = Friction0N;
-            else
-                FrictionForceN = DavisAN + s * (DavisBNSpM + s * DavisCNSSpMM);
+            if (IsDavisFriction == false)    // If Davis parameters are not defined in WAG file, then use default methods
+            {
+
+                if (FrictionV2 < 0 || FrictionV2 > 4.4407f) // > 10 mph
+                {   // not fcalc ignore friction and use default davis equation
+                    // Starting Friction 
+                    //
+                    //                      Above Freezing   Below Freezing
+                    //    Journal Bearing      25 lb/ton        35 lb/ton   (short ton)
+                    //     Roller Bearing       5 lb/ton        15 lb/ton
+                    //
+                    // [2009-10-25 from http://www.arema.org/publications/pgre/ ]
+                    //Friction0N = MassKG * 30f /* lb/ton */ * 4.84e-3f;  // convert lbs/short-ton to N/kg 
+                    DavisAN = 6.3743f * MassKG / 1000 + 128.998f * 4;
+                    DavisBNSpM = .49358f * MassKG / 1000;
+                    DavisCNSSpMM = .11979f * 100 / 10.76f;
+                    Friction0N = DavisAN * 2.0f;            //More firendly to high load trains and the new physics
+                }
+                else
+                {   // probably fcalc, recover approximate davis equation
+                    float mps1 = FrictionV2;
+                    float mps2 = 80 * .44704f;
+                    float s = mps2 - mps1;
+                    float x1 = mps1 * mps1;
+                    float x2 = mps2 * mps2;
+                    float sx = (x2 - x1) / 2;
+                    float y0 = FrictionC1 * (float)Math.Pow(mps1, FrictionE1) + FrictionC2 * mps1;
+                    float y1 = FrictionC2 * (float)Math.Pow(mps1, FrictionE2) * mps1;
+                    float y2 = FrictionC2 * (float)Math.Pow(mps2, FrictionE2) * mps2;
+                    float sy = y0 * (mps2 - mps1) + (y2 - y1) / (1 + FrictionE2);
+                    y1 *= mps1;
+                    y2 *= mps2;
+                    float syx = y0 * (x2 - x1) / 2 + (y2 - y1) / (2 + FrictionE2);
+                    x1 *= mps1;
+                    x2 *= mps2;
+                    float sx2 = (x2 - x1) / 3;
+                    y1 *= mps1;
+                    y2 *= mps2;
+                    float syx2 = y0 * (x2 - x1) / 3 + (y2 - y1) / (3 + FrictionE2);
+                    x1 *= mps1;
+                    x2 *= mps2;
+                    float sx3 = (x2 - x1) / 4;
+                    x1 *= mps1;
+                    x2 *= mps2;
+                    float sx4 = (x2 - x1) / 5;
+                    float s1 = syx - sy * sx / s;
+                    float s2 = sx * sx2 / s - sx3;
+                    float s3 = sx2 - sx * sx / s;
+                    float s4 = syx2 - sy * sx2 / s;
+                    float s5 = sx2 * sx2 / s - sx4;
+                    float s6 = sx3 - sx * sx2 / s;
+                    DavisCNSSpMM = (s1 * s6 - s3 * s4) / (s3 * s5 - s2 * s6);
+                    DavisBNSpM = (s1 + DavisCNSSpMM * s2) / s3;
+                    DavisAN = (sy - DavisBNSpM * sx - DavisCNSSpMM * sx2) / s;
+                    Friction0N = FrictionC1;
+                    if (FrictionE1 < 0)
+                        Friction0N *= (float)Math.Pow(.0025 * .44704, FrictionE1);
+                }
+
+                FrictionSpeedMpS = Math.Abs(SpeedMpS);
+                if (FrictionSpeedMpS > 0.1)
+                    IsStandStill = false;
+                if (FrictionSpeedMpS == 0.0)
+                    IsStandStill = true;
+
+                if (IsStandStill)
+                    FrictionForceN = Friction0N;
+                else
+                    FrictionForceN = DavisAN + FrictionSpeedMpS * (DavisBNSpM + FrictionSpeedMpS * DavisCNSSpMM);
+
+            }
+
+            if (IsDavisFriction)  // If set to use next Davis friction then do so
+            {
+                // Davis formulas only apply above about 5mph, so different treatment required for low speed < 5mph.
+                FrictionSpeedMpS = Math.Abs(SpeedMpS);
+                if (FrictionSpeedMpS > MpS.FromMpH(5))     // if speed above 5 mph then turn off low speed calculations
+                    IsLowSpeed = false;
+                if (FrictionSpeedMpS == 0.0)
+                    IsLowSpeed = true;
+
+                float SteamLocoMechFrictN = GetSteamLocoMechFrictN();
+
+                if (IsLowSpeed)
+                {
+                    // If weather is freezing, then starting friction will be greater until bearings have warmed up.
+                    // Chwck whether weather is snowing
+
+                    int FrictionWeather = (int)Program.Simulator.Weather;
+                    bool IsSnowing = false;
+
+                    if (FrictionWeather == 1)
+                    {
+                        IsSnowing = true;  // Weather snowing - freezing conditions
+                    }
+
+                    // Dtermine the starting friction factor based upon the type of bearing
+
+                    float StartFrictionLow = 0.0f;
+                    float StartFrictionHigh = 0.0f;
+
+                    if (IsRollerBearing)
+                    {
+                        if (!IsSnowing)
+                        {
+                            StartFrictionLow = 4.257f;  // Starting friction for a 10 ton(US) car with standard roller bearings, not snowing
+                            StartFrictionHigh = 15.93f;  // Starting friction for a 100 ton(US) car with standard roller bearings, not snowing
+                        }
+                        else
+                        {
+                            StartFrictionLow = 12.771f;  // Starting friction for a 10 ton(US) car with Low troque bearings, snowing
+                            StartFrictionHigh = 30.0f;  // Starting friction for a 100 ton(US) car with low torque bearings, snowing
+                        }
+                        if (Kg.ToTUS(MassKG) < 10.0)
+                        {
+                            StaticFrictionFactorLb = StartFrictionLow;  // Starting friction for a < 10 ton(US) car with standard roller bearings
+                        }
+                        else if (Kg.ToTUS(MassKG) > 100.0)
+                        {
+                            StaticFrictionFactorLb = StartFrictionHigh;  // Starting friction for a > 100 ton(US) car with standard roller bearings
+                        }
+                        else
+                        {
+                            StaticFrictionFactorLb = ((Kg.ToTUS(MassKG) - 10.0f) / 90.0f) * StartFrictionHigh;
+                        }
+                        SteamLocoMechFrictN = 0.0f; // Assume no locomotive mechanical friction if fitted with roller bearings
+                    }
+                    else if (IsLowTorqueRollerBearing)
+                    {
+                        if (!IsSnowing)
+                        {
+                            StartFrictionLow = 2.66f;  // Starting friction for a 10 ton(US) car with Low troque bearings, not snowing
+                            StartFrictionHigh = 7.714f;  // Starting friction for a 100 ton(US) car with low torque bearings, not snowing
+                        }
+                        else
+                        {
+                            StartFrictionLow = 7.98f;  // Starting friction for a 10 ton(US) car with Low troque bearings, not snowing
+                            StartFrictionHigh = 23.142f;  // Starting friction for a 100 ton(US) car with low torque bearings, not snowing
+                        }
+                        if (Kg.ToTUS(MassKG) < 10.0)
+                        {
+                            StaticFrictionFactorLb = StartFrictionLow;  // Starting friction for a < 10 ton(US) car with Low troque bearings
+                        }
+                        else if (Kg.ToTUS(MassKG) > 100.0)
+                        {
+                            StaticFrictionFactorLb = StartFrictionHigh;  // Starting friction for a > 100 ton(US) car with low torque bearings
+                        }
+                        else
+                        {
+                            StaticFrictionFactorLb = ((Kg.ToTUS(MassKG) - 10.0f) / 90.0f) * StartFrictionHigh;
+                        }
+                        SteamLocoMechFrictN = 0.0f; // Assume no locomotive mechanical friction if fitted with low torque roller bearings
+                       
+                    }
+                    else  // default to friction (solid) bearing
+                    {
+
+                        if (!IsSnowing)
+                        {
+                            StaticFrictionFactorLb = 20.0f; // multiplier factor for friction bearings - 20lbs / short ton
+                        }
+                        else
+                        {
+                            StaticFrictionFactorLb = 35.0f; // multiplier factor for friction bearings - 35lbs / short ton
+                        }
+                                              
+                    }
+
+                    const float speed5 = 2.2352f; // 5 mph
+                    Friction5N = DavisAN + speed5 * (DavisBNSpM + speed5 * DavisCNSSpMM) + SteamLocoMechFrictN; // Calculate friction @ 5 mph
+                    Friction0N = N.FromLbf(Kg.ToTUS(MassKG) * StaticFrictionFactorLb) + SteamLocoMechFrictN; // Static friction is journal or roller bearing friction x factor + Mech Factor if steam 
+                    float FrictionLowSpeedN = ((1.0f - (FrictionSpeedMpS / speed5)) * (Friction0N - Friction5N)) + Friction5N; // Calculate friction below 5mph - decreases linearly with speed
+                    FrictionForceN = FrictionLowSpeedN; // At low speed use this value
+                }
+                else
+                {
+                    FrictionForceN = DavisAN + FrictionSpeedMpS * (DavisBNSpM + FrictionSpeedMpS * DavisCNSSpMM) + SteamLocoMechFrictN; // for normal speed operation
+                }
+            }
+            
 
             foreach (MSTSCoupling coupler in Couplers)
             {
@@ -455,6 +793,8 @@ namespace ORTS
                     CouplerOverloaded = false;
             }
 
+            Pantographs.Update(elapsedClockSeconds);
+
             MSTSBrakeSystem.Update(elapsedClockSeconds);
         }
 
@@ -462,10 +802,19 @@ namespace ORTS
         {
             switch (evt)
             {
-                case Event.Pantograph1Up: { Pan1Up = true; Pan = Pan1Up || Pan2Up; break; }
-                case Event.Pantograph1Down: { Pan1Up = false; Pan = Pan1Up || Pan2Up; break; }
-                case Event.Pantograph2Up: { Pan2Up = true; Pan = Pan1Up || Pan2Up; break; }
-                case Event.Pantograph2Down: { Pan2Up = false; Pan = Pan1Up || Pan2Up; break; }
+                // Compatibility layer for MSTS events
+                case Event.Pantograph1Up:
+                    SignalEvent(PowerSupplyEvent.RaisePantograph, 1);
+                    break;
+                case Event.Pantograph1Down:
+                    SignalEvent(PowerSupplyEvent.LowerPantograph, 1);
+                    break;
+                case Event.Pantograph2Up:
+                    SignalEvent(PowerSupplyEvent.RaisePantograph, 2);
+                    break;
+                case Event.Pantograph2Down:
+                    SignalEvent(PowerSupplyEvent.LowerPantograph, 2);
+                    break;
             }
 
             // TODO: This should be moved to TrainCar probably.
@@ -475,64 +824,220 @@ namespace ORTS
             base.SignalEvent(evt);
         }
 
-        // <CJComment> Expected pantograph handling to be in MSTSElectricLocomotive.cs,
-        // but guess that some trains have pantographs on non-motorised cars </CJComment>
-        public void ToggleFirstPantograph() {
-    		Pan1Up = !Pan1Up;
-            if( Simulator.PlayerLocomotive == this ) //inform everyone else in the train
-                foreach( TrainCar car in Train.Cars )
-                    if( car != this && car is MSTSWagon ) ((MSTSWagon)car).Pan1Up = Pan1Up;
-            if( Pan1Up ) {
-                SignalEvent(Event.Pantograph1Up);
-            } else {
-                SignalEvent(Event.Pantograph1Down);
+        public override void SignalEvent(PowerSupplyEvent evt)
+        {
+            if (Simulator.PlayerLocomotive == this || AcceptMUSignals)
+            {
+                switch (evt)
+                {
+                    case PowerSupplyEvent.RaisePantograph:
+                    case PowerSupplyEvent.LowerPantograph:
+                        if (Pantographs != null)
+                            Pantographs.HandleEvent(evt);
+                        break;
+                }
             }
+
+            base.SignalEvent(evt);
         }
 
-        public void ToggleSecondPantograph() {
-            Pan2Up = !Pan2Up;
-            if( Simulator.PlayerLocomotive == this ) //inform everyone else in the train
-                foreach( TrainCar car in Train.Cars )
-                    if( car != this && car is MSTSWagon ) ((MSTSWagon)car).Pan2Up = Pan2Up;
-            if( Pan2Up ) {
-                SignalEvent(Event.Pantograph2Up);
-            } else {
-                SignalEvent(Event.Pantograph2Down);
+        public override void SignalEvent(PowerSupplyEvent evt, int id)
+        {
+            if (Simulator.PlayerLocomotive == this || AcceptMUSignals)
+            {
+                switch (evt)
+                {
+                    case PowerSupplyEvent.RaisePantograph:
+                    case PowerSupplyEvent.LowerPantograph:
+                        if (Pantographs != null)
+                            Pantographs.HandleEvent(evt, id);
+                        break;
+                }
             }
+
+            base.SignalEvent(evt, id);
         }
-        
-        public void ToggleDoorsLeft() {
+
+        public void ToggleDoorsLeft()
+        {
             DoorLeftOpen = !DoorLeftOpen;
-            if( Simulator.PlayerLocomotive == this ) {//inform everyone else in the train
-                foreach( TrainCar car in Train.Cars ) {
-                    if (car != this && car is MSTSWagon)
+            if (Simulator.PlayerLocomotive == this || Train.LeadLocomotive == this) // second part for remote trains
+            {//inform everyone else in the train
+                foreach (var car in Train.Cars)
+                {
+                    var mstsWagon = car as MSTSWagon;
+                    if (car != this && mstsWagon != null)
                     {
-                        ((MSTSWagon)car).DoorLeftOpen = DoorLeftOpen;
+                        mstsWagon.DoorLeftOpen = DoorLeftOpen;
+                        mstsWagon.SignalEvent(DoorLeftOpen ? Event.DoorOpen : Event.DoorClose); // hook for sound trigger
                     }
                 }
-                /*if (MSTSWagon.DoorLeftOpen) Car.SignalEvent(EventID.DoorOpen);
-                else Car.SignalEvent(EventID.DoorClose);*/
-                //comment out, but can be added back to animate sound
-                Simulator.Confirmer.Confirm( CabControl.DoorsLeft, DoorLeftOpen ? CabSetting.On : CabSetting.Off );
+                if (DoorLeftOpen) SignalEvent(Event.DoorOpen); // hook for sound trigger
+                else SignalEvent(Event.DoorClose);
+                if (Simulator.PlayerLocomotive == this) Simulator.Confirmer.Confirm(CabControl.DoorsLeft, DoorLeftOpen ? CabSetting.On : CabSetting.Off);
             }
         }
 
-        public void ToggleDoorsRight() {
+        public void ToggleDoorsRight()
+        {
             DoorRightOpen = !DoorRightOpen;
-            if( Simulator.PlayerLocomotive == this ) { //inform everyone else in the train
-                foreach( TrainCar car in Train.Cars ) {
-                    if( car != this && car is MSTSWagon ) ((MSTSWagon)car).DoorRightOpen = DoorRightOpen;
+            if (Simulator.PlayerLocomotive == this || Train.LeadLocomotive == this) // second part for remote trains
+            { //inform everyone else in the train
+                foreach (TrainCar car in Train.Cars)
+                {
+                    var mstsWagon = car as MSTSWagon;
+                    if (car != this && mstsWagon != null)
+                    {
+                        mstsWagon.DoorRightOpen = DoorRightOpen;
+                        mstsWagon.SignalEvent(DoorRightOpen ? Event.DoorOpen : Event.DoorClose); // hook for sound trigger
+                    }
                 }
-                /*if (MSTSWagon.DoorLeftOpen) Car.SignalEvent(EventID.DoorOpen);
-                else Car.SignalEvent(EventID.DoorClose);*/
-                //comment out, but can be added back to animate sound
-                Simulator.Confirmer.Confirm( CabControl.DoorsRight, DoorRightOpen ? CabSetting.On : CabSetting.Off );
+                if (DoorRightOpen) SignalEvent(Event.DoorOpen); // hook for sound trigger
+                else SignalEvent(Event.DoorClose);
+                if (Simulator.PlayerLocomotive == this) Simulator.Confirmer.Confirm(CabControl.DoorsRight, DoorRightOpen ? CabSetting.On : CabSetting.Off);
             }
         }
 
-        public void ToggleMirrors() {
+        public void ToggleMirrors()
+        {
             MirrorOpen = !MirrorOpen;
-            Simulator.Confirmer.Confirm( CabControl.Mirror, MirrorOpen ? CabSetting.On : CabSetting.Off );
+            if (MirrorOpen) SignalEvent(Event.MirrorOpen); // hook for sound trigger
+            else SignalEvent(Event.MirrorClose);
+            if (Simulator.PlayerLocomotive == this) Simulator.Confirmer.Confirm(CabControl.Mirror, MirrorOpen ? CabSetting.On : CabSetting.Off);
+        }
+
+        public void FindTendersSteamLocomotive()
+        {
+            if (Train == null || Train.Cars == null || Train.Cars.Count < 2)
+            {
+                TendersSteamLocomotive = null;
+                return;
+            }
+
+            var tenderIndex = 0;
+            for (var i = 0; i < Train.Cars.Count; i++)
+            {
+                if (Train.Cars[i] == this)
+                    tenderIndex = i;
+            }
+            if (tenderIndex > 0 && Train.Cars[tenderIndex - 1] is MSTSSteamLocomotive)
+                TendersSteamLocomotive = Train.Cars[tenderIndex - 1] as MSTSSteamLocomotive;
+            if (tenderIndex < Train.Cars.Count - 1 && Train.Cars[tenderIndex + 1] is MSTSSteamLocomotive)
+                TendersSteamLocomotive = Train.Cars[tenderIndex + 1] as MSTSSteamLocomotive;
+        }
+
+        // Make the Track Gauge available to other classes
+        public override float GetTrackGaugeM()
+        {
+            TrackGaugeM = Gauge1M + Gauge2M;    // Calculate track gauge - it can be entered in ft in or M.
+            if (TrackGaugeM == 0)
+            {
+                TrackGaugeM = 1.435f;       // If track gauge value not found then assume standard gauge - 4' 8.5" or 1.435m
+            }
+            
+            return TrackGaugeM;
+        }
+
+        // Make the Centre of Gravity available to other classes
+        public override float GetCentreofGravityM()
+        {
+            CentreOfGravityM = YCoGM;
+            if (CentreOfGravityM == 0 || CentreOfGravityM > 3)
+            {
+                CentreOfGravityM = 1.8f; // if no value in wag file or is outside of bounds then set to a default value
+            }
+            return CentreOfGravityM;
+        }
+
+        // Make the vehicle rigid wheelbase is available to other classes
+        public override float GetRigidWheelBaseM()
+        {
+
+            // Calculate the default Rigid Wheelbase if not in WAG File
+            
+            RigidWheelBaseM = WheelBase1M + WheelBase2M;
+            
+            return RigidWheelBaseM;
+        }
+
+        // Make the Locomotive Drive wheel Radius available to other classes
+        public override float GetDriverWheelRadiusM()
+        {
+
+           return DriverWheelRadiusM;
+        }
+
+
+
+
+        // Make the vehicle num wheels available to other classes
+        public override float GetWagonNumWheels()
+        {
+
+            WagonNumWheels = NumWheelsBrakingFactor;
+
+            return WagonNumWheels;
+        }
+
+        // Pass the string wagon type to other classes
+        public override string GetWagonType()
+        {
+          WagonType ="";  // set default
+          
+          if (IsFreight)
+          {
+          WagonType ="Freight";  // set as freight wagon
+          }
+          
+          if (IsPassenger)
+          {
+          WagonType ="Passenger";  // set as passenger car
+          }
+          
+          if (IsEngine)
+          {
+          WagonType ="Engine";  // set as passenger car
+          }
+
+          if (IsTender)
+          {
+          WagonType ="Tender";  // set as passenger car
+          }
+            return WagonType;
+        }
+
+        // Make the Unbalanced SuperElevation available to other classes
+        public override float GetUnbalancedSuperElevationM()
+        {
+            if (UnbalancedSuperElevationM == 0 || UnbalancedSuperElevationM > 0.5) // If UnbalancedSuperElevationM > 12", or equal to zero, then set a default value
+            {
+                if (IsFreight)
+                {
+                    UnbalancedSuperElevationM = Me.FromIn(0.0f);  // Unbalanced superelevation has a maximum value of 0"
+                }
+                else if (IsPassenger)
+                {
+                    UnbalancedSuperElevationM = Me.FromIn(3.0f);  // Unbalanced superelevation has a maximum value of 6"
+                }
+                else if (IsEngine)
+                {
+                    UnbalancedSuperElevationM = Me.FromIn(6.0f);  // Unbalanced superelevation has a maximum value of 6"
+                }
+                else if (IsTender)
+                {
+                    UnbalancedSuperElevationM = Me.FromIn(6.0f);  // Unbalanced superelevation has a maximum value of 6"
+                }
+                else
+                {
+                    UnbalancedSuperElevationM = Me.FromIn(0.01f);  // if no value in wag file or is outside of bounds then set to a default value
+                }
+            }
+            return UnbalancedSuperElevationM;
+        }
+
+        public bool GetTrainHandbrakeStatus()
+        {
+            return MSTSBrakeSystem.GetHandbrakeStatus();
         }
 
         // sound sources and viewers can register themselves to get direct notification of an event
@@ -579,16 +1084,53 @@ namespace ORTS
             coupler.Rigid = coupler.R0Diff < .0002f;
             coupler.Stiffness1NpM = other.GetCouplerStiffnessNpM() / 7;
             coupler.Stiffness2NpM = 0;
-            Couplers[0]= coupler;
+            if (Couplers.Count == 0)
+                Couplers.Add(coupler);
+            else
+                Couplers[0]= coupler;
             if (Couplers.Count > 1)
                 Couplers.RemoveAt(1);
+        }
+
+        public void SetWagonHandbrake(bool ToState)
+        {
+            if (ToState)
+                MSTSBrakeSystem.SetHandbrakePercent(100);
+            else
+                MSTSBrakeSystem.SetHandbrakePercent(0);
+        }
+    }
+
+    /// <summary>
+    /// An IntakePoint object is created for any engine or wagon having a 
+    /// IntakePoint block in its ENG/WAG file. 
+    /// Called from within the MSTSWagon class.
+    /// </summary>
+    public class IntakePoint
+    {
+        public float OffsetM = 0f;   // distance forward? from the centre of the vehicle as defined by LengthM/2.
+        public float WidthM = 10f;   // of the filling point. Is the maximum positioning error allowed equal to this or half this value? 
+        public string Type;          // 'fuelcoal', 'fuelwater', 'fueldiesel', 'fuelwood'
+        public float? DistanceFromFrontOfTrainM;
+
+        public IntakePoint()
+        {
+        }
+        
+        public IntakePoint(STFReader stf)
+        {
+            stf.MustMatch("(");
+            OffsetM = stf.ReadFloat(STFReader.UNITS.None, 0f);
+            WidthM = stf.ReadFloat(STFReader.UNITS.None, 10f);
+            Type = stf.ReadString().ToLower();
+            stf.SkipRestOfBlock();
         }
     }
 
     public class MSTSCoupling
     {
-        public bool Rigid = false;
-        public float R0 = 0;
+        public bool Rigid;
+        public float R0;
         public float R0Diff = .012f;
         public float Stiffness1NpM = 1e7f;
         public float Stiffness2NpM = 2e7f;
@@ -674,13 +1216,13 @@ namespace ORTS
         readonly PoseableShape PoseableShape;
 
         // Number of animation key-frames that are used by this part. This is calculated from the matrices provided.
-        int FrameCount = 0;
+        public int FrameCount;
 
         // Current frame of the animation.
-        float AnimationKey = 0;
+        float AnimationKey;
 
         // List of the matrices we're animating for this part.
-        List<int> MatrixIndexes = new List<int>();
+        public List<int> MatrixIndexes = new List<int>();
 
         /// <summary>
         /// Construct with a link to the shape that contains the animated parts 
@@ -709,6 +1251,10 @@ namespace ORTS
                 && PoseableShape.SharedShape.Animations[0].anim_nodes[matrix].controllers[0].Count > 0)
             {
                 FrameCount = Math.Max(FrameCount, PoseableShape.SharedShape.Animations[0].anim_nodes[matrix].controllers[0].ToArray().Cast<KeyPosition>().Last().Frame);
+                // Sometimes there are more frames in the second controller than in the first
+                if ( PoseableShape.SharedShape.Animations[0].anim_nodes[matrix].controllers.Count > 1
+                && PoseableShape.SharedShape.Animations[0].anim_nodes[matrix].controllers[1].Count > 0)
+                    FrameCount = Math.Max(FrameCount, PoseableShape.SharedShape.Animations[0].anim_nodes[matrix].controllers[1].ToArray().Cast<KeyPosition>().Last().Frame);
             }
             for (var i = 0; i < PoseableShape.Hierarchy.Length; i++)
                 if (PoseableShape.Hierarchy[i] == matrix)
@@ -817,424 +1363,6 @@ namespace ORTS
             b = temp;
         }
     }
-
-
-
-    ///////////////////////////////////////////////////
-    ///   3D VIEW
-    ///////////////////////////////////////////////////
-
-    /// <summary>
-    /// Note:  we need a separate viewer class since there could be multiple viewers
-    /// for a single traincar, or possibly none
-    /// </summary>
-
-    public class MSTSWagonViewer: TrainCarViewer
-    {
-        protected PoseableShape TrainCarShape;
-        protected AnimatedShape FreightShape;
-        protected AnimatedShape InteriorShape;
-        protected List<SoundSourceBase> SoundSources = new List<SoundSourceBase>();
-
-        // Wheels are rotated by hand instead of in the shape file.
-        float WheelRotationR;
-        List<int> WheelPartIndexes = new List<int>();
-
-        // Everything else is animated through the shape file.
-        AnimatedPart RunningGear;
-		AnimatedPart Pantograph1;
-		AnimatedPart Pantograph2;
-		AnimatedPart LeftDoor;
-		AnimatedPart RightDoor;
-		AnimatedPart Mirrors;
-        protected AnimatedPart Wipers;
-
-        protected MSTSWagon MSTSWagon { get { return (MSTSWagon) Car; } }
-        protected Viewer3D _Viewer3D;
-
-        bool HasFirstPanto = false;
-        public MSTSWagonViewer(Viewer3D viewer, MSTSWagon car)
-            : base(viewer, car)
-        {
-            _Viewer3D = viewer;
-            var wagonFolderSlash = Path.GetDirectoryName(car.WagFilePath) + @"\";
-            var shapePath = wagonFolderSlash + car.MainShapeFileName;
-
-            TrainCarShape = new PoseableShape(viewer, shapePath + '\0' + wagonFolderSlash, car.WorldPosition, ShapeFlags.ShadowCaster);
-
-            if (car.FreightShapeFileName != null)
-                FreightShape = new AnimatedShape(viewer, wagonFolderSlash + car.FreightShapeFileName + '\0' + wagonFolderSlash, car.WorldPosition, ShapeFlags.ShadowCaster);
-
-            if (car.InteriorShapeFileName != null)
-                InteriorShape = new AnimatedShape(viewer, wagonFolderSlash + car.InteriorShapeFileName + '\0' + wagonFolderSlash, car.WorldPosition);
-
-            RunningGear = new AnimatedPart(TrainCarShape);
-            Pantograph1 = new AnimatedPart(TrainCarShape);
-            Pantograph2 = new AnimatedPart(TrainCarShape);
-            LeftDoor = new AnimatedPart(TrainCarShape);
-            RightDoor = new AnimatedPart(TrainCarShape);
-            Mirrors = new AnimatedPart(TrainCarShape);
-            Wipers = new AnimatedPart(TrainCarShape);
-
-            LoadCarSounds(wagonFolderSlash);
-            if (!(MSTSWagon is MSTSLocomotive))
-                LoadTrackSounds();
-
-            // Adding all loaded SoundSource to the main sound update thread
-            _Viewer3D.SoundProcess.AddSoundSource(this, SoundSources);
-
-            // Determine if it has first pantograph. So we can match unnamed panto parts correctly
-            for (var i = 0; i < TrainCarShape.Hierarchy.Length; i++)
-                if (TrainCarShape.SharedShape.MatrixNames[i].Contains('1')) {
-                    if (TrainCarShape.SharedShape.MatrixNames[i].ToUpper().StartsWith("PANTO")) { HasFirstPanto = true; break; }
-                }
-
-            // Match up all the matrices with their parts.
-            for (var i = 0; i < TrainCarShape.Hierarchy.Length; i++)
-                if (TrainCarShape.Hierarchy[i] == -1)
-                    MatchMatrixToPart(car, i);
-
-            car.SetUpWheels();
-
-            // If we have two pantographs, 2 is the forwards pantograph, unlike when there's only one.
-            if (!car.Flipped && !Pantograph1.Empty() && !Pantograph2.Empty())
-                AnimatedPart.Swap(ref Pantograph1, ref Pantograph2);
-
-            // If the car is flipped, the doors should be corrected to match the rest of the train.
-            if (car.Flipped)
-                AnimatedPart.Swap(ref RightDoor, ref LeftDoor);
-
-            Pantograph1.SetState(MSTSWagon.Pan1Up);
-            Pantograph2.SetState(MSTSWagon.Pan2Up);
-            LeftDoor.SetState(MSTSWagon.DoorLeftOpen);
-            RightDoor.SetState(MSTSWagon.DoorRightOpen);
-            Mirrors.SetState(MSTSWagon.MirrorOpen);
-        }
-
-        void MatchMatrixToPart(MSTSWagon car, int matrix)
-        {
-            var matrixName = TrainCarShape.SharedShape.MatrixNames[matrix].ToUpper();
-            // Gate all RunningGearPartIndexes on this!
-            var matrixAnimated = TrainCarShape.SharedShape.Animations != null && TrainCarShape.SharedShape.Animations.Count > 0 && TrainCarShape.SharedShape.Animations[0].anim_nodes.Count > matrix && TrainCarShape.SharedShape.Animations[0].anim_nodes[matrix].controllers.Count > 0;
-            if (matrixName.StartsWith("WHEELS") && matrixName.Length == 7 | matrixName.Length == 8)
-            {
-                var m = TrainCarShape.SharedShape.GetMatrixProduct(matrix);
-                //someone uses wheel to animate fans, thus check if the wheel is not too high (lower than 3m), will animate it as real wheel
-                if (m.M42 < 3)
-                {
-                    var id = 0;
-                    if (matrixName.Length == 8)
-                        Int32.TryParse(matrixName.Substring(6, 1), out id);
-                    if (matrixName.Length == 8 || !matrixAnimated)
-                        WheelPartIndexes.Add(matrix);
-                    else
-                        RunningGear.AddMatrix(matrix);
-                    var pmatrix = TrainCarShape.SharedShape.GetParentMatrix(matrix);
-                    car.AddWheelSet(m.M43, id, pmatrix);
-                }
-            }
-            else if (matrixName.StartsWith("BOGIE"))
-            {
-                var id = 1;
-                Int32.TryParse(matrixName.Substring(5), out id);
-                var m = TrainCarShape.SharedShape.GetMatrixProduct(matrix);
-                car.AddBogie(m.M43, matrix, id);
-
-                // Bogies contain wheels!
-                for (var i = 0; i < TrainCarShape.Hierarchy.Length; i++)
-                    if (TrainCarShape.Hierarchy[i] == matrix)
-                        MatchMatrixToPart(car, i);
-            }
-            else if (matrixName.StartsWith("WIPER")) // wipers
-            {
-                Wipers.AddMatrix(matrix);
-            }
-            else if (matrixName.StartsWith("DOOR")) // doors (left / right)
-            {
-                if (matrixName.StartsWith("DOOR_D") || matrixName.StartsWith("DOOR_E") || matrixName.StartsWith("DOOR_F"))
-                    LeftDoor.AddMatrix(matrix);
-                else if (matrixName.StartsWith("DOOR_A") || matrixName.StartsWith("DOOR_B") || matrixName.StartsWith("DOOR_C"))
-                    RightDoor.AddMatrix(matrix);
-            }
-            else if (matrixName.StartsWith("PANTOGRAPH")) //pantographs (1/2)
-            {
-
-                switch (matrixName)
-                {
-                    case "PANTOGRAPHBOTTOM1":
-                    case "PANTOGRAPHBOTTOM1A":
-                    case "PANTOGRAPHBOTTOM1B":
-                    case "PANTOGRAPHMIDDLE1":
-                    case "PANTOGRAPHMIDDLE1A":
-                    case "PANTOGRAPHMIDDLE1B":
-                    case "PANTOGRAPHTOP1":
-                    case "PANTOGRAPHTOP1A":
-                    case "PANTOGRAPHTOP1B":
-                        Pantograph1.AddMatrix(matrix);
-                        break;
-                    case "PANTOGRAPHBOTTOM2":
-                    case "PANTOGRAPHBOTTOM2A":
-                    case "PANTOGRAPHBOTTOM2B":
-                    case "PANTOGRAPHMIDDLE2":
-                    case "PANTOGRAPHMIDDLE2A":
-                    case "PANTOGRAPHMIDDLE2B":
-                    case "PANTOGRAPHTOP2":
-                    case "PANTOGRAPHTOP2A":
-                    case "PANTOGRAPHTOP2B":
-                        Pantograph2.AddMatrix(matrix);
-                        break;
-                    default ://someone used other language
-                        if (matrixName.Contains("1"))
-                            Pantograph1.AddMatrix(matrix);
-                        else if (matrixName.Contains("2"))
-                            Pantograph2.AddMatrix(matrix);
-                        else
-                        {
-                            if (HasFirstPanto) Pantograph1.AddMatrix(matrix); //some may have no first panto, will put it as panto 2
-                            else Pantograph2.AddMatrix(matrix);
-                        }
-                        break;
-                }
-            }
-            else if (matrixName.StartsWith("MIRROR")) // mirrors
-            {
-                Mirrors.AddMatrix(matrix);
-            }
-            else if (matrixName.StartsWith("PANTO"))  // TODO, not sure why this is needed, see above!
-            {
-                Trace.TraceInformation("Pantrograph matrix with unusual name {1} in shape {0}", TrainCarShape.SharedShape.FilePath, matrixName);
-                if (matrixName.Contains("1"))
-                    Pantograph1.AddMatrix(matrix);
-                else if (matrixName.Contains("2"))
-                    Pantograph2.AddMatrix(matrix);
-                else
-                {
-                    if (HasFirstPanto) Pantograph1.AddMatrix(matrix); //some may have no first panto, will put it as panto 2
-                    else Pantograph2.AddMatrix(matrix);
-                }
-            }
-            else
-            {
-                if (matrixAnimated && matrix != 0)
-                    RunningGear.AddMatrix(matrix);
-
-                for (var i = 0; i < TrainCarShape.Hierarchy.Length; i++)
-                    if (TrainCarShape.Hierarchy[i] == matrix)
-                        MatchMatrixToPart(car, i);
-            }
-        }
-
-        public override void HandleUserInput(ElapsedTime elapsedTime)
-        {
-			// Pantograph
-			if (UserInput.IsPressed(UserCommands.ControlPantograph1))
-			{
-                new PantographCommand(Viewer.Log, 1, !MSTSWagon.Pan1Up);
-			}
-			if (UserInput.IsPressed(UserCommands.ControlPantograph2))
-			{
-                new PantographCommand(Viewer.Log, 2, !MSTSWagon.Pan1Up);
-			}
-			if (UserInput.IsPressed(UserCommands.ControlDoorLeft)) //control door (or only left)
-			{
-                new ToggleDoorsLeftCommand(Viewer.Log);
-			}
-			if (UserInput.IsPressed(UserCommands.ControlDoorRight)) //control right door
-			{
-                new ToggleDoorsRightCommand(Viewer.Log);
-            }
-			if (UserInput.IsPressed(UserCommands.ControlMirror))    // The mirrors on trams which swing out at platforms
-			{
-                new ToggleMirrorsCommand(Viewer.Log);
-            }
-		}
-
-        /// <summary>
-        /// Called at the full frame rate
-        /// elapsedTime is time since last frame
-        /// Executes in the UpdaterThread
-        /// </summary>
-        public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
-        {
-            Pantograph1.UpdateState(MSTSWagon.Pan1Up, elapsedTime);
-            Pantograph2.UpdateState(MSTSWagon.Pan2Up, elapsedTime);
-            LeftDoor.UpdateState(MSTSWagon.DoorLeftOpen, elapsedTime);
-            RightDoor.UpdateState(MSTSWagon.DoorRightOpen, elapsedTime);
-            Mirrors.UpdateState(MSTSWagon.MirrorOpen, elapsedTime);
-            UpdateAnimation(frame, elapsedTime);
-        }
-
-
-        private void UpdateAnimation( RenderFrame frame, ElapsedTime elapsedTime )
-        {
-            float distanceTravelledM;
-            if (MSTSWagon.IsDriveable && MSTSWagon.Simulator.UseAdvancedAdhesion)
-                distanceTravelledM = MSTSWagon.WheelSpeedMpS * elapsedTime.ClockSeconds;
-            else
-                distanceTravelledM = MSTSWagon.SpeedMpS * elapsedTime.ClockSeconds;
-
-            // Running gear animation
-            if (!RunningGear.Empty() && MSTSWagon.DriverWheelRadiusM > 0.001)
-                RunningGear.UpdateLoop(distanceTravelledM / MathHelper.TwoPi / MSTSWagon.DriverWheelRadiusM);
-
-            // Wheel animation
-            if (WheelPartIndexes.Count > 0)
-            {
-                var wheelCircumferenceM = MathHelper.TwoPi * MSTSWagon.WheelRadiusM;
-                var rotationalDistanceR = MathHelper.TwoPi * distanceTravelledM / wheelCircumferenceM;  // in radians
-                WheelRotationR = MathHelper.WrapAngle(WheelRotationR - rotationalDistanceR);
-                var wheelRotationMatrix = Matrix.CreateRotationX(WheelRotationR);
-                foreach (var iMatrix in WheelPartIndexes)
-                    TrainCarShape.XNAMatrices[iMatrix] = wheelRotationMatrix * TrainCarShape.SharedShape.Matrices[iMatrix];
-            }
-
-            // truck angle animation
-            foreach (var p in Car.Parts)
-            {
-                if (p.iMatrix <= 0)
-                    continue;
-                Matrix m = Matrix.Identity;
-                m.Translation= TrainCarShape.SharedShape.Matrices[p.iMatrix].Translation;
-                m.M11 = p.Cos;
-                m.M13 = p.Sin;
-                m.M31 = -p.Sin;
-                m.M33 = p.Cos;
-
-                //if car vibrate, the bogie will stay on track, thus reverse it back (Car.SuperElevationMatrix holds the inverse)
-                if ((Program.Simulator.CarVibrating > 0 || (this.Car.Train != null && this.Car.Train.tilted)) && p.bogie) TrainCarShape.XNAMatrices[p.iMatrix] = Car.SuperElevationMatrix * m;
-                else TrainCarShape.XNAMatrices[p.iMatrix] = m;
-            }
-
-            if (FreightShape != null)
-            {
-                if (FreightShape.XNAMatrices.Length > 0)
-                    FreightShape.XNAMatrices[0].M42 = MSTSWagon.FreightAnimHeight;
-                FreightShape.PrepareFrame(frame, elapsedTime);
-            }
-
-            // Control visibility of passenger cabin when inside it
-            if (Viewer.Camera.AttachedCar == this.MSTSWagon
-                 && //( Viewer.ViewPoint == Viewer.ViewPoints.Cab ||  // TODO, restore when we complete cab views - 
-                     Viewer.Camera.Style == Camera.Styles.Passenger)
-            {
-                // We are in the passenger cabin
-                if (InteriorShape != null)
-                    InteriorShape.PrepareFrame(frame, elapsedTime);
-                else
-                    TrainCarShape.PrepareFrame(frame, elapsedTime);
-            }
-            else
-            {
-                // Skip drawing if CAB view - draw 2D view instead - by GeorgeS
-                if (Viewer.Camera.AttachedCar == this.MSTSWagon &&
-                    Viewer.Camera.Style == Camera.Styles.Cab)
-                    return;
-                
-                // We are outside the passenger cabin
-                TrainCarShape.PrepareFrame(frame, elapsedTime);
-            }
-
-        }
-
-
-
-        /// <summary>
-        /// Unload and release the car - its not longer being displayed
-        /// </summary>
-        public virtual void Unload()
-        {
-            // Removing sound sources from sound update thread
-            _Viewer3D.SoundProcess.RemoveSoundSource(this);
-            SoundSources.Clear();
-        }
-
-
-        /// <summary>
-        /// Load the various car sounds
-        /// </summary>
-        /// <param name="wagonFolderSlash"></param>
-        private void LoadCarSounds(string wagonFolderSlash)
-        {
-            if( MSTSWagon.MainSoundFileName != null ) LoadCarSound(wagonFolderSlash, MSTSWagon.MainSoundFileName );
-            if (MSTSWagon.InteriorSoundFileName != null) LoadCarSound(wagonFolderSlash, MSTSWagon.InteriorSoundFileName);
-        }
-
-
-        /// <summary>
-        /// Load the car sound, attach it to the car
-        /// check first in the wagon folder, then the global folder for the sound.
-        /// If not found, report a warning.
-        /// </summary>
-        /// <param name="wagonFolderSlash"></param>
-        /// <param name="filename"></param>
-        protected void LoadCarSound(string wagonFolderSlash, string filename)
-        {
-            if (filename == null)
-                return;
-            string smsFilePath = wagonFolderSlash + @"sound\" + filename;
-            if (!File.Exists(smsFilePath))
-                smsFilePath = Viewer.Simulator.BasePath + @"\sound\" + filename;
-            if (!File.Exists(smsFilePath))
-            {
-                Trace.TraceWarning("Cannot find {1} car sound file {0}", filename, wagonFolderSlash);
-                return;
-            }
-
-            try
-            {
-                SoundSources.Add(new SoundSource(Viewer, MSTSWagon, smsFilePath));
-            }
-            catch (Exception error)
-            {
-                Trace.WriteLine(new FileLoadException(smsFilePath, error));
-            }
-        }
-
-        /// <summary>
-        /// Load the inside and outside sounds for the default level 0 track type.
-        /// </summary>
-        private void LoadTrackSounds()
-        {
-            if (Viewer.TTypeDatFile.Count > 0)  // TODO, still have to figure out if this should be part of the car, or train, or track
-            {
-                if (!string.IsNullOrEmpty(MSTSWagon.InteriorSoundFileName))
-                    LoadTrackSound(Viewer.TTypeDatFile[0].InsideSound);
-
-                LoadTrackSound(Viewer.TTypeDatFile[0].OutsideSound);
-            }
-        }
-
-        /// <summary>
-        /// Load the sound source, attach it to the car.
-        /// Check first in route\SOUND folder, then in base\SOUND folder.
-        /// </summary>
-        /// <param name="filename"></param>
-        private void LoadTrackSound(string filename)
-        {
-            if (filename == null)
-                return;
-            string path = Viewer.Simulator.RoutePath + @"\SOUND\" + filename;
-            if (!File.Exists(path))
-                path = Viewer.Simulator.BasePath + @"\SOUND\" + filename;
-            if (!File.Exists(path))
-            {
-                Trace.TraceWarning("Cannot find track sound file {0}", filename);
-                return;
-            }
-            SoundSources.Add(new SoundSource(Viewer, MSTSWagon, path));
-        }
-
-        internal override void Mark()
-        {
-            TrainCarShape.Mark();
-            if (FreightShape != null)
-                FreightShape.Mark();
-            if (InteriorShape != null)
-                InteriorShape.Mark();
-        }
-
-    } // class carshape
-
 
     /// <summary>
     /// Utility class to avoid loading the wag file multiple times

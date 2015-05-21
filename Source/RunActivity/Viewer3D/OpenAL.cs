@@ -26,20 +26,23 @@ using System.Security;
 using System.IO;
 using System.Diagnostics;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     /// <summary>
     /// Wrapper class for the externals of library OpenAL
     /// </summary>
     public class OpenAL
     {
+        public const int AL_NONE = 0;
         public const int AL_FALSE = 0;
         public const int AL_TRUE = 1;
+
         public const int AL_BUFFER = 0x1009;
         public const int AL_BUFFERS_QUEUED = 0x1015;
         public const int AL_BUFFERS_PROCESSED = 0x1016;
         public const int AL_PLAYING = 0x1012;
         public const int AL_SOURCE_STATE = 0x1010;
+        public const int AL_SOURCE_TYPE = 0x1027;
         public const int AL_LOOPING = 0x1007;
         public const int AL_GAIN = 0x100a;
         public const int AL_VELOCITY = 0x1006;
@@ -69,9 +72,20 @@ namespace ORTS
         public const int AL_RENDERER = 0xb003;
         public const int AL_DOPPLER_FACTOR = 0xc000;
         public const int AL_LOOP_POINTS_SOFT = 0x2015;
+        public const int AL_STATIC = 0x1028;
+        public const int AL_STREAMING = 0x1029;
+        public const int AL_UNDETERMINED = 0x1030;
 
         public const int ALC_DEFAULT_DEVICE_SPECIFIER = 0x1004;
         public const int ALC_DEVICE_SPECIFIER = 0x1005;
+
+        public const int AL_NO_ERROR = 0;
+        public const int AL_INVALID = -1;
+        public const int AL_INVALID_NAME = 0xa001; // 40961
+        public const int AL_INVALID_ENUM = 0xa002; // 40962
+        public const int AL_INVALID_VALUE = 0xa003; // 40963
+        public const int AL_INVALID_OPERATION = 0xa004; // 40964
+        public const int AL_OUT_OF_MEMORY = 0xa005; // 40965
 
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern IntPtr alcOpenDevice(string deviceName);
@@ -87,9 +101,11 @@ namespace ORTS
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern string AlInitialize(string devName);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern int alIsExtensionPresent(string extensionName);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGetBufferi(int buffer, int attribute, out int val);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
-        public static extern string alGetString(int state);
+        public static extern IntPtr alGetString(int state);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int alGetError();
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -109,13 +125,19 @@ namespace ORTS
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alGetSourcef(int source, int attribute, out float val);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alGetSource3f(int source, int attribute, out float value1, out float value2, out float value3);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alListener3f(int attribute, float value1, float value2, float value3);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alListenerfv(int attribute, [In] float[] values);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alListenerf(int attribute, float value);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alGetListener3f(int attribute, out float value1, out float value2, out float value3);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourcePlay(int source);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alSourceRewind(int source);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alSourceQueueBuffers(int source, int number, [In] ref int buffer);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -138,6 +160,10 @@ namespace ORTS
         public static extern void alGenBuffers(int number, out int buffer);
         [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern void alBufferData(int buffer, int format, [In] byte[] data, int size, int frequency);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void alBufferiv(int buffer, int attribute, [In] int[] values);
+        [SuppressUnmanagedCodeSecurity, DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern bool alIsSource(int source);
 
         public static int alSourceUnqueueBuffer(int SoundSourceID)
         {
@@ -145,20 +171,55 @@ namespace ORTS
             OpenAL.alSourceUnqueueBuffers(SoundSourceID, 1, ref bufid);
             return bufid;
         }
+
+        public static string GetErrorString(int error)
+        {
+            if (error == AL_INVALID_ENUM)
+                return "Invalid Enumeration";
+            else if (error == AL_INVALID_NAME)
+                return "Invalid Name";
+            else if (error == AL_INVALID_OPERATION)
+                return "Invalid Operation";
+            else if (error == AL_INVALID_VALUE)
+                return "Invalid Value";
+            else if (error == AL_OUT_OF_MEMORY)
+                return "Out Of Memory";
+            else if (error == AL_NO_ERROR)
+                return "No Error";
+            
+            return "";
+        }
+
+        public static void Initialize()
+        {
+            //if (alcIsExtensionPresent(IntPtr.Zero, "ALC_ENUMERATION_EXT") == AL_TRUE)
+            //{
+            //    string deviceList = alcGetString(IntPtr.Zero, ALC_DEVICE_SPECIFIER);
+            //    string[] split = deviceList.Split('\0');
+            //    Trace.TraceInformation("___devlist {0}",deviceList);
+            //}
+            int[] attribs = new int[0];
+            IntPtr device = alcOpenDevice(null);
+            IntPtr context = alcCreateContext(device, attribs);
+            alcMakeContextCurrent(context);
+
+            // Note: Must use custom marshalling here because the returned strings must NOT be automatically deallocated by runtime.
+            Trace.TraceInformation("Initialized OpenAL {0}; device '{1}' by '{2}'", Marshal.PtrToStringAnsi(alGetString(AL_VERSION)), Marshal.PtrToStringAnsi(alGetString(AL_RENDERER)), Marshal.PtrToStringAnsi(alGetString(AL_VENDOR)));
+        }
     }
 
     /// <summary>
     /// WAVEFILEHEADER binary structure
     /// </summary>
-    [StructLayout(LayoutKind.Explicit, Pack=1)]
+    [StructLayout(LayoutKind.Explicit, Pack = 1)]
     public struct WAVEFILEHEADER
     {
         [FieldOffset(0), MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
         public char[] szRIFF;
         [FieldOffset(4), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
         public uint ulRIFFSize;
-        [FieldOffset(8), MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
-        public char[] szWAVE;
+        [FieldOffset(8), MarshalAs(UnmanagedType.U4, SizeConst = 4)]
+        public uint padding;
     }
 
     /// <summary>
@@ -678,8 +739,9 @@ namespace ORTS
         /// <param name="BufferIDs">Array of the buffer IDs to place</param>
         /// <param name="BufferLens">Array of the length data to place</param>
         /// <param name="ToMono">Indicates if the wave must be converted to mono</param>
+        /// <param name="isReleasedWithJump">True if sound possibly be released with jump</param>
         /// <returns>True if success</returns>
-        public bool OpenWavFile(string Name, ref int[] BufferIDs, ref int[] BufferLens, bool ToMono)
+        public static bool OpenWavFile(string Name, ref int[] BufferIDs, ref int[] BufferLens, bool ToMono, bool isReleasedWithJump, ref int numCuePoints)
         {
             WaveFileData wfi = new WaveFileData();
             int fmt = -1;
@@ -712,7 +774,18 @@ namespace ORTS
                 wfi.ulDataSize = (uint)buffer.Length;
             }
 
-            if (wfi.CuePoints == null || wfi.CuePoints.Length == 1)
+            bool alLoopPointsSoft = false;
+            int[] samplePos = new int[2];
+            if (!isReleasedWithJump && wfi.CuePoints != null && wfi.CuePoints.Length > 1)
+            {
+                samplePos[0] = (int)(wfi.CuePoints[0]);
+                samplePos[1] = (int)(wfi.CuePoints.Last());
+                if (samplePos[0] < samplePos[1] && samplePos[1] <= wfi.ulDataSize / (wfi.nBitsPerSample / 8 * wfi.nChannels))
+                    alLoopPointsSoft = OpenAL.alIsExtensionPresent("AL_SOFT_LOOP_POINTS") == OpenAL.AL_TRUE;
+                numCuePoints = wfi.CuePoints.Length;
+            }
+
+            if (wfi.CuePoints == null || wfi.CuePoints.Length == 1 || alLoopPointsSoft)
             {
                 BufferIDs = new int[1];
                 BufferLens = new int[1];
@@ -723,15 +796,21 @@ namespace ORTS
                 {
                     OpenAL.alGenBuffers(1, out BufferIDs[0]);
                     OpenAL.alBufferData(BufferIDs[0], fmt, buffer, (int)wfi.ulDataSize, (int)wfi.nSamplesPerSec);
+
+                    if (alLoopPointsSoft)
+                        OpenAL.alBufferiv(BufferIDs[0], OpenAL.AL_LOOP_POINTS_SOFT, samplePos);
                 }
                 else
                     BufferIDs[0] = 0;
+
+                return true;
             }
             else
             {
                 BufferIDs = new int[wfi.CuePoints.Length + 1];
                 BufferLens = new int[wfi.CuePoints.Length + 1];
-                
+                numCuePoints = wfi.CuePoints.Length;
+
                 uint prevAdjPos = 0;
                 for (var i = 0; i < wfi.CuePoints.Length; i++)
                 {
@@ -781,7 +860,7 @@ namespace ORTS
         /// <param name="offset">Offset from copy</param>
         /// <param name="len">Number of bytes to copy</param>
         /// <returns>New buffer with the extracted data</returns>
-        private byte[] GetFromArray(byte[] buffer, int offset, int len)
+        static byte[] GetFromArray(byte[] buffer, int offset, int len)
         {
             byte[] retval = new byte[len];
             Buffer.BlockCopy(buffer, offset, retval, 0, len);
@@ -796,7 +875,7 @@ namespace ORTS
         /// <param name="retval">The filled structure</param>
         /// <param name="len">The bytes to read, -1 if the structure size must be filled</param>
         /// <returns>True if success</returns>
-        public bool GetNextStructureValue<T>(FileStream fs, out T retval, int len)
+        public static bool GetNextStructureValue<T>(FileStream fs, out T retval, int len)
         {
             byte[] buffer;
             retval = default(T);

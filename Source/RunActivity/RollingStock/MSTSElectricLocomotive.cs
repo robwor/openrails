@@ -26,15 +26,16 @@
  *  LocomotiveViewer - provides basic animation for running gear, wipers, etc
  * 
  */
+
+using Orts.Formats.Msts;
+using Orts.Parsers.Msts;
+using ORTS.Common;
+using ORTS.Scripting.Api;
+using ORTS.Viewer3D;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using MSTS;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework;
+using System.Diagnostics;
 using System.IO;
-using ORTS.Popups;  // needed for Confirmation
+using System.Text;
 
 namespace ORTS
 {
@@ -48,20 +49,12 @@ namespace ORTS
     /// </summary>
     public class MSTSElectricLocomotive: MSTSLocomotive
     {
+        public ScriptedElectricPowerSupply PowerSupply;
 
-        public bool PantographFirstUp = false;
-        public bool PantographSecondUp = false;
-        public float PantographFirstDelay = 0.0f;
-        public float PantographSecondDelay = 0.0f;
-        
-
-        public IIRFilter VoltageFilter;
-        public float VoltageV = 0.0f;
-
-        public MSTSElectricLocomotive(Simulator simulator, string wagFile)
-            : base(simulator, wagFile)
+        public MSTSElectricLocomotive(Simulator simulator, string wagFile) :
+            base(simulator, wagFile)
         {
-            VoltageFilter = new IIRFilter(IIRFilter.FilterTypes.Butterworth, 1, IIRFilter.HzToRad(0.7f), 0.001f);
+            PowerSupply = new ScriptedElectricPowerSupply(this);
         }
 
         /// <summary>
@@ -71,11 +64,17 @@ namespace ORTS
         {
             switch (lowercasetoken)
             {
-                // for example
-                //case "engine(sound": CabSoundFileName = stf.ReadStringBlock(); break;
-                //case "engine(cabview": CVFFileName = stf.ReadStringBlock(); break;
-                
-                default: base.Parse(lowercasetoken, stf); break;
+                case "engine(ortspowerondelay":
+                case "engine(ortsauxpowerondelay":
+                case "engine(ortspowersupply":
+                case "engine(ortscircuitbreaker":
+                case "engine(ortscircuitbreakerclosingdelay":
+                    PowerSupply.Parse(lowercasetoken, stf);
+                    break;
+
+                default:
+                    base.Parse(lowercasetoken, stf);
+                    break;
             }
         }
 
@@ -85,22 +84,16 @@ namespace ORTS
         /// need to parse the wag file multiple times.
         /// NOTE:  you must initialize all the same variables as you parsed above
         /// </summary>
-        public override void InitializeFromCopy(MSTSWagon copy)
+        public override void Copy(MSTSWagon copy)
         {
+            base.Copy(copy);  // each derived level initializes its own variables
+
             // for example
             //CabSoundFileName = locoCopy.CabSoundFileName;
             //CVFFileName = locoCopy.CVFFileName;
             MSTSElectricLocomotive locoCopy = (MSTSElectricLocomotive) copy;
-            PantographFirstUp = locoCopy.PantographFirstUp;
-            PantographSecondUp = locoCopy.PantographSecondUp;
-            PantographFirstDelay = locoCopy.PantographFirstDelay;
-            PantographSecondDelay = locoCopy.PantographSecondDelay;
-            
 
-            VoltageFilter = locoCopy.VoltageFilter;
-            VoltageV = locoCopy.VoltageV;
-
-            base.InitializeFromCopy(copy);  // each derived level initializes its own variables
+            PowerSupply.Copy(locoCopy.PowerSupply);
         }
 
         /// <summary>
@@ -109,13 +102,7 @@ namespace ORTS
         /// </summary>
         public override void Save(BinaryWriter outf)
         {
-            outf.Write(PantographFirstUp);
-            outf.Write(PantographSecondUp);
-            outf.Write(PowerOn);
-
-            outf.Write(Pan);
-            outf.Write(Pan1Up);
-            outf.Write(Pan2Up);
+            PowerSupply.Save(outf);
 
             base.Save(outf);
         }
@@ -126,25 +113,38 @@ namespace ORTS
         /// </summary>
         public override void Restore(BinaryReader inf)
         {
-            PantographFirstUp = inf.ReadBoolean();
-            PantographSecondUp = inf.ReadBoolean();
-            PowerOn = inf.ReadBoolean();
-            if (PowerOn)
-                SignalEvent(Event.EnginePowerOn);
-            Pan = inf.ReadBoolean();
-            Pan1Up = inf.ReadBoolean();
-            Pan2Up = inf.ReadBoolean();
+            PowerSupply.Restore(inf);
+
             base.Restore(inf);
         }
 
-        /// <summary>
-        /// Create a viewer for this locomotive.   Viewers are only attached
-        /// while the locomotive is in viewing range.
-        /// </summary>
-        public override TrainCarViewer GetViewer(Viewer3D viewer)
+        public override void Initialize()
         {
-            return new MSTSElectricLocomotiveViewer(viewer, this);
+            if (!PowerSupply.RouteElectrified)
+                Trace.WriteLine("Warning: The route is not electrified. Electric driven trains will not run!");
+
+            PowerSupply.Initialize();
+
+            base.Initialize();
         }
+
+        //================================================================================================//
+        /// <summary>
+        /// Initialization when simulation starts with moving train
+        /// <\summary>
+        /// 
+        public override void InitializeMoving()
+        {
+            base.InitializeMoving();
+            WheelSpeedMpS = SpeedMpS;
+            DynamicBrakePercent = -1;
+            ThrottleController.SetValue(Train.MUThrottlePercent / 100);
+
+            Pantographs.InitializeMoving();
+            PowerSupply.InitializeMoving();
+        }
+
+
 
         /// <summary>
         /// This is a periodic update to calculate physics 
@@ -155,54 +155,13 @@ namespace ORTS
 
         public override void Update(float elapsedClockSeconds)
         {
-
-            if (!(PantographFirstUp || PantographSecondUp))
-            {
-                if (PowerOn)
-                    SignalEvent(Event.EnginePowerOff);
-                PowerOn = false;
-                CompressorOn = false;
-                if ((PantographFirstDelay -= elapsedClockSeconds) < 0.0f) PantographFirstDelay = 0.0f;
-                if ((PantographSecondDelay -= elapsedClockSeconds) < 0.0f) PantographSecondDelay = 0.0f;
-            }
-            else
-            {
-                if (PantographFirstUp)
-                {
-                    if ((PantographFirstDelay -= elapsedClockSeconds) < 0.0f)
-                    {
-                        if (!PowerOn)
-                            SignalEvent(Event.EnginePowerOn);
-                        PowerOn = true;
-                        PantographFirstDelay = 0.0f;
-                    }
-                }
-                else
-                    if ((PantographFirstDelay -= elapsedClockSeconds) < 0.0f) PantographFirstDelay = 0.0f;
-
-                if (PantographSecondUp)
-                {
-                    if ((PantographSecondDelay -= elapsedClockSeconds) < 0.0f)
-                    {
-                        if (!PowerOn)
-                            SignalEvent(Event.EnginePowerOn);
-                        PowerOn = true;
-                        PantographSecondDelay = 0.0f;
-                    }
-                }
-                else
-                    if ((PantographSecondDelay -= elapsedClockSeconds) < 0.0f) PantographSecondDelay = 0.0f;
-            }
- 
-            if (PowerOn)
-                VoltageV = VoltageFilter.Filter((float)Program.Simulator.TRK.Tr_RouteFile.MaxLineVoltage, elapsedClockSeconds);
-            else
-                VoltageV = VoltageFilter.Filter(0.0f, elapsedClockSeconds);
+            PowerSupply.Update(elapsedClockSeconds);
 
             base.Update(elapsedClockSeconds);
             //Variable2 = Variable1 * 100F ;
             //Variable2 = Math.Abs(MotiveForceN) / MaxForceN * 100F ;
 
+            Variable1 = ThrottlePercent / 100f;
             if ( ThrottlePercent == 0f ) Variable2 = 0;
             else 
             {
@@ -213,9 +172,10 @@ namespace ORTS
                 else if (dV2 < -max) dV2 = -max;
                 Variable2 += dV2;
             }
-            Variable3 = 0;
             if ( DynamicBrakePercent > 0)
-                Variable3 = Math.Abs(MotiveForceN) / MaxDynamicBrakeForceN;
+                Variable3 = MaxDynamicBrakeForceN == 0 ? DynamicBrakePercent / 100f : Math.Abs(MotiveForceN) / MaxDynamicBrakeForceN;
+            else
+                Variable3 = 0;
         }
 
         /// <summary>
@@ -223,44 +183,77 @@ namespace ORTS
         /// </summary>
         public override void SignalEvent(Event evt)
         {
+            base.SignalEvent(evt);
+        }
+
+        public override void SignalEvent(PowerSupplyEvent evt)
+        {
+            if (Simulator.Confirmer != null && Simulator.PlayerLocomotive == this)
+            {
+                switch (evt)
+                {
+                    case PowerSupplyEvent.RaisePantograph:
+                        Simulator.Confirmer.Confirm(CabControl.Pantograph1, CabSetting.On);
+                        Simulator.Confirmer.Confirm(CabControl.Pantograph2, CabSetting.On);
+                        break;
+
+                    case PowerSupplyEvent.LowerPantograph:
+                        Simulator.Confirmer.Confirm(CabControl.Pantograph1, CabSetting.Off);
+                        Simulator.Confirmer.Confirm(CabControl.Pantograph2, CabSetting.Off);
+                        break;
+                }
+            }
+
             switch (evt)
             {
-                case Event.Pantograph1Up: { SetPantographFirst(true); break; }
-                case Event.Pantograph1Down: { SetPantographFirst(false); break; }
-                case Event.Pantograph2Up: { SetPantographSecond(true); break; }
-                case Event.Pantograph2Down: { SetPantographSecond(false); break; }
+                case PowerSupplyEvent.CloseCircuitBreaker:
+                case PowerSupplyEvent.OpenCircuitBreaker:
+                case PowerSupplyEvent.GiveCircuitBreakerClosingAuthority:
+                case PowerSupplyEvent.RemoveCircuitBreakerClosingAuthority:
+                    PowerSupply.HandleEvent(evt);
+                    break;
             }
 
             base.SignalEvent(evt);
         }
 
-        /// <summary>
-        /// Raise or lower the first pantograph on all locomotives in the train
-        /// </summary>
-        /// <param name="raise"></param>
-        public void SetPantographs( int item, bool raise ) {
-            foreach( TrainCar traincar in Train.Cars ) {
-                if( traincar.GetType() == typeof( MSTSElectricLocomotive ) ) {
-                    if( item == 1 ) ((MSTSElectricLocomotive)traincar).SetPantographFirst( raise );
-                    if( item == 2 ) ((MSTSElectricLocomotive)traincar).SetPantographSecond( raise );
+        public override void SignalEvent(PowerSupplyEvent evt, int id)
+        {
+            if (Simulator.Confirmer != null && Simulator.PlayerLocomotive == this)
+            {
+                switch (evt)
+                {
+                    case PowerSupplyEvent.RaisePantograph:
+                        if (id == 1) Simulator.Confirmer.Confirm(CabControl.Pantograph1, CabSetting.On);
+                        if (id == 2) Simulator.Confirmer.Confirm(CabControl.Pantograph2, CabSetting.On);
+
+                        if (!Simulator.TRK.Tr_RouteFile.Electrified)
+                            Simulator.Confirmer.Warning(Viewer.Catalog.GetString("No power line!"));
+                        if (Simulator.Settings.OverrideNonElectrifiedRoutes)
+                            Simulator.Confirmer.Information(Viewer.Catalog.GetString("Power line condition overridden."));
+                        break;
+
+                    case PowerSupplyEvent.LowerPantograph:
+                        if (id == 1) Simulator.Confirmer.Confirm(CabControl.Pantograph1, CabSetting.Off);
+                        if (id == 2) Simulator.Confirmer.Confirm(CabControl.Pantograph2, CabSetting.Off);
+                        break;
                 }
             }
-            if( item == 1 ) this.Simulator.Confirmer.Confirm( CabControl.Pantograph1, raise == true ? CabSetting.On : CabSetting.Off );
-            if( item == 2 ) this.Simulator.Confirmer.Confirm( CabControl.Pantograph2, raise == true ? CabSetting.On : CabSetting.Off );
+
+            base.SignalEvent(evt, id);
         }
 
-        public void SetPantographFirst( bool up)
+        public override void SetPower(bool ToState)
         {
-            if (PantographFirstUp != up)
-                PantographFirstDelay += PowerOnDelay;
-            PantographFirstUp = up;
-        }
+            if (Train != null)
+            {
+                if (!ToState)
+                    SignalEvent(PowerSupplyEvent.LowerPantograph);
+                else
+                    SignalEvent(PowerSupplyEvent.RaisePantograph, 1);
+            }
 
-        public void SetPantographSecond( bool up)
-        {
-            if (PantographSecondUp != up)
-                PantographSecondDelay += PowerOnDelay;
-            PantographSecondUp = up;
+            base.SetPower(ToState);
         }
 
         public override float GetDataOf(CabViewControl cvc)
@@ -271,10 +264,10 @@ namespace ORTS
             {
                 case CABViewControlTypes.LINE_VOLTAGE:
                     {
-                        if (Pan)
+                        if (Pantographs.State == PantographState.Up)
                         {
                             //data = (float)Program.Simulator.TRK.Tr_RouteFile.MaxLineVoltage;
-                            data = VoltageV;
+                            data = PowerSupply.FilterVoltageV;
                             if (cvc.Units == CABViewControlUnits.KILOVOLTS)
                                 data /= 1000;
                         }
@@ -285,7 +278,37 @@ namespace ORTS
                 case CABViewControlTypes.PANTOGRAPH:
                 case CABViewControlTypes.PANTO_DISPLAY:
                     {
-                        data = Pan ? 1 : 0;
+                        data = Pantographs[1].State == PantographState.Up ? 1 : 0;
+                        break;
+                    }
+                case CABViewControlTypes.PANTOGRAPH2:
+                    {
+                        data = Pantographs[2].State == PantographState.Up ? 1 : 0;
+                        break;
+                    }
+                case CABViewControlTypes.PANTOGRAPHS_4:
+                case CABViewControlTypes.PANTOGRAPHS_4C:
+                    {
+                        if (Pantographs[1].State == PantographState.Up && Pantographs[2].State == PantographState.Up)
+                            data = 2;
+                        else if (Pantographs[1].State == PantographState.Up)
+                            data = 1;
+                        else if (Pantographs[2].State == PantographState.Up)
+                            data = 3;
+                        else
+                            data = 0;
+                        break;
+                    }
+                case CABViewControlTypes.PANTOGRAPHS_5:
+                    {
+                        if (Pantographs[1].State == PantographState.Up && Pantographs[2].State == PantographState.Up)
+                            data = 0; // TODO: Should be 0 if the previous state was Pan2Up, and 4 if that was Pan1Up
+                        else if (Pantographs[2].State == PantographState.Up)
+                            data = 1;
+                        else if (Pantographs[1].State == PantographState.Up)
+                            data = 3;
+                        else
+                            data = 2;
                         break;
                     }
                 default:
@@ -300,74 +323,28 @@ namespace ORTS
 
         public override string GetStatus()
         {
-            var result = new StringBuilder();
-            result.AppendFormat("Pantographs = {0}{1}\n", PantographFirstUp ? "1st up " : "", PantographSecondUp ? "2nd up " : "");
-            if ((PantographFirstDelay > 0.0f) || (PantographSecondDelay > 0.0f))
-                result.AppendFormat("Electric power = {0}", PowerOn ? "Switching in progress" : "Switching in progress");
-            else
-                result.AppendFormat("Electric power = {0}", PowerOn ? "On" : "Off");
-            return result.ToString();
+            var status = new StringBuilder();
+            status.AppendFormat("{0} = ", Viewer.Catalog.GetString("Pantographs"));
+            foreach (var pantograph in Pantographs.List)
+                status.AppendFormat("{0} ", Viewer.Catalog.GetParticularString("Pantograph", GetStringAttribute.GetPrettyName(pantograph.State)));
+            status.AppendLine();
+            status.AppendFormat("{0}{2} = {1}{2}\n",
+                Viewer.Catalog.GetParticularString("PowerSupply", "Power"),
+                Viewer.Catalog.GetParticularString("PowerSupply", GetStringAttribute.GetPrettyName(PowerSupply.State)),
+                PowerSupply.State == PowerSupplyState.PowerOff ? "!!!" : "");
+            return status.ToString();
+        }
+
+        public override string GetDebugStatus()
+        {
+            var status = new StringBuilder(base.GetDebugStatus());
+            status.AppendFormat("\t{0}\t\t{1}", Viewer.Catalog.GetString("Circuit breaker"), Viewer.Catalog.GetParticularString("CircuitBraker", GetStringAttribute.GetPrettyName(PowerSupply.CircuitBreaker.State)));
+            status.AppendFormat("\t{0}\t{1}", Viewer.Catalog.GetString("TCS"), TrainControlSystem.PowerAuthorization ? Viewer.Catalog.GetString("OK") : Viewer.Catalog.GetString("NOT OK"));
+            status.AppendFormat("\t{0}\t{1}", Viewer.Catalog.GetString("Driver"), PowerSupply.CircuitBreaker.DriverCloseAuthorization ? Viewer.Catalog.GetString("OK") : Viewer.Catalog.GetString("NOT OK"));
+            status.AppendFormat("\t{0}\t\t{1}", Viewer.Catalog.GetString("Auxiliary power"), Viewer.Catalog.GetParticularString("PowerSupply", GetStringAttribute.GetPrettyName(PowerSupply.AuxiliaryState)));
+            return status.ToString();
         }
 
 
     } // class ElectricLocomotive
-
-    ///////////////////////////////////////////////////
-    ///   3D VIEW
-    ///////////////////////////////////////////////////
-
-
-    /// <summary>
-    /// Adds pantograph animation to the basic LocomotiveViewer class
-    /// </summary>
-    public class MSTSElectricLocomotiveViewer : MSTSLocomotiveViewer
-    {
-
-        MSTSElectricLocomotive ElectricLocomotive;
-
-        public MSTSElectricLocomotiveViewer(Viewer3D viewer, MSTSElectricLocomotive car)
-            : base(viewer, car)
-        {
-            ElectricLocomotive = car;
-        }
-
-        /// <summary>
-        /// A keyboard or mouse click has occured. Read the UserInput
-        /// structure to determine what was pressed.
-        /// </summary>
-        public override void HandleUserInput(ElapsedTime elapsedTime)
-        {
-            if( UserInput.IsPressed( UserCommands.ControlPantograph1 ) ) {
-                new PantographCommand( _Viewer3D.Log, 1, !ElectricLocomotive.PantographFirstUp );
-                return; // I.e. Skip the call to base.HandleUserInput()
-            }
-            if( UserInput.IsPressed( UserCommands.ControlPantograph2 ) ) {
-                new PantographCommand( _Viewer3D.Log, 2, !ElectricLocomotive.PantographSecondUp );
-                return;
-            }
-
-            base.HandleUserInput(elapsedTime);
-        }
-
-        /// <summary>
-        /// We are about to display a video frame.  Calculate positions for 
-        /// animated objects, and add their primitives to the RenderFrame list.
-        /// </summary>
-        public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
-        {
-
-            base.PrepareFrame(frame, elapsedTime);
-        }
-
-        /// <summary>
-        /// This doesn't function yet.
-        /// </summary>
-        public override void Unload()
-        {
-            base.Unload();
-        }
-
-
-    } // class ElectricLocomotiveViewer
-
 }

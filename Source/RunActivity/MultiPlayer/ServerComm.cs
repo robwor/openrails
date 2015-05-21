@@ -30,7 +30,7 @@ namespace ORTS.MultiPlayer
 		private TcpListener tcpListener;
 		private Thread listenThread;
 		private Server Server;
-
+		private int count = 0;
 		public void Stop()
 		{
 			tcpListener.Stop();
@@ -40,11 +40,13 @@ namespace ORTS.MultiPlayer
 				p.thread.Abort();
 			}
 		}
+
 		public ServerComm(Server s, int port)
 		{
 			Server = s;
 			this.tcpListener = new TcpListener(IPAddress.Any, port);
 			this.listenThread = new Thread(new ThreadStart(ListenForClients));
+            this.listenThread.Name = "Multiplayer Server";
 			this.listenThread.Start();
 		}
 
@@ -61,12 +63,15 @@ namespace ORTS.MultiPlayer
 					client = this.tcpListener.AcceptTcpClient();
 				}
 				catch (Exception) { break; }
+				count++;
 				OnlinePlayer player = new OnlinePlayer(client, Server);
 				Server.Players.Add(player);
 				System.Console.WriteLine("New Player Joined");
+
 				//create a thread to handle communication
 				//with connected client
 				Thread clientThread = new Thread(new ParameterizedThreadStart(player.Receive));
+				clientThread.Name = "Multiplayer Server-Client";// +count;
 				player.thread = clientThread;
 				clientThread.Start(client);
 			}

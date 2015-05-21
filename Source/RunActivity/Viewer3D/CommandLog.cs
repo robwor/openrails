@@ -15,13 +15,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
+// This file is the responsibility of the 3D & Environment Team.
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.Serialization.Formatters.Binary;
 
-namespace ORTS {
+namespace ORTS.Viewer3D
+{
     /// <summary>
     /// User may specify an automatic pause in the replay at a time measured from the end of the replay.
     /// </summary>
@@ -35,7 +38,7 @@ namespace ORTS {
     public class CommandLog {
 
         public List<ICommand> CommandList = new List<ICommand>();
-        public Viewer3D Viewer { get; set; }        // Needed so Update() can get Viewer.CameraReplaySuspended
+        public Viewer Viewer { get; set; }        // Needed so Update() can get Viewer.CameraReplaySuspended
         public Simulator Simulator { get; set; }    // Needed so CommandAdd() and Update() can get Simulator.ClockTime and Update() can get Simulator.Settings.ReplayPauseBeforeEndS
         public bool ReplayComplete { get; set; }
         public double ReplayEndsAt { get; set; }
@@ -48,7 +51,7 @@ namespace ORTS {
         /// <summary>
         /// Preferred constructor.
         /// </summary>
-        public CommandLog( Viewer3D viewer ) {
+        public CommandLog( Viewer viewer ) {
             Viewer = viewer;
             Simulator = viewer.Simulator;  // The Simulator is needed for its ClockTime and Settings properties.
         }
@@ -145,9 +148,12 @@ namespace ORTS {
                 // Do nothing but warn, ignoring errors.
                 Trace.TraceWarning( "SaveLog error writing command log " + filePath );
             } finally {
-                if( stream != null ) { stream.Close(); }
+                if( stream != null )
+                {
+                    stream.Close();
+                    Trace.WriteLine("\nList of commands to replay saved");
+                }
             }
-            ReportReplayCommands( CommandList );
         }
 
         /// <summary>
@@ -168,7 +174,7 @@ namespace ORTS {
             }
         }
 
-        public void ReportReplayCommands( List<ICommand> list ) {
+        public static void ReportReplayCommands( List<ICommand> list ) {
             Trace.WriteLine( "\nList of commands to replay:" );
             foreach( var c in list ) { c.Report(); }
         }

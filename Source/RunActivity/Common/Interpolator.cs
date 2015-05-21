@@ -21,7 +21,7 @@ using System.Linq;
 using System.Text;
 using System.IO;
 using Microsoft.Xna.Framework;
-using MSTS;
+using Orts.Parsers.Msts;
 
 namespace ORTS
 {
@@ -33,9 +33,9 @@ namespace ORTS
     {
         float[] X;  // must be in increasing order
         float[] Y;
-        float[] Y2 = null;
-        int Size = 0;       // number of values populated
-        int PrevIndex = 0;  // used to speed up repeated evaluations with similar x values
+        float[] Y2;
+        int Size;       // number of values populated
+        int PrevIndex;  // used to speed up repeated evaluations with similar x values
         public Interpolator(int n)
         {
             X = new float[n];
@@ -232,10 +232,234 @@ namespace ORTS
                 Console.WriteLine("{0} {1} {2}", label, x, y);
             }
         }
+
+        public int GetSize()
+        {
+            if (X.Length == Y.Length)
+                return Size;
+            else
+                return -1;
+        }
     }
     /// <summary>
-    /// two dimensional Interpolated table lookup
+    /// two dimensional Interpolated table lookup - for use in Diesel
     /// </summary>
+    public class InterpolatorDiesel2D
+    {
+        float[] X;  // must be in increasing order
+        Interpolator[] Y;
+        int Size;       // number of values populated
+        int PrevIndex;  // used to speed up repeated evaluations with similar x values
+        public InterpolatorDiesel2D(int n)
+        {
+            X = new float[n];
+            Y = new Interpolator[n];
+        }
+        public InterpolatorDiesel2D(InterpolatorDiesel2D other)
+        {
+            X = other.X;
+            Size = other.Size;
+            Y = new Interpolator[Size];
+            for (int i = 0; i < Size; i++)
+                Y[i] = new Interpolator(other.Y[i]);
+        }
+        public InterpolatorDiesel2D(STFReader stf, bool tab)
+        {
+            List<float> xlist = new List<float>();
+            List<Interpolator> ilist = new List<Interpolator>();
+
+            bool errorFound = false;
+            if (tab)
+            {
+                stf.MustMatch("(");
+                int numOfRows = stf.ReadInt(0);
+                if (numOfRows < 2)
+                {
+                    STFException.TraceWarning(stf, "Interpolator must have at least two rows.");
+                    errorFound = true;
+                }
+                int numOfColumns = stf.ReadInt(0);
+                string header = stf.ReadString().ToLower();
+                if (header == "throttle")
+                {
+                    stf.MustMatch("(");
+                    int numOfThrottleValues = 0;
+                    while (!stf.EndOfBlock())
+                    {
+                        xlist.Add(stf.ReadFloat(STFReader.UNITS.None, 0f));
+                        ilist.Add(new Interpolator(numOfRows));
+                        numOfThrottleValues++;
+                    }
+                    if (numOfThrottleValues != (numOfColumns - 1))
+                    {
+                        STFException.TraceWarning(stf, "Interpolator throttle vs. num of columns mismatch.");
+                        errorFound = true;
+                    }
+
+                    if (numOfColumns < 3)
+                    {
+                        STFException.TraceWarning(stf, "Interpolator must have at least three columns.");
+                        errorFound = true;
+                    }
+
+                    int numofData = 0;
+                    string tableLabel = stf.ReadString().ToLower();
+                    if (tableLabel == "table")
+                    {
+                        stf.MustMatch("(");
+                        for (int i = 0; i < numOfRows; i++)
+                        {
+                            float x = stf.ReadFloat(STFReader.UNITS.SpeedDefaultMPH, 0);
+                            numofData++;
+                            for (int j = 0; j < numOfColumns - 1; j++)
+                            {
+                                if (j >= ilist.Count)
+                                {
+                                    STFException.TraceWarning(stf, "Interpolator throttle vs. num of columns mismatch. (missing some throttle values)");
+                                    errorFound = true;
+                                }
+                                ilist[j][x] = stf.ReadFloat(STFReader.UNITS.Force, 0);
+                                numofData++;
+                            }
+                        }
+                        stf.SkipRestOfBlock();
+                    }
+                    else
+                    {
+                        STFException.TraceWarning(stf, "Interpolator didn't find a table to load.");
+                        errorFound = true;
+                    }
+                    //check the table for inconsistencies
+
+                    foreach (Interpolator checkMe in ilist)
+                    {
+                        if (checkMe.GetSize() != numOfRows)
+                        {
+                            STFException.TraceWarning(stf, "Interpolator has found a mismatch between num of rows declared and num of rows given.");
+                            errorFound = true;
+                        }
+                        float dx = (checkMe.MaxX() - checkMe.MinX()) * 0.1f;
+                        if (dx <= 0f)
+                        {
+                            STFException.TraceWarning(stf, "Interpolator has found X data error - x values must be increasing. (Possible row number mismatch)");
+                            errorFound = true;
+                        }
+                        else
+                        {
+                            for (float x = checkMe.MinX(); x <= checkMe.MaxX(); x += dx)
+                            {
+                                if ((checkMe[x] == float.NaN))
+                                {
+                                    STFException.TraceWarning(stf, "Interpolator has found X data error - x values must be increasing. (Possible row number mismatch)");
+                                    errorFound = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (numofData != (numOfRows * numOfColumns))
+                    {
+                        STFException.TraceWarning(stf, "Interpolator has found a mismatch: num of data doesn't fit the header information.");
+                        errorFound = true;
+                    }
+                }
+                else
+                {
+                    STFException.TraceWarning(stf, "Interpolator must have a 'throttle' header row.");
+                    errorFound = true;
+                }
+                stf.SkipRestOfBlock();
+            }
+            else
+            {
+                stf.MustMatch("(");
+                while (!stf.EndOfBlock())
+                {
+                    xlist.Add(stf.ReadFloat(STFReader.UNITS.Any, null));
+                    ilist.Add(new Interpolator(stf));
+                }
+                stf.SkipRestOfBlock(); 
+            }
+
+
+            int n = xlist.Count;
+            if (n < 2)
+            {
+                STFException.TraceWarning(stf, "Interpolator must have at least two x values.");
+                errorFound = true;
+            }
+            X = new float[n];
+            Y = new Interpolator[n];
+            Size = n;
+            for (int i = 0; i < n; i++)
+            {
+                X[i] = xlist[i];
+                Y[i] = ilist[i];
+                if (i > 0 && X[i - 1] >= X[i])
+                    STFException.TraceWarning(stf, "Interpolator x values must be increasing.");
+            }
+            //stf.SkipRestOfBlock();
+            if (errorFound)
+            {
+                STFException.TraceWarning(stf, "Errors found in the Interpolator definition!!! The Interpolator will not work correctly!");
+            }
+        }
+
+        public float Get(float x, float y)
+        {
+            if (x < X[PrevIndex] || x > X[PrevIndex + 1])
+            {
+                if (x < X[1])
+                    PrevIndex = 0;
+                else if (x > X[Size - 2])
+                    PrevIndex = Size - 2;
+                else
+                {
+                    int i = 0;
+                    int j = Size - 1;
+                    while (j - i > 1)
+                    {
+                        int k = (i + j) / 2;
+                        if (X[k] > x)
+                            j = k;
+                        else
+                            i = k;
+                    }
+                    PrevIndex = i;
+                }
+            }
+            float d = X[PrevIndex + 1] - X[PrevIndex];
+            float a = (X[PrevIndex + 1] - x) / d;
+            float b = (x - X[PrevIndex]) / d;
+            float z = 0;
+            if (a != 0)
+                z += a * Y[PrevIndex][y];
+            if (b != 0)
+                z += b * Y[PrevIndex + 1][y];
+            return z;
+        }
+        public Interpolator this[float x]
+        {
+            set
+            {
+                X[Size] = x;
+                Y[Size] = value;
+                Size++;
+            }
+        }
+        public float MinX() { return X[0]; }
+        public float MaxX() { return X[Size - 1]; }
+        public void ScaleX(float factor)
+        {
+            for (int i = 0; i < Size; i++)
+                X[i] *= factor;
+        }
+    }
+
+     /// <summary>
+     /// two dimensional Interpolated table lookup - Generic
+     /// </summary>
     public class Interpolator2D
     {
         float[] X;  // must be in increasing order
@@ -246,6 +470,12 @@ namespace ORTS
         {
             X = new float[n];
             Y = new Interpolator[n];
+        }
+        public Interpolator2D(float[] x, Interpolator[] y)
+        {
+            X = x;
+            Y = y;
+            Size = X.Length;
         }
         public Interpolator2D(Interpolator2D other)
         {
@@ -260,7 +490,7 @@ namespace ORTS
             List<float> xlist = new List<float>();
             List<Interpolator> ilist = new List<Interpolator>();
             stf.MustMatch("(");
-            while(!stf.EndOfBlock())
+            while (!stf.EndOfBlock())
             {
                 xlist.Add(stf.ReadFloat(STFReader.UNITS.Any, null));
                 ilist.Add(new Interpolator(stf));
@@ -277,7 +507,7 @@ namespace ORTS
                 X[i] = xlist[i];
                 Y[i] = ilist[i];
                 if (i > 0 && X[i - 1] >= X[i])
-                    STFException.TraceWarning(stf, "Interpolator x values must be increasing.");
+                    STFException.TraceWarning(stf, " Interpolator x values must be increasing.");
             }
         }
         public float Get(float x, float y)
@@ -330,4 +560,5 @@ namespace ORTS
                 X[i] *= factor;
         }
     }
+
 }

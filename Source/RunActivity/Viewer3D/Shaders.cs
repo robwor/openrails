@@ -17,19 +17,51 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
-using System;
-using System.Collections.Generic;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Audio;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using Microsoft.Xna.Framework.Storage;
+// Enables debugging of shaders via PIX and other tools, by loading shaders by filename with debugging enabled.
+//#define DEBUG_SHADER_CODE
 
-namespace ORTS
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using ORTS.Common;
+using ORTS.Processes;
+using System;
+using System.IO;
+
+namespace ORTS.Viewer3D
 {
+    public abstract class Shader : Effect
+    {
+        public Shader(GraphicsDevice graphicsDevice, string filename)
+            : base(graphicsDevice, GetEffectCode(filename), CompilerOptions.None, null)
+        {
+        }
+
+        static byte[] GetEffectCode(string filename)
+        {
+            var basePath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath), "Content");
+            var effectFileName = System.IO.Path.Combine(basePath, filename + ".fx");
+#if DEBUG_SHADER_CODE
+            // NOTE: We may need to implement a CompilerIncludeHandler here if we ever use #include in our shaders.
+            var compiledEffect = Effect.CompileEffectFromFile(effectFileName, null, null, CompilerOptions.Debug, TargetPlatform.Windows);
+            if (!compiledEffect.Success)
+                throw new InvalidOperationException(compiledEffect.ErrorsAndWarnings);
+            return compiledEffect.GetEffectCode();
+#else
+            // We have to use a file stream instead of passing the file name directly because the latter method just botches up non-ASCII paths. :(
+            using (var effectFileStream = File.OpenRead(effectFileName))
+            {
+                // NOTE: We may need to implement a CompilerIncludeHandler here if we ever use #include in our shaders.
+                var compiledEffect = Effect.CompileEffectFromFile(effectFileStream, null, null, CompilerOptions.None, TargetPlatform.Windows);
+                if (!compiledEffect.Success)
+                    throw new InvalidOperationException(compiledEffect.ErrorsAndWarnings);
+                return compiledEffect.GetEffectCode();
+            }
+#endif
+        }
+    }
+
     [CallOnThread("Render")]
-    public class SceneryShader : Effect
+    public class SceneryShader : Shader
     {
         readonly EffectParameter world;
         readonly EffectParameter worldViewProjection;
@@ -38,7 +70,7 @@ namespace ORTS
         readonly EffectParameter shadowMapLimit;
         readonly EffectParameter zBias_Lighting;
         readonly EffectParameter fog;
-        readonly EffectParameter lightVector;
+        readonly EffectParameter lightVector_ZFar;
         readonly EffectParameter headlightPosition;
         readonly EffectParameter headlightDirection;
         readonly EffectParameter headlightRcpDistance;
@@ -53,6 +85,7 @@ namespace ORTS
         readonly EffectParameter sideVector;
         readonly EffectParameter imageTexture;
         readonly EffectParameter overlayTexture;
+        readonly EffectParameter referenceAlpha;
 
         Vector3 _eyeVector;
         Vector4 _zBias_Lighting;
@@ -67,12 +100,14 @@ namespace ORTS
             sideVector.SetValue(Vector3.Normalize(Vector3.Cross(_eyeVector, Vector3.Down)));
         }
 
-        public void SetMatrix(ref Matrix w, ref Matrix vp)
+        public void SetMatrix(Matrix w, ref Matrix vp)
         {
             world.SetValue(w);
             worldViewProjection.SetValue(w * vp);
 
-            const float FullBrightness = 1.0f;
+            int vIn = Program.Simulator.Settings.DayAmbientLight;
+            
+            float FullBrightness = (float)vIn / 20.0f ;
             //const float HalfShadowBrightness = 0.75;
             const float HalfNightBrightness = 0.6f;
             const float ShadowBrightness = 0.5f;
@@ -118,13 +153,17 @@ namespace ORTS
             fog.SetValue(new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, 1f / depth));
         }
 
-        public Vector3 LightVector { set { _sunDirection = value; lightVector.SetValue(value); } }
-
-        public void SetHeadlight(ref Vector3 position, ref Vector3 direction, float distance, float minDotProduct, float fadeTime, float fadeDuration, ref Vector4 color)
+        public void SetLightVector_ZFar(Vector3 sunDirection, int zFar)
         {
-            var lighting = fadeTime / fadeDuration;
+            _sunDirection = sunDirection;
+            lightVector_ZFar.SetValue(new Vector4(sunDirection.X, sunDirection.Y, sunDirection.Z, zFar));
+        }
+
+        public void SetHeadlight(ref Vector3 position, ref Vector3 direction, float distance, float minDotProduct, float fadeTime, float fadeDuration, float clampValue, ref Vector4 color)
+        {
+            var lighting = fadeTime / fadeDuration * clampValue;
             if (lighting < 0) lighting = 1 + lighting;
-            headlightPosition.SetValue(new Vector4(position, MathHelper.Clamp(lighting, 0, 1)));
+            headlightPosition.SetValue(new Vector4(position, MathHelper.Clamp(lighting, 0, clampValue)));
             headlightDirection.SetValue(new Vector4(direction, 0.5f * (1 - minDotProduct))); // We want 50% brightness at the given dot product.
             headlightRcpDistance.SetValue(1f / distance); // Needed to be separated (direction * distance) because no pre-shaders are supported in XNA 4
             headlightColor.SetValue(color);
@@ -145,8 +184,10 @@ namespace ORTS
 
         public Texture2D OverlayTexture { set { overlayTexture.SetValue(value); } }
 
-        public SceneryShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("SceneryShader"))
+        public int ReferenceAlpha { set { referenceAlpha.SetValue(value / 255f); } }
+
+        public SceneryShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "SceneryShader")
         {
             world = Parameters["World"];
             worldViewProjection = Parameters["WorldViewProjection"];
@@ -160,7 +201,7 @@ namespace ORTS
             shadowMapLimit = Parameters["ShadowMapLimit"];
             zBias_Lighting = Parameters["ZBias_Lighting"];
             fog = Parameters["Fog"];
-            lightVector = Parameters["LightVector"];
+            lightVector_ZFar = Parameters["LightVector_ZFar"];
             headlightPosition = Parameters["HeadlightPosition"];
             headlightDirection = Parameters["HeadlightDirection"];
             headlightRcpDistance = Parameters["HeadlightRcpDistance"];
@@ -175,11 +216,12 @@ namespace ORTS
             sideVector = Parameters["SideVector"];
             imageTexture = Parameters["ImageTexture"];
             overlayTexture = Parameters["OverlayTexture"];
+            referenceAlpha = Parameters["ReferenceAlpha"];
         }
     }
 
     [CallOnThread("Render")]
-    public class ShadowMapShader : Effect
+    public class ShadowMapShader : Shader
     {
         readonly EffectParameter worldViewProjection;
         readonly EffectParameter sideVector;
@@ -208,8 +250,8 @@ namespace ORTS
             imageBlurStep.SetValue(texture != null ? 1f / texture.Width : 0);
         }
 
-        public ShadowMapShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("ShadowMap"))
+        public ShadowMapShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "ShadowMap")
         {
             worldViewProjection = Parameters["WorldViewProjection"];
             sideVector = Parameters["SideVector"];
@@ -219,7 +261,7 @@ namespace ORTS
     }
 
     [CallOnThread("Render")]
-    public class SkyShader : Effect
+    public class SkyShader : Shader
     {
         readonly EffectParameter worldViewProjection;
         readonly EffectParameter lightVector;
@@ -227,6 +269,8 @@ namespace ORTS
         readonly EffectParameter overcast;
         readonly EffectParameter windDisplacement;
         readonly EffectParameter skyColor;
+        readonly EffectParameter fogColor;
+        readonly EffectParameter fog;
         readonly EffectParameter moonColor;
         readonly EffectParameter moonTexCoord;
         readonly EffectParameter cloudColor;
@@ -238,17 +282,18 @@ namespace ORTS
         readonly EffectParameter moonMaskTexture;
         readonly EffectParameter cloudMapTexture;
 
+
         public Vector3 LightVector
         {
             set
             {
-                lightVector.SetValue(value);
+                lightVector.SetValue(new Vector4(value, 1f / value.Length()));
 
                 cloudColor.SetValue(Day2Night(0.2f, -0.2f, 0.15f, value.Y));
                 var skyColor1 = Day2Night(0.25f, -0.25f, -0.5f, value.Y);
                 var skyColor2 = MathHelper.Clamp(skyColor1 + 0.55f, 0, 1);
                 var skyColor3 = 0.001f / (0.8f * Math.Abs(value.Y - 0.1f));
-                skyColor.SetValue(new Vector3(skyColor1, skyColor2, skyColor3));
+                skyColor.SetValue(new Vector3(skyColor1, skyColor2, skyColor3)); 
 
                 // Fade moon during daylight
                 var moonColor1 = value.Y > 0.1f ? (1 - value.Y) / 1.5f : 1;
@@ -256,6 +301,12 @@ namespace ORTS
                 var moonColor2 = _moonPhase != 6 && value.Y < 0.13 ? -6.25f * value.Y + 0.8125f : 0;
                 moonColor.SetValue(new Vector2(moonColor1, moonColor2));
             }
+        }
+
+        public void SetFog(float depth, ref Color color)
+        {
+            fogColor.SetValue(new Vector3(color.R / 255f, color.G / 255f, color.B / 255f));
+            fog.SetValue(new Vector4(5000f / depth, 0.015f * MathHelper.Clamp(depth / 5000f, 0, 1), MathHelper.Clamp(depth / 10000f, 0, 1), 0.05f * MathHelper.Clamp(depth / 10000f, 0, 1)));
         }
 
         float _time;
@@ -283,10 +334,10 @@ namespace ORTS
             set
             {
                 if (value < 0.2f)
-                    overcast.SetValue(new Vector3(4 * value + 0.2f, 0.0f, 0.0f));
+                    overcast.SetValue(new Vector4(4 * value + 0.2f, 0.0f, 0.0f, 0.0f));
                 else
                     // Coefficients selected by author to achieve the desired appearance
-                    overcast.SetValue(new Vector3(MathHelper.Clamp(2 * value - 0.4f, 0, 1), 1.25f - 1.125f * value, 1.15f - 0.75f * value));
+                    overcast.SetValue(new Vector4(MathHelper.Clamp(2 * value - 0.4f, 0, 1), 1.25f - 1.125f * value, 1.15f - 0.75f * value, 1f));
             }
         }
 
@@ -295,8 +346,8 @@ namespace ORTS
         public float WindDirection
         {
             set 
-            { 
-                var totalWindDisplacement = 200 * WindSpeed * _time; // This greatly exaggerates the wind speed, but it looks better!
+            {
+                var totalWindDisplacement = 50 * WindSpeed * _time; // This exaggerates the wind speed, but it is necessary to get a visible effect
                 windDisplacement.SetValue(new Vector2(-(float)Math.Sin(value) * totalWindDisplacement, (float)Math.Cos(value) * totalWindDisplacement));
             }
         }
@@ -315,8 +366,12 @@ namespace ORTS
             if (_moonPhase == 6)
                 moonScale *= 2;
 
-            rightVector.SetValue(view.Right * moonScale);
-            upVector.SetValue(Vector3.Down * moonScale);
+            var eye = Vector3.Normalize(new Vector3(view.M13, view.M23, view.M33));
+            var right = Vector3.Cross(eye, Vector3.Up);
+            var up = Vector3.Cross(right, eye);
+
+            rightVector.SetValue(right * moonScale);
+            upVector.SetValue(up * moonScale);
         }
 
         public void SetMatrix(ref Matrix wvp)
@@ -324,8 +379,8 @@ namespace ORTS
             worldViewProjection.SetValueTranspose(wvp);
         }
 
-        public SkyShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("SkyShader"))
+        public SkyShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "SkyShader")
         {
             worldViewProjection = Parameters["WorldViewProjection"];
             lightVector = Parameters["LightVector"];
@@ -333,6 +388,8 @@ namespace ORTS
             overcast = Parameters["Overcast"];
             windDisplacement = Parameters["WindDisplacement"];
             skyColor = Parameters["SkyColor"];
+            fogColor = Parameters["FogColor"];
+            fog = Parameters["Fog"];
             moonColor = Parameters["MoonColor"];
             moonTexCoord = Parameters["MoonTexCoord"];
             cloudColor = Parameters["CloudColor"];
@@ -345,19 +402,23 @@ namespace ORTS
             cloudMapTexture = Parameters["CloudMapTexture"];
         }
         
+
         // This function dims the lighting at night, with a transition period as the sun rises or sets
-        float Day2Night(float startNightTrans, float finishNightTrans, float minDarknessCoeff, float sunDirectionY)
+        static float Day2Night(float startNightTrans, float finishNightTrans, float minDarknessCoeff, float sunDirectionY)
         {
+            int vIn = Program.Simulator.Settings.DayAmbientLight;
+            float dayAmbientLight = (float)vIn / 20.0f ;
+              
             // The following two are used to interpoate between day and night lighting (y = mx + b)
-            var slope = (1.0f - minDarknessCoeff) / (startNightTrans - finishNightTrans); // "m"
-            var incpt = 1.0f - slope * startNightTrans; // "b"
+            var slope = (dayAmbientLight - minDarknessCoeff) / (startNightTrans - finishNightTrans); // "m"
+            var incpt = dayAmbientLight - slope * startNightTrans; // "b"
             // This is the return value used to darken scenery
             float adjustment;
-            
+
             if (sunDirectionY < finishNightTrans)
                 adjustment = minDarknessCoeff;
             else if (sunDirectionY > startNightTrans)
-                adjustment = 1.0f; // Scenery is fully lit during the day
+                adjustment = dayAmbientLight; // Scenery is fully lit during the day
             else
                 adjustment = slope * sunDirectionY + incpt;
 
@@ -366,16 +427,16 @@ namespace ORTS
     }
 
     [CallOnThread("Render")]
-    public class ParticleEmitterShader : Effect
+    public class ParticleEmitterShader : Shader
     {
-        EffectParameter emitDirection = null;
-        EffectParameter emitSize = null;
-        EffectParameter tileXY = null;
-        EffectParameter currentTime = null;
-        EffectParameter wvp = null;
-        EffectParameter invView = null;
-        EffectParameter texture = null;
-        EffectParameter lightVector = null;
+        EffectParameter emitSize;
+        EffectParameter tileXY;
+        EffectParameter currentTime;
+        EffectParameter wvp;
+        EffectParameter invView;
+        EffectParameter texture;
+        EffectParameter lightVector;
+        EffectParameter fog;
 
         public float CurrentTime
         {
@@ -392,11 +453,6 @@ namespace ORTS
             set { texture.SetValue(value); }
         }
 
-        public Vector3 EmitDirection
-        {
-            set { emitDirection.SetValue(value); }
-        }
-
         public float EmitSize
         {
             set { emitSize.SetValue(value); }
@@ -407,10 +463,9 @@ namespace ORTS
             set { lightVector.SetValue(value); }
         }
 
-        public ParticleEmitterShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("ParticleEmitterShader"))
+        public ParticleEmitterShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "ParticleEmitterShader")
         {
-            emitDirection = Parameters["emitDirection"];
             emitSize = Parameters["emitSize"];
             currentTime = Parameters["currentTime"];
             wvp = Parameters["worldViewProjection"];
@@ -418,6 +473,7 @@ namespace ORTS
             tileXY = Parameters["cameraTileXY"];
             texture = Parameters["particle_Tex"];
             lightVector = Parameters["LightVector"];
+            fog = Parameters["Fog"];
         }
 
         public void SetMatrix(Matrix world, ref Matrix view, ref Matrix projection)
@@ -425,68 +481,15 @@ namespace ORTS
             wvp.SetValue(world * view * projection);
             invView.SetValue(Matrix.Invert(view));
         }
-    }
 
-    [CallOnThread("Render")]
-    public class PrecipShader : Effect
-    {
-        EffectParameter mProjection = null;
-        EffectParameter mView = null;
-        EffectParameter mWorld = null;
-        EffectParameter sunDirection = null;
-        EffectParameter viewportHeight = null;
-        EffectParameter currentTime = null;
-        EffectParameter precip_Tex = null;
-        EffectParameter weatherType = null;
-
-        public Vector3 SunDirection
+        public void SetFog(float depth, ref Color color)
         {
-            set { sunDirection.SetValue(value); }
-        }
-
-        public int ViewportHeight
-        {
-            set { viewportHeight.SetValue(value); }
-        }
-
-        public float CurrentTime
-        {
-            set { currentTime.SetValue(value); }
-        }
-
-        public int WeatherType
-        {
-            set { weatherType.SetValue(value); }
-        }
-
-        public Texture2D PrecipTexture
-        {
-            set { precip_Tex.SetValue(value); }
-        }
-
-        public PrecipShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("PrecipShader"))
-        {
-            mProjection = Parameters["mProjection"];
-            mView = Parameters["mView"];
-            mWorld = Parameters["mWorld"];
-            sunDirection = Parameters["LightVector"];
-            viewportHeight = Parameters["viewportHeight"];
-            currentTime = Parameters["currentTime"];
-            weatherType = Parameters["weatherType"];
-            precip_Tex = Parameters["precip_Tex"];
-        }
-
-        public void SetMatrix(Matrix world, ref Matrix view, ref Matrix projection)
-        {
-            mProjection.SetValue(projection);
-            mView.SetValue(view);
-            mWorld.SetValue(world);
+            fog.SetValue(new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, MathHelper.Clamp(300f / depth, 0, 1)));
         }
     }
 
     [CallOnThread("Render")]
-    public class LightGlowShader : Effect
+    public class LightGlowShader : Shader
     {
         readonly EffectParameter worldViewProjection;
         readonly EffectParameter fade;
@@ -504,8 +507,8 @@ namespace ORTS
             fade.SetValue(fadeValues);
         }
 
-        public LightGlowShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("LightGlowShader"))
+        public LightGlowShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "LightGlowShader")
         {
             worldViewProjection = Parameters["WorldViewProjection"];
             fade = Parameters["Fade"];
@@ -514,13 +517,13 @@ namespace ORTS
     }
 
     [CallOnThread("Render")]
-    public class LightConeShader : Effect
+    public class LightConeShader : Shader
     {
-        EffectParameter worldViewProjection = null;
-        EffectParameter fade = null;
+        EffectParameter worldViewProjection;
+        EffectParameter fade;
 
-        public LightConeShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("LightConeShader"))
+        public LightConeShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "LightConeShader")
         {
             worldViewProjection = Parameters["WorldViewProjection"];
             fade = Parameters["Fade"];
@@ -538,7 +541,7 @@ namespace ORTS
     }
 
     [CallOnThread("Render")]
-    public class PopupWindowShader : Effect
+    public class PopupWindowShader : Shader
     {
         readonly EffectParameter world;
         readonly EffectParameter worldViewProjection;
@@ -566,20 +569,21 @@ namespace ORTS
             worldViewProjection.SetValue(wvp);
         }
 
-        public PopupWindowShader(GraphicsDevice graphicsDevice, ContentManager content)
-            : base(graphicsDevice, content.Load<Effect>("PopupWindow"))
+        public PopupWindowShader(Viewer viewer, GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "PopupWindow")
         {
             world = Parameters["World"];
             worldViewProjection = Parameters["WorldViewProjection"];
             glassColor = Parameters["GlassColor"];
             screenSize = Parameters["ScreenSize"];
             screenTexture = Parameters["ScreenTexture"];
-            Parameters["WindowTexture"].SetValue(content.Load<Texture2D>("Window"));
+            // TODO: This should happen on the loader thread.
+            Parameters["WindowTexture"].SetValue(SharedTextureManager.Get(graphicsDevice, System.IO.Path.Combine(viewer.ContentPath, "Window.png")));
         }
     }
 
     [CallOnThread("Render")]
-    public class CabShader : Effect
+    public class CabShader : Shader
     {
         readonly EffectParameter nightColorModifier;
         readonly EffectParameter lightOn;
@@ -609,8 +613,8 @@ namespace ORTS
             lightOn.SetValue(isDashLight);
         }
 
-        public CabShader(GraphicsDevice graphicsDevice, ContentManager content, Vector4 light1Position, Vector4 light2Position, Vector3 light1Color, Vector3 light2Color)
-            : base(graphicsDevice, content.Load<Effect>("CabShader"))
+        public CabShader(GraphicsDevice graphicsDevice, Vector4 light1Position, Vector4 light2Position, Vector3 light1Color, Vector3 light2Color)
+            : base(graphicsDevice, "CabShader")
         {
             nightColorModifier = Parameters["NightColorModifier"];
             lightOn = Parameters["LightOn"];
@@ -626,6 +630,64 @@ namespace ORTS
             light2Pos.SetValue(light2Position);
             light1Col.SetValue(light1Color);
             light2Col.SetValue(light2Color);
+        }
+    }
+
+    [CallOnThread("Render")]
+    public class DriverMachineInterfaceShader : Shader
+    {
+        readonly EffectParameter limitAngle;
+        readonly EffectParameter normalColor;
+        readonly EffectParameter limitColor;
+        readonly EffectParameter pointerColor;
+        readonly EffectParameter backgroundColor;
+        //readonly EffectParameter imageTexture;
+
+        public void SetData(Vector4 angle, Color gaugeColor, Color needleColor)
+        {
+            limitAngle.SetValue(angle);
+            limitColor.SetValue(gaugeColor.ToVector4());
+            pointerColor.SetValue(needleColor.ToVector4());
+        }
+
+        public DriverMachineInterfaceShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "DriverMachineInterfaceShader")
+        {
+            normalColor = Parameters["NormalColor"];
+            limitColor = Parameters["LimitColor"];
+            pointerColor = Parameters["PointerColor"];
+            backgroundColor = Parameters["BackgroundColor"];
+            limitAngle = Parameters["LimitAngle"];
+            //imageTexture = Parameters["ImageTexture"];
+        }
+    }
+
+    [CallOnThread("Render")]
+    public class DebugShader : Shader
+    {
+        readonly EffectParameter worldViewProjection;
+        readonly EffectParameter screenSize;
+        readonly EffectParameter graphPos;
+        readonly EffectParameter graphSample;
+
+        public Vector2 ScreenSize { set { screenSize.SetValue(value); } }
+
+        public Vector4 GraphPos { set { graphPos.SetValue(value); } }
+
+        public Vector2 GraphSample { set { graphSample.SetValue(value); } }
+
+        public DebugShader(GraphicsDevice graphicsDevice)
+            : base(graphicsDevice, "DebugShader")
+        {
+            worldViewProjection = Parameters["WorldViewProjection"];
+            screenSize = Parameters["ScreenSize"];
+            graphPos = Parameters["GraphPos"];
+            graphSample = Parameters["GraphSample"];
+        }
+
+        public void SetMatrix(Matrix matrix, ref Matrix viewproj)
+        {
+            worldViewProjection.SetValue(matrix * viewproj);
         }
     }
 }

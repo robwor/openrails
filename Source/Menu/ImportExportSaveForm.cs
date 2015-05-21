@@ -21,6 +21,9 @@ using System.Drawing;
 using System.IO;
 using System.IO.Packaging;  // Needs Project > Add reference > .NET > Component name = WindowsBase
 using System.Windows.Forms;
+using GNU.Gettext;
+using GNU.Gettext.WinForms;
+using ORTS.Settings;
 
 namespace ORTS
 {
@@ -29,9 +32,13 @@ namespace ORTS
         readonly ResumeForm.Save Save;
         const string SavePackFileExtension = "ORSavePack";  // Includes "OR" in the extension as this may be emailed, downloaded and mixed in with non-OR files.
 
+        GettextResourceManager catalog = new GettextResourceManager("Menu");
+
         public ImportExportSaveForm(ResumeForm.Save save)
         {
             InitializeComponent();  // Needed so that setting StartPosition = CenterParent is respected.
+
+            Localizer.Localize(this, catalog);
 
             // Windows 2000 and XP should use 8.25pt Tahoma, while Windows
             // Vista and later should use 9pt "Segoe UI". We'll use the
@@ -39,21 +46,21 @@ namespace ORTS
             Font = SystemFonts.MessageBoxFont;
 
             Save = save;
-            if (!Directory.Exists(Program.SavePackFolder)) Directory.CreateDirectory(Program.SavePackFolder);
+			if (!Directory.Exists(UserSettings.SavePackFolder)) Directory.CreateDirectory(UserSettings.SavePackFolder);
             UpdateFileList(null);
             bExport.Enabled = !(Save == null);
-            ofdImportSave.Filter = Application.ProductName + " Save Packs (*." + SavePackFileExtension + ")|*." + SavePackFileExtension + "|All files (*.*)|*";
+            ofdImportSave.Filter = Application.ProductName + catalog.GetString("Save Packs") + " (*." + SavePackFileExtension + ")|*." + SavePackFileExtension + "|" + catalog.GetString("All files") + " (*.*)|*";
         }
 
         #region Event handlers
         private void bImportSave_Click_1(object sender, EventArgs e)
         {
             // Show the dialog and get result.
-            ofdImportSave.InitialDirectory = Program.SavePackFolder;
+			ofdImportSave.InitialDirectory = UserSettings.SavePackFolder;
             if (ofdImportSave.ShowDialog() == DialogResult.OK)
             {
-                ExtractFilesFromZip(ofdImportSave.FileName, Program.UserDataFolder);
-                UpdateFileList(String.Format("Save Pack '{0}' imported successfully.", Path.GetFileNameWithoutExtension(ofdImportSave.FileName)));
+				ExtractFilesFromZip(ofdImportSave.FileName, UserSettings.UserDataFolder);
+                UpdateFileList(catalog.GetStringFmt("Save Pack '{0}' imported successfully.", Path.GetFileNameWithoutExtension(ofdImportSave.FileName)));
             }
         }
 
@@ -65,9 +72,9 @@ namespace ORTS
             // For Zip, see http://weblogs.asp.net/jgalloway/archive/2007/10/25/creating-zip-archives-in-net-without-an-external-library-like-sharpziplib.aspx
 
             // Copy files to new package in folder save_packs
-            var fullFilePath = Path.Combine(Program.UserDataFolder, Save.File);
+			var fullFilePath = Path.Combine(UserSettings.UserDataFolder, Save.File);
             var toFile = Path.GetFileNameWithoutExtension(Save.File) + "." + SavePackFileExtension;
-            var fullZipFilePath = Path.Combine(Program.SavePackFolder, toFile);
+			var fullZipFilePath = Path.Combine(UserSettings.SavePackFolder, toFile);
             foreach (var fileName in new[] {
                 fullFilePath,
                 Path.ChangeExtension(fullFilePath, "png"),
@@ -77,7 +84,7 @@ namespace ORTS
             {
                 AddFileToZip(fullZipFilePath, fileName);
             }
-            UpdateFileList(String.Format("Save Pack '{0}' exported successfully.", Path.GetFileNameWithoutExtension(Save.File)));
+            UpdateFileList(catalog.GetStringFmt("Save Pack '{0}' exported successfully.", Path.GetFileNameWithoutExtension(Save.File)));
         }
 
         private void bViewSavePacksFolder_Click(object sender, EventArgs e)
@@ -85,11 +92,11 @@ namespace ORTS
             var objPSI = new System.Diagnostics.ProcessStartInfo();
             var winDir = Environment.GetEnvironmentVariable("windir");
             objPSI.FileName = winDir + @"\explorer.exe";
-            objPSI.Arguments = "\"" + Program.SavePackFolder + "\""; // Opens the Save Packs folder
+			objPSI.Arguments = "\"" + UserSettings.SavePackFolder + "\""; // Opens the Save Packs folder
             if (Save != null)
             {
                 var toFile = Path.GetFileNameWithoutExtension(Save.File) + "." + SavePackFileExtension;
-                var fullZipFilePath = Path.Combine(Program.SavePackFolder, toFile);
+				var fullZipFilePath = Path.Combine(UserSettings.SavePackFolder, toFile);
                 if (File.Exists(fullZipFilePath))
                 {
                     objPSI.Arguments = "/select,\"" + fullZipFilePath + "\""; // Opens the Save Packs folder and selects the exported SavePack
@@ -101,14 +108,14 @@ namespace ORTS
 
         void UpdateFileList(string message)
         {
-            var files = Directory.GetFiles(Program.SavePackFolder, "*." + SavePackFileExtension);
+			var files = Directory.GetFiles(UserSettings.SavePackFolder, "*." + SavePackFileExtension);
             textBoxSavePacks.Text = String.IsNullOrEmpty(message) ? "" : message + "\r\n";
-            textBoxSavePacks.Text += String.Format("Save Pack folder contains {0} save pack{1}:", files.Length, files.Length == 1 ? "" : "s");
+            textBoxSavePacks.Text += catalog.GetPluralStringFmt("Save Pack folder contains {0} save pack:", "Save Pack folder contains {0} save packs:", files.Length);
             foreach (var s in files)
                 textBoxSavePacks.Text += "\r\n    " + Path.GetFileNameWithoutExtension(s);
         }
 
-        void AddFileToZip(string zipFilename, string fileToAdd)
+        static void AddFileToZip(string zipFilename, string fileToAdd)
         {
             using (var zip = Package.Open(zipFilename, FileMode.OpenOrCreate))
             {
@@ -130,7 +137,7 @@ namespace ORTS
         }
 
 
-        void ExtractFilesFromZip(string zipFilename, string path)
+        static void ExtractFilesFromZip(string zipFilename, string path)
         {
             using (var zip = Package.Open(zipFilename, FileMode.Open, FileAccess.Read))
             {

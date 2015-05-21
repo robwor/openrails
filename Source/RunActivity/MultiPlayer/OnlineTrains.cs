@@ -17,10 +17,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using MSTS;
 using System.IO;
+using System.Linq;
+using ORTS.Scripting.Api;
 
 namespace ORTS.MultiPlayer
 {
@@ -31,7 +30,7 @@ namespace ORTS.MultiPlayer
 		{
 			Players = new Dictionary<string, OnlinePlayer>();
 		}
-		public void Update()
+		public static void Update()
 		{
 
 		}
@@ -96,7 +95,7 @@ namespace ORTS.MultiPlayer
 			return tmp;
 		}
 
-		public string MoveAllTrain(MSGMove move)
+		public static string MoveAllTrain(MSGMove move)
 		{
 			string tmp = "";
 			if (move == null) move = new MSGMove();
@@ -153,23 +152,14 @@ namespace ORTS.MultiPlayer
 			{
 				try
 				{
-					PATFile patFile = new PATFile(p.path);
-					AIPath aiPath = new AIPath(patFile, Program.Simulator.TDB, Program.Simulator.TSectionDat, p.path);
-#if !NEW_SIGNALLING
-					train.Path = aiPath;
+#if ACTIVITY_EDITOR
+					AIPath aiPath = new AIPath(Program.Simulator.TDB, Program.Simulator.TSectionDat, p.path, Program.Simulator.orRouteConfig);
+#else
+                    AIPath aiPath = new AIPath(Program.Simulator.TDB, Program.Simulator.TSectionDat, p.path);
 #endif
-
 				}
-#if !NEW_SIGNALLING
-                    catch (Exception) { train.Path = null; MPManager.BroadCast((new MSGMessage(player.user, "Warning", "Server does not have path file provided, signals may always be red for you.")).ToString()); }
-#else 
-                    catch (Exception) {MPManager.BroadCast((new MSGMessage(player.user, "Warning", "Server does not have path file provided, signals may always be red for you.")).ToString()); }
-#endif
+                catch (Exception) { MPManager.BroadCast((new MSGMessage(player.user, "Warning", "Server does not have path file provided, signals may always be red for you.")).ToString()); }
             }
-
-#if !NEW_SIGNALLING
-			else train.Path = null;
-#endif
 
 			try
 			{
@@ -191,7 +181,7 @@ namespace ORTS.MultiPlayer
 				try
 				{
                     car = RollingStock.Load(Program.Simulator, wagonFilePath);
-					car.Length = player.lengths[i];
+					car.CarLengthM = player.lengths[i];
 				}
 				catch (Exception error)
 				{
@@ -206,11 +196,11 @@ namespace ORTS.MultiPlayer
 				train.Cars.Add(car);
 				car.Train = train;
 				MSTSWagon w = (MSTSWagon)car;
-				if (w != null)
-				{
-					w.Pan1Up = player.pantofirst == 1 ? true : false;
-					w.Pan2Up = player.pantosecond == 1 ? true : false;
-				}
+                if (w != null)
+                {
+                    w.SignalEvent((player.pantofirst == 1 ? PowerSupplyEvent.RaisePantograph : PowerSupplyEvent.LowerPantograph), 1);
+                    w.SignalEvent((player.pantosecond == 1 ? PowerSupplyEvent.RaisePantograph : PowerSupplyEvent.LowerPantograph), 2);
+                }
 
 			}// for each rail car
 
@@ -250,20 +240,6 @@ namespace ORTS.MultiPlayer
 			}
 			p.Train = train;
 			
-			if (MPManager.IsServer() && MPManager.PreferGreen == false) //prefer red light always, thus need to have path included
-			{
-#if !NEW_SIGNALLING
-				if (train.Path != null)
-				{
-					train.TrackAuthority = new TrackAuthority(train, train.Number + 100000, 10, train.Path);
-					Program.Simulator.AI.Dispatcher.TrackAuthorities.Add(train.TrackAuthority);
-					Program.Simulator.AI.Dispatcher.RequestAuth(train, true, 0);
-					//train.Path.AlignInitSwitches(train.RearTDBTraveller, -1, 500);
-				}
-				else train.TrackAuthority = null;
-#endif
-			}
-			 
 			Players.Add(player.user, p);
 			MPManager.Instance().AddOrRemoveTrain(train, true);
 

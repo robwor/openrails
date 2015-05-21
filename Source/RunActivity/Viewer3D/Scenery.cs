@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -42,19 +42,20 @@
  * 
  */
 
+using Microsoft.Xna.Framework;
+using Orts.Formats.Msts;
+using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using Microsoft.Xna.Framework;
 using System.Linq;
-using MSTS;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
     public class SceneryDrawer
     {
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
 
         // THREAD SAFETY:
         //   All accesses must be done in local variables. No modifications to the objects are allowed except by
@@ -65,7 +66,7 @@ namespace ORTS
         int VisibleTileX;
         int VisibleTileZ;
 
-        public SceneryDrawer(Viewer3D viewer)
+        public SceneryDrawer(Viewer viewer)
         {
             Viewer = viewer;
         }
@@ -73,6 +74,9 @@ namespace ORTS
         [CallOnThread("Loader")]
         public void Load()
         {
+            Viewer.DontLoadNightTextures = (Program.Simulator.Settings.ConditionalLoadOfNightTextures &&
+            ((Viewer.MaterialManager.sunDirection.Y > 0.05f && Program.Simulator.ClockTime%86400 < 43200) ||
+            (Viewer.MaterialManager.sunDirection.Y > 0.15f && Program.Simulator.ClockTime %86400 >= 43200))) ? true : false;            
             if (TileX != VisibleTileX || TileZ != VisibleTileZ)
             {
                 TileX = VisibleTileX;
@@ -85,6 +89,8 @@ namespace ORTS
                 {
                     for (var z = -needed; z <= needed; z++)
                     {
+                        if (Viewer.LoaderProcess.Terminated)
+                            break;
                         var tile = worldFiles.FirstOrDefault(t => t.TileX == TileX + x && t.TileZ == TileZ + z);
                         if (tile == null)
                             tile = LoadWorldFile(TileX + x, TileZ + z, x == 0 && z == 0);
@@ -93,8 +99,29 @@ namespace ORTS
                     }
                 }
                 foreach (var tile in oldWorldFiles)
-                    tile.Dispose();
+                    tile.Unload();
                 WorldFiles = newWorldFiles;
+                Viewer.tryLoadingNightTextures = true; // when Tiles loaded change you can try
+            }
+            else if (Viewer.NightTexturesNotLoaded && Program.Simulator.ClockTime%86400 >= 43200 && Viewer.tryLoadingNightTextures)
+            {
+                var sunHeight = Viewer.MaterialManager.sunDirection.Y;
+                if (sunHeight < 0.10f && sunHeight > 0.01)
+                {
+                    var remainingMemorySpace = Viewer.LoadMemoryThreshold - Viewer.HUDWindow.GetWorkingSetSize();
+                    if (remainingMemorySpace >= 0) // if not we'll try again
+                    {
+                        // Night is coming, it's time to load the night textures
+                        var success = Viewer.MaterialManager.LoadNightTextures();
+                        if (success)
+                        {
+                            Viewer.NightTexturesNotLoaded = false;
+                        }
+                    }
+                    Viewer.tryLoadingNightTextures = false;
+                }
+                else if (sunHeight <= 0.01)
+                    Viewer.NightTexturesNotLoaded = false; // too late to try, we must give up and we don't load the night textures
             }
         }
 
@@ -104,6 +131,30 @@ namespace ORTS
             var worldFiles = WorldFiles;
             foreach (var tile in worldFiles)
                 tile.Mark();
+        }
+
+        [CallOnThread("Updater")]
+        public float GetBoundingBoxTop(WorldLocation location, float blockSize)
+        {
+            return GetBoundingBoxTop(location.TileX, location.TileZ, location.Location.X, location.Location.Z, blockSize);
+        }
+
+        [CallOnThread("Updater")]
+        public float GetBoundingBoxTop(int tileX, int tileZ, float x, float z, float blockSize)
+        {
+            // Normalize the coordinates to the right tile.
+            while (x >= 1024) { x -= 2048; tileX++; }
+            while (x < -1024) { x += 2048; tileX--; }
+            while (z >= 1024) { z -= 2048; tileZ++; }
+            while (z < -1024) { z += 2048; tileZ--; }
+
+            // Fetch the tile we're looking up elevation for; if it isn't loaded, no elevation.
+            var worldFiles = WorldFiles;
+            var worldFile = worldFiles.FirstOrDefault(wf => wf.TileX == tileX && wf.TileZ == tileZ);
+            if (worldFile == null)
+                return float.MinValue;
+
+            return worldFile.GetBoundingBoxTop(x, z, blockSize);
         }
 
         [CallOnThread("Updater")]
@@ -126,7 +177,8 @@ namespace ORTS
         {
             var worldFiles = WorldFiles;
             foreach (var worldFile in worldFiles)
-                if (Viewer.Camera.InFOV(new Vector3((worldFile.TileX - Viewer.Camera.TileX) * 2048, 0, (worldFile.TileZ - Viewer.Camera.TileZ) * 2048), 1448))
+                // TODO: This might impair some shadows.
+                if (Viewer.Camera.InFov(new Vector3((worldFile.TileX - Viewer.Camera.TileX) * 2048, 0, (worldFile.TileZ - Viewer.Camera.TileZ) * 2048), 1448))
                     worldFile.PrepareFrame(frame, elapsedTime);
         }
 
@@ -138,8 +190,10 @@ namespace ORTS
     }
 
     [CallOnThread("Loader")]
-    public class WorldFile : IDisposable
+    public class WorldFile
     {
+        const int MinimumInstanceCount = 5;
+
         // Dynamic track objects in the world file
         public struct DyntrackParams
         {
@@ -150,13 +204,15 @@ namespace ORTS
 
         public readonly int TileX, TileZ;
         public List<StaticShape> sceneryObjects = new List<StaticShape>();
-        public List<DynatrackDrawer> dTrackList = new List<DynatrackDrawer>();
-        public List<ForestDrawer> forestList = new List<ForestDrawer>();
+        public List<DynamicTrackViewer> dTrackList = new List<DynamicTrackViewer>();
+        public List<ForestViewer> forestList = new List<ForestViewer>();
         public List<RoadCarSpawner> carSpawners = new List<RoadCarSpawner>();
         public List<TrItemLabel> sidings = new List<TrItemLabel>();
         public List<TrItemLabel> platforms = new List<TrItemLabel>();
+        public List<PickupObj> PickupList = new List<PickupObj>();
+        public List<BoundingBox> BoundingBoxes = new List<BoundingBox>();
 
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
 
         /// <summary>
         /// Open the specified WFile and load all the scenery objects into the viewer.
@@ -164,13 +220,11 @@ namespace ORTS
         /// </summary>
         /// <param name="visible">Tiles adjacent to the current visible tile may not be modelled.
         /// This flag decides whether a missing file leads to a warning message.</param>
-        public WorldFile(Viewer3D viewer, int tileX, int tileZ, bool visible)
+        public WorldFile(Viewer viewer, int tileX, int tileZ, bool visible)
         {
             Viewer = viewer;
             TileX = tileX;
             TileZ = tileZ;
-
-            Viewer.Tiles.Load(tileX, tileZ, visible);
 
             // determine file path to the WFile at the specified tile coordinates
             var WFileName = WorldFileNameFromTileCoordinates(tileX, tileZ);
@@ -180,9 +234,7 @@ namespace ORTS
             if (!File.Exists(WFilePath))
             {
                 if (visible)
-                {
                     Trace.TraceWarning("World file missing - {0}", WFilePath);
-                }
                 return;
             }
 
@@ -190,16 +242,20 @@ namespace ORTS
             var WFile = new WFile(WFilePath);
 
             // create all the individual scenery objects specified in the WFile
-            foreach (WorldObject worldObject in WFile.Tr_Worldfile)
+            foreach (var worldObject in WFile.Tr_Worldfile)
             {
                 if (worldObject.StaticDetailLevel > viewer.Settings.WorldObjectDensity)
                     continue;
 
+                // If the loader has been asked to temrinate, bail out early.
+                if (viewer.LoaderProcess.Terminated)
+                    break;
+
                 // Get the position of the scenery object into ORTS coordinate space.
                 WorldPosition worldMatrix;
-                if (worldObject.Matrix3x3 != null)
+                if (worldObject.Matrix3x3 != null && worldObject.Position != null)
                     worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX, WFile.TileZ, worldObject.Position, worldObject.Matrix3x3);
-                else if (worldObject.QDirection != null)
+                else if (worldObject.QDirection != null && worldObject.Position != null)
                     worldMatrix = WorldPositionFromMSTSLocation(WFile.TileX, WFile.TileZ, worldObject.Position, worldObject.QDirection);
                 else
                 {
@@ -209,10 +265,10 @@ namespace ORTS
 
                 var shadowCaster = (worldObject.StaticFlags & (uint)StaticFlag.AnyShadow) != 0 || viewer.Settings.ShadowAllShapes;
                 var animated = (worldObject.StaticFlags & (uint)StaticFlag.Animate) != 0;
-                var global = (worldObject is TrackObj) || (worldObject.StaticFlags & (uint)StaticFlag.Global) != 0;
+                var global = (worldObject is TrackObj) || (worldObject is HazardObj) || (worldObject.StaticFlags & (uint)StaticFlag.Global) != 0;
 
                 // TransferObj have a FileName but it is not a shape, so we need to avoid sanity-checking it as if it was.
-                var fileNameIsNotShape = (worldObject is TransferObj);
+                var fileNameIsNotShape = (worldObject is TransferObj || worldObject is HazardObj);
 
                 // Determine the file path to the shape file for this scenery object and check it exists as expected.
                 var shapeFilePath = fileNameIsNotShape || String.IsNullOrEmpty(worldObject.FileName) ? null : global ? viewer.Simulator.BasePath + @"\Global\Shapes\" + worldObject.FileName : viewer.Simulator.RoutePath + @"\Shapes\" + worldObject.FileName;
@@ -221,14 +277,30 @@ namespace ORTS
                     shapeFilePath = Path.GetFullPath(shapeFilePath);
                     if (!File.Exists(shapeFilePath))
                     {
-                        Trace.TraceWarning("{0} scenery object {1} with StaticFlags {3:X8} references non-existant {2}", WFileName, worldObject.UID, shapeFilePath, worldObject.StaticFlags);
+                        Trace.TraceWarning("{0} scenery object {1} with StaticFlags {3:X8} references non-existent {2}", WFileName, worldObject.UID, shapeFilePath, worldObject.StaticFlags);
                         shapeFilePath = null;
+                    }
+                }
+
+                if (shapeFilePath != null && File.Exists(shapeFilePath + "d"))
+                {
+                    var shape = new SDFile(shapeFilePath + "d");
+                    if (shape.shape.ESD_Bounding_Box != null)
+                    {
+                        var min = shape.shape.ESD_Bounding_Box.Min;
+                        var max = shape.shape.ESD_Bounding_Box.Max;
+                        var transform = Matrix.Invert(worldMatrix.XNAMatrix);
+                        // Not sure if this is needed, but it is to correct for center-of-gravity being not the center of the box.
+                        //transform.M41 += (max.X + min.X) / 2;
+                        //transform.M42 += (max.Y + min.Y) / 2;
+                        //transform.M43 += (max.Z + min.Z) / 2;
+                        BoundingBoxes.Add(new BoundingBox(transform, new Vector3((max.X - min.X) / 2, (max.Y - min.Y) / 2, (max.Z - min.Z) / 2), worldMatrix.XNAMatrix.Translation.Y));
                     }
                 }
 
                 try
                 {
-                    if (worldObject.GetType() == typeof(MSTS.TrackObj))
+                    if (worldObject.GetType() == typeof(TrackObj))
                     {
                         var trackObj = (TrackObj)worldObject;
                         // Switch tracks need a link to the simulator engine so they can animate the points.
@@ -262,55 +334,68 @@ namespace ORTS
                             if (success == 0 && trackObj.FileName.Contains("Dyna")) Wire.DecomposeConvertedDynamicWire(viewer, dTrackList, trackObj, worldMatrix);
                         }
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.DyntrackObj))
+                    else if (worldObject.GetType() == typeof(DyntrackObj))
                     {
                         if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true)
                             Wire.DecomposeDynamicWire(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
                         // Add DyntrackDrawers for individual subsections
                         if (viewer.Simulator.UseSuperElevation > 0 && SuperElevation.UseSuperElevationDyn(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix))
                             SuperElevation.DecomposeDynamicSuperElevation(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
-                        else Dynatrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
+                        else DynamicTrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
 
                     } // end else if DyntrackObj
-                    else if (worldObject.GetType() == typeof(MSTS.ForestObj))
+                    else if (worldObject.GetType() == typeof(ForestObj))
                     {
-                        if (!(worldObject as MSTS.ForestObj).IsYard)
-                            forestList.Add(new ForestDrawer(viewer, (ForestObj)worldObject, worldMatrix));
+                        if (!(worldObject as ForestObj).IsYard)
+                            forestList.Add(new ForestViewer(viewer, (ForestObj)worldObject, worldMatrix));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.SignalObj))
+                    else if (worldObject.GetType() == typeof(SignalObj))
                     {
                         sceneryObjects.Add(new SignalShape(viewer, (SignalObj)worldObject, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.TransferObj))
+                    else if (worldObject.GetType() == typeof(TransferObj))
                     {
                         sceneryObjects.Add(new TransferShape(viewer, (TransferObj)worldObject, worldMatrix));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.LevelCrossingObj))
+                    else if (worldObject.GetType() == typeof(LevelCrossingObj))
                     {
                         sceneryObjects.Add(new LevelCrossingShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (LevelCrossingObj)worldObject));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.SpeedPostObj))
+                    else if (worldObject.GetType() == typeof(HazardObj))
+					{
+						var h = HazzardShape.CreateHazzard(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (HazardObj)worldObject);
+						if (h != null) sceneryObjects.Add(h);
+					}
+                    else if (worldObject.GetType() == typeof(SpeedPostObj))
                     {
                         sceneryObjects.Add(new SpeedPostShape(viewer, shapeFilePath, worldMatrix, (SpeedPostObj)worldObject));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.CarSpawnerObj))
+                    else if (worldObject.GetType() == typeof(CarSpawnerObj))
                     {
                         carSpawners.Add(new RoadCarSpawner(viewer, worldMatrix, (CarSpawnerObj)worldObject));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.SidingObj))
+                    else if (worldObject.GetType() == typeof(SidingObj))
                     {
                         sidings.Add(new TrItemLabel(viewer, worldMatrix, (SidingObj)worldObject));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.PlatformObj))
+                    else if (worldObject.GetType() == typeof(PlatformObj))
                     {
                         platforms.Add(new TrItemLabel(viewer, worldMatrix, (PlatformObj)worldObject));
                     }
-                    else if (worldObject.GetType() == typeof(MSTS.StaticObj))
+                    else if (worldObject.GetType() == typeof(StaticObj))
                     {
                         if (animated)
                             sceneryObjects.Add(new AnimatedShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
                         else
                             sceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
+                    }
+                    else if (worldObject.GetType() == typeof(PickupObj))
+                    {
+                        if (animated)
+                            sceneryObjects.Add(new FuelPickupItemShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (PickupObj)worldObject));
+                        else
+                            sceneryObjects.Add(new FuelPickupItemShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (PickupObj)worldObject));
+                        PickupList.Add((PickupObj)worldObject);
                     }
                     else // It's some other type of object - not one of the above.
                     {
@@ -323,34 +408,52 @@ namespace ORTS
                 }
             }
 
+            // Model instancing requires shader model 3 or higher.
+            if (Viewer.Settings.ModelInstancing && Viewer.Settings.ShaderModel >= 3)
+            {
+                // Instancing collapsed multiple copies of the same model in to a single set of data (the normal model
+                // data, plus a list of position information for each copy) and then draws them in a single batch.
+                var instances = new Dictionary<string, List<StaticShape>>();
+                foreach (var shape in sceneryObjects)
+                {
+                    // Only allow StaticShape and StaticTrackShape instances for now.
+                    if (shape.GetType() != typeof(StaticShape) && shape.GetType() != typeof(StaticTrackShape))
+                        continue;
+
+                    // Must have a file path so we can collapse instances on something.
+                    var path = shape.SharedShape.FilePath;
+                    if (path == null)
+                        continue;
+
+                    if (path != null && !instances.ContainsKey(path))
+                        instances.Add(path, new List<StaticShape>());
+
+                    if (path != null)
+                        instances[path].Add(shape);
+                }
+                foreach (var path in instances.Keys)
+                {
+                    if (instances[path].Count >= MinimumInstanceCount)
+                    {
+                        var sharedInstance = new SharedStaticShapeInstance(Viewer, path, instances[path]);
+                        foreach (var model in instances[path])
+                            sceneryObjects.Remove(model);
+                        sceneryObjects.Add(sharedInstance);
+                    }
+                }
+            }
+
             if (viewer.Simulator.UseSuperElevation > 0) SuperElevation.DecomposeStaticSuperElevation(Viewer, dTrackList, TileX, TileZ);
             if (Viewer.World.Sounds != null) Viewer.World.Sounds.AddByTile(TileX, TileZ);
         }
 
-        #region IDisposable Members
-
-        public void Dispose()
+        [CallOnThread("Loader")]
+        public void Unload()
         {
-            DisposeAndClearList(ref sceneryObjects);
-            DisposeAndClearList(ref dTrackList);
-            DisposeAndClearList(ref forestList);
-            DisposeAndClearList(ref carSpawners);
-            DisposeAndClearList(ref sidings);
-            DisposeAndClearList(ref platforms);
+            foreach (var obj in sceneryObjects)
+                obj.Unload();
             if (Viewer.World.Sounds != null) Viewer.World.Sounds.RemoveByTile(TileX, TileZ);
-            // TODO: Do we need this when we don't have a destructor or Finalize()?
-            GC.SuppressFinalize(true);
         }
-
-        void DisposeAndClearList<T>(ref List<T> objects)
-        {
-            foreach (var obj in objects)
-                if (obj is IDisposable)
-                    (obj as IDisposable).Dispose();
-            objects = new List<T>();
-        }
-
-        #endregion
 
         [CallOnThread("Loader")]
         internal void Mark()
@@ -361,6 +464,22 @@ namespace ORTS
                 dTrack.Mark();
             foreach (var forest in forestList)
                 forest.Mark();
+        }
+
+        [CallOnThread("Updater")]
+        public float GetBoundingBoxTop(float x, float z, float blockSize)
+        {
+            var location = new Vector3(x, float.MinValue, -z);
+            foreach (var boundingBox in BoundingBoxes)
+            {
+                if (boundingBox.Size.X < blockSize / 2 || boundingBox.Size.Z < blockSize / 2)
+                    continue;
+
+                var boxLocation = Vector3.Transform(location, boundingBox.Transform);
+                if (-boundingBox.Size.X <= boxLocation.X && boxLocation.X <= boundingBox.Size.X && -boundingBox.Size.Z <= boxLocation.Z && boxLocation.Z <= boundingBox.Size.Z)
+                    location.Y = Math.Max(location.Y, boundingBox.Height + boundingBox.Size.Y);
+            }
+            return location.Y;
         }
 
         [CallOnThread("Updater")]
@@ -385,7 +504,7 @@ namespace ORTS
         /// MSTS WFiles represent some location with a position, quaternion and tile coordinates
         /// This converts it to the ORTS WorldPosition representation
         /// </summary>
-        WorldPosition WorldPositionFromMSTSLocation(int tileX, int tileZ, STFPositionItem MSTSPosition, STFQDirectionItem MSTSQuaternion)
+        static WorldPosition WorldPositionFromMSTSLocation(int tileX, int tileZ, STFPositionItem MSTSPosition, STFQDirectionItem MSTSQuaternion)
         {
             var XNAQuaternion = new Quaternion((float)MSTSQuaternion.A, (float)MSTSQuaternion.B, -(float)MSTSQuaternion.C, (float)MSTSQuaternion.D);
             var XNAPosition = new Vector3((float)MSTSPosition.X, (float)MSTSPosition.Y, -(float)MSTSPosition.Z);
@@ -404,7 +523,7 @@ namespace ORTS
         /// MSTS WFiles represent some location with a position, 3x3 matrix and tile coordinates
         /// This converts it to the ORTS WorldPosition representation
         /// </summary>
-        WorldPosition WorldPositionFromMSTSLocation(int tileX, int tileZ, STFPositionItem MSTSPosition, Matrix3x3 MSTSMatrix)
+        static WorldPosition WorldPositionFromMSTSLocation(int tileX, int tileZ, STFPositionItem MSTSPosition, Matrix3x3 MSTSMatrix)
         {
             var XNAPosition = new Vector3((float)MSTSPosition.X, (float)MSTSPosition.Y, -(float)MSTSPosition.Z);
             var XNAMatrix = Matrix.Identity;
@@ -438,7 +557,7 @@ namespace ORTS
         /// Build a w filename from tile X and Z coordinates.
         /// Returns a string eg "w-011283+014482.w"
         /// </summary>
-        string WorldFileNameFromTileCoordinates(int tileX, int tileZ)
+        public static string WorldFileNameFromTileCoordinates(int tileX, int tileZ)
         {
             var filename = "w" + FormatTileCoordinate(tileX) + FormatTileCoordinate(tileZ) + ".w";
             return filename;
@@ -449,7 +568,7 @@ namespace ORTS
         /// Returns the string representation of a coordinate
         /// eg "+014482"
         /// </summary>
-        string FormatTileCoordinate(int tileCoord)
+        static string FormatTileCoordinate(int tileCoord)
         {
             var sign = "+";
             if (tileCoord < 0)
@@ -458,6 +577,20 @@ namespace ORTS
                 tileCoord *= -1;
             }
             return sign + tileCoord.ToString("000000");
+        }
+    }
+
+    public struct BoundingBox
+    {
+        public readonly Matrix Transform;
+        public readonly Vector3 Size;
+        public readonly float Height;
+
+        internal BoundingBox(Matrix transform, Vector3 size, float height)
+        {
+            Transform = transform;
+            Size = size;
+            Height = height;
         }
     }
 }

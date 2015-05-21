@@ -37,23 +37,36 @@
 // #define DEBUG_TEST
 // #define DEBUG_REPORTS
 // #define DEBUG_DEADLOCK
+// #define DEBUG_TRACEINFO
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Microsoft.Xna.Framework;
-using MSTS;
+using Microsoft.Xna.Framework.Graphics;
+using Orts.Formats.Msts;
+using Orts.Parsers.Msts;
+using ORTS.Common;
 using ORTS.MultiPlayer;
-using ORTS.Popups;
+using ORTS.Scripting.Api;
+using ORTS.Viewer3D;
+using ORTS.Viewer3D.Popups;
+using ORTS.Settings;
+using GNU.Gettext;
 
 namespace ORTS
 {
     public class Train
     {
+        protected GettextResourceManager Catalog = new GettextResourceManager("RunActivity");
+
         public List<TrainCar> Cars = new List<TrainCar>();           // listed front to back
         public int Number;
-        public static int TotalNumber = 0;
+        public string Name;
+        public static int TotalNumber = 1; // start at 1 (0 is reserved for player train)
         public TrainCar FirstCar
         {
             get
@@ -71,41 +84,58 @@ namespace ORTS
         public Traveller RearTDBTraveller;               // positioned at the back of the last car in the train
         public Traveller FrontTDBTraveller;              // positioned at the front of the train by CalculatePositionOfCars
         public float Length;                             // length of train from FrontTDBTraveller to RearTDBTraveller
-        public float SpeedMpS = 0.0f;                    // meters per second +ve forward, -ve when backing
+        public float MassKg;                             // weight of the train
+        public float SpeedMpS;                           // meters per second +ve forward, -ve when backing
         float LastSpeedMpS;                              // variable to remember last speed used for projected speed
-        SmoothedData AccelerationMpSpS = new SmoothedData(); // smoothed acceleration data
+        public SmoothedData AccelerationMpSpS = new SmoothedData(); // smoothed acceleration data
         public float ProjectedSpeedMpS;                  // projected speed
         public float LastReportedSpeed;
 
-        public Train UncoupledFrom = null;               // train not to coupled back onto
-        public float TotalCouplerSlackM = 0;
-        public float MaximumCouplerForceN = 0;
-        public int NPull = 0;
-        public int NPush = 0;
+        public Train UncoupledFrom;                      // train not to coupled back onto
+        public float TotalCouplerSlackM;
+        public float MaximumCouplerForceN;
+        public int NPull;
+        public int NPush;
         public int LeadLocomotiveIndex = -1;
-        public bool IsFreight = false;
-        public float SlipperySpotDistanceM = 0;          // distance to extra slippery part of track
-        public float SlipperySpotLengthM = 0;
+        public bool IsFreight;                           // has at least one freight car
+        public int PassengerCarsNumber = 0;              // Number of passenger cars
+        public float SlipperySpotDistanceM;              // distance to extra slippery part of track
+        public float SlipperySpotLengthM;
 
         // These signals pass through to all cars and locomotives on the train
         public Direction MUDirection = Direction.N;      // set by player locomotive to control MU'd locomotives
-        public float MUThrottlePercent = 0;              // set by player locomotive to control MU'd locomotives
+        public float MUThrottlePercent;                  // set by player locomotive to control MU'd locomotives
+        public int MUGearboxGearIndex;                   // set by player locomotive to control MU'd locomotives
         public float MUReverserPercent = 100;            // steam engine direction/cutoff control for MU'd locomotives
         public float MUDynamicBrakePercent = -1;         // dynamic brake control for MU'd locomotives, <0 for off
-        public float BrakeLine1PressurePSI = 90;         // set by player locomotive to control entire train brakes
-        public float BrakeLine2PressurePSI = 0;          // extra line for dual line systems, main reservoir
-        public float BrakeLine3PressurePSI = 0;          // extra line just in case, engine brake pressure
-        public float BrakeLine4PressurePSI = 0;          // extra line just in case, ep brake control line
+        public float BrakeLine1PressurePSIorInHg = 90;   // set by player locomotive to control entire train brakes
+        // Class AirSinglePipe etc. use this property for pressure in PSI, 
+        // but Class VacuumSinglePipe uses it for vacuum in InHg.
+        public float BrakeLine2PressurePSI;              // extra line for dual line systems, main reservoir
+        public float BrakeLine3PressurePSI;              // extra line just in case, engine brake pressure
+        public float BrakeLine4 = -1;                    // extra line just in case, ep brake control line. -1: release/inactive, 0: hold, 0 < value <=1: apply
         public RetainerSetting RetainerSetting = RetainerSetting.Exhaust;
         public int RetainerPercent = 100;
+
+        public bool IsWheelSlipWarninq;
+        public bool IsWheelSlip;
+
+        //To investigate coupler breaks on route
+        public int NumOfCouplerBreaks = 0;
+        private bool numOfCouplerBreaksNoted = false;
 
         public enum TRAINTYPE
         {
             PLAYER,
+            INTENDED_PLAYER,
             STATIC,
             AI,
             AI_NOTSTARTED,
-            REMOTE
+            AI_AUTOGENERATE,
+            REMOTE,
+            AI_PLAYERDRIVEN,   //Player is on board and is durrently driving train
+            AI_PLAYERHOSTING,   //Player is on board, but train is currently autopiloted
+            AI_INCORPORATED    // AI train is incorporated in other train
         }
 
         public TRAINTYPE TrainType = TRAINTYPE.PLAYER;
@@ -116,14 +146,12 @@ namespace ORTS
         public int IndexNextSpeedlimit = -1;             // Index in SignalObjectItems for next speedpost
         public SignalObject[] NextSignalObject = new SignalObject[2];  // direct reference to next signal
 
-        public TrackMonitorSignalAspect TMaspect = TrackMonitorSignalAspect.None;
-
-        public SignalHead.SIGASP CABAspect = SignalHead.SIGASP.UNKNOWN; // By GeorgeS
-
-        public float TrainMaxSpeedMpS = 0;               // Max speed as set by route (default value)
-        public float AllowedMaxSpeedMpS = 0;             // Max speed as allowed
-        public float allowedMaxSpeedSignalMpS = 0;       // Max speed as set by signal
-        public float allowedMaxSpeedLimitMpS = 0;        // Max speed as set by limit
+        public float TrainMaxSpeedMpS;                   // Max speed as set by route (default value)
+        public float AllowedMaxSpeedMpS;                 // Max speed as allowed
+        public float allowedMaxSpeedSignalMpS;           // Max speed as set by signal
+        public float allowedMaxSpeedLimitMpS;            // Max speed as set by limit
+        public float allowedAbsoluteMaxSpeedSignalMpS = (float)Program.Simulator.TRK.Tr_RouteFile.SpeedLimit;   // Max speed as set by signal independently from train features
+        public float allowedAbsoluteMaxSpeedLimitMpS = (float)Program.Simulator.TRK.Tr_RouteFile.SpeedLimit;    // Max speed as set by limit independently from train features
         public float maxTimeS = 120;                     // check ahead for distance covered in 2 mins.
         public float minCheckDistanceM = 5000;           // minimum distance to check ahead
         public float minCheckDistanceManualM = 3000;     // minimum distance to check ahead in manual mode
@@ -134,26 +162,65 @@ namespace ORTS
         private float standardWaitTimeS = 60.0f;         // wait for 1 min before claim state
         private float backwardThreshold = 20;            // counter threshold to detect backward move
 
-        protected Signals signalRef;                     // reference to main Signals class
-        public TCRoutePath TCRoute = null;               // train path converted to TC base
+        public Signals signalRef { get; protected set; } // reference to main Signals class: SPA change protected to public with get, set!
+        public TCRoutePath TCRoute;                      // train path converted to TC base
         public TCSubpathRoute[] ValidRoute = new TCSubpathRoute[2] { null, null };  // actual valid path
-        public TCSubpathRoute TrainRoute = null;         // partial route under train for Manual mode
-        public bool ClaimState = false;                  // train is allowed to perform claim on sections
-        public float actualWaitTimeS = 0.0f;             // actual time waiting for signal
-        public int movedBackward = 0;                    // counter to detect backward move
+        public TCSubpathRoute TrainRoute;                // partial route under train for Manual mode
+        public bool ClaimState;                          // train is allowed to perform claim on sections
+        public float actualWaitTimeS;                    // actual time waiting for signal
+        public int movedBackward;                        // counter to detect backward move
         public float waitingPointWaitTimeS = -1.0f;      // time due at waiting point (PLAYER train only, valid in >= 0)
 
         public List<TrackCircuitSection> OccupiedTrack = new List<TrackCircuitSection>();
+
+        // Station Info
         public List<int> HoldingSignals = new List<int>();// list of signals which must not be cleared (eg station stops)
         public List<StationStop> StationStops = new List<StationStop>();  //list of station stop details
-        public Traffic_Service_Definition TrafficService = null;
-        public int[] MisalignedSwitch = new int[2] { -1, -1 };  // misaligned switch indication :
+        public StationStop PreviousStop = null;                           //last stop passed
+        public bool AtStation = false;                                    //set if train is in station (player train only)
+        public bool MayDepart = false;                                    //set if train is ready to depart
+        public string DisplayMessage = "";                                //string to be displayed in station information window
+        public Color DisplayColor = Color.LightGreen;                     //color for DisplayMessage
+        public bool CheckStations = false;                                //used when in timetable mode to check on stations
+        public TimeSpan? Delay = null;                                    // present delay of the train (if any)
+
+        public int AttachTo = -1;                              // attach information : train to which to attach at end of run
+        public int IncorporatedTrainNo = -1;                        // number of train incorporated in actual train
+        public Train IncorporatingTrain;                      // train incorporating another train
+
+        public Traffic_Service_Definition TrafficService;
+        public int[,] MisalignedSwitch = new int[2, 2] { { -1, -1 }, { -1, -1 } };  // misaligned switch indication per direction:
         // cell 0 : index of switch, cell 1 : required linked section; -1 if not valid
         public Dictionary<int, float> PassedSignalSpeeds = new Dictionary<int, float>();  // list of signals and related speeds pending processing (manual and explorer mode)
         public int[] LastPassedSignal = new int[2] { -1, -1 };  // index of last signal which set speed limit per direction (manual and explorer mode)
 
-        public TrainRouted routedForward = null;          // routed train class for forward moves (used in signalling)
-        public TrainRouted routedBackward = null;         // routed train class for backward moves (used in signalling)
+        // Variables used for autopilot mode
+        public bool IsActualPlayerTrain
+        {
+            get
+            {
+                if (Simulator.PlayerLocomotive == null)
+                {
+                    return false;
+                }
+                return this == Simulator.PlayerLocomotive.Train;
+            }
+        }
+        public bool IsPlayerDriven
+        {
+            get
+            {
+                return (TrainType == TRAINTYPE.PLAYER || TrainType == TRAINTYPE.AI_PLAYERDRIVEN);
+            }
+        }
+
+
+
+        // End variables used for autopilot mode
+
+
+        public TrainRouted routedForward;                 // routed train class for forward moves (used in signalling)
+        public TrainRouted routedBackward;                // routed train class for backward moves (used in signalling)
 
         public enum TRAIN_CONTROL
         {
@@ -162,6 +229,7 @@ namespace ORTS
             MANUAL,
             EXPLORER,
             OUT_OF_CONTROL,
+            INACTIVE,
             UNDEFINED
         }
 
@@ -185,14 +253,24 @@ namespace ORTS
         public TCPosition[] PresentPosition = new TCPosition[2] { new TCPosition(), new TCPosition() };         // present position : 0 = front, 1 = rear
         public TCPosition[] PreviousPosition = new TCPosition[2] { new TCPosition(), new TCPosition() };        // previous train position
 
-        public float DistanceTravelledM = 0;                             // actual distance travelled
+        public float DistanceTravelledM;                                 // actual distance travelled
+        public float ReservedTrackLengthM = 0.0f;                        // lenght of reserved section
 
-        public float travelled = 0;                                      // distance travelled, but not exactly
+        public float travelled;                                          // distance travelled, but not exactly
         public DistanceTravelledActions requiredActions = new DistanceTravelledActions(); // distance travelled action list
+        public AuxActionsContainer AuxActionsContain;          // Action To Do during activity, like WP
+
+        public float activityClearingDistanceM = 30.0f;        // clear distance to stopping point for activities
+        public const float shortClearingDistanceM = 15.0f;     // clearing distance for short trains in activities
+        public const float standardClearingDistanceM = 30.0f;  // standard clearing distance for trains in activities
+        public const int standardTrainMinCarNo = 10;           // Minimum number of cars for a train to have standard clearing distance
 
         public float ClearanceAtRearM = -1;              // save distance behind train (when moving backward)
-        public SignalObject RearSignalObject = null;     // direct reference to signal at rear (when moving backward)
-        public bool tilted = false;
+        public SignalObject RearSignalObject;            // direct reference to signal at rear (when moving backward)
+        public bool tilted;
+
+        public float InitialSpeed = 0;                 // initial speed of train in activity as set in .srv file
+        public float InitialThrottlepercent = 25; // initial value of throttle when train starts activity at speed > 0
 
         public enum END_AUTHORITY
         {
@@ -219,10 +297,15 @@ namespace ORTS
         public Dictionary<int, List<Dictionary<int, int>>> DeadlockInfo =
             new Dictionary<int, List<Dictionary<int, int>>>();
 
+        // Logging and debugging info
+        public bool CheckTrain;                          // debug print required
+        private static int lastSpeedLog;                 // last speedlog time
+        public bool DatalogTrainSpeed;                   // logging of train speed required
+        public int DatalogTSInterval;                    // logging interval
+        public int[] DatalogTSContents;                  // logging selection
+        public string DataLogFile;                       // required datalog file
 
-        public bool CheckTrain = false;                  // debug print required
-
-        protected Simulator Simulator;                   // reference to the simulator
+        public Simulator Simulator { get; protected set; }                   // reference to the simulator
 
 
         // For AI control of the train
@@ -239,7 +322,7 @@ namespace ORTS
                     car.BrakeSystem.AISetPercent(aiBrakePercent);
             }
         }
-        private float aiBrakePercent = 0;
+        private float aiBrakePercent;
         public float AITrainThrottlePercent
         {
             get
@@ -249,6 +332,18 @@ namespace ORTS
             set
             {
                 MUThrottlePercent = value;
+            }
+        }
+
+        public int AITrainGearboxGearIndex
+        {
+            set
+            {
+                MUGearboxGearIndex = value;
+            }
+            get
+            {
+                return MUGearboxGearIndex;
             }
         }
         public bool AITrainDirectionForward
@@ -267,7 +362,7 @@ namespace ORTS
         {
             get
             {
-                return LeadLocomotiveIndex >= 0 ? Cars[LeadLocomotiveIndex] : null;
+                return LeadLocomotiveIndex >= 0 && LeadLocomotiveIndex < Cars.Count ? Cars[LeadLocomotiveIndex] : null;
             }
             set
             {
@@ -280,9 +375,6 @@ namespace ORTS
                         //if (lead.EngineBrakeController != null)
                         //    lead.EngineBrakeController.UpdateEngineBrakePressure(ref BrakeLine3PressurePSI, 1000);
                     }
-                if (LeadLocomotiveIndex < 0)
-                    foreach (TrainCar car in Cars)
-                        car.BrakeSystem.BrakeLine1PressurePSI = -1;
             }
         }
 
@@ -294,13 +386,16 @@ namespace ORTS
         public Train(Simulator simulator)
         {
             Simulator = simulator;
+            if (Simulator.IsAutopilotMode && TotalNumber == 1 && Simulator.TrainDictionary.Count == 0) TotalNumber = 0; //The autopiloted train has number 0
             Number = TotalNumber;
             TotalNumber++;
             SignalObjectItems = new List<ObjectItemInfo>();
             signalRef = simulator.Signals;
+            Name = "";
 
             routedForward = new TrainRouted(this, 0);
             routedBackward = new TrainRouted(this, 1);
+            AuxActionsContain = new AuxActionsContainer(this, Simulator.orRouteConfig);
         }
 
         //================================================================================================//
@@ -312,6 +407,7 @@ namespace ORTS
         public Train(int number)
         {
             Number = number;
+            AuxActionsContain = new AuxActionsContainer(this, null);
         }
 
         //================================================================================================//
@@ -324,15 +420,16 @@ namespace ORTS
         {
             Simulator = simulator;
             Number = TotalNumber;
+            Name = String.Concat(String.Copy(orgTrain.Name), TotalNumber.ToString());
             TotalNumber++;
             SignalObjectItems = new List<ObjectItemInfo>();
             signalRef = simulator.Signals;
 
+            AuxActionsContain = new AuxActionsContainer(this, Simulator.orRouteConfig);
             if (orgTrain.TrafficService != null)
             {
                 TrafficService = new Traffic_Service_Definition();
                 TrafficService.Time = orgTrain.TrafficService.Time;
-                TrafficService.TrafficDetails = new List<Traffic_Traffic_Item>();
 
                 foreach (Traffic_Traffic_Item thisTrafficItem in orgTrain.TrafficService.TrafficDetails)
                 {
@@ -363,12 +460,14 @@ namespace ORTS
             AllowedMaxSpeedMpS = orgTrain.AllowedMaxSpeedMpS;
             allowedMaxSpeedLimitMpS = orgTrain.allowedMaxSpeedLimitMpS;
             allowedMaxSpeedSignalMpS = orgTrain.allowedMaxSpeedSignalMpS;
+            allowedAbsoluteMaxSpeedLimitMpS = orgTrain.allowedAbsoluteMaxSpeedLimitMpS;
+            allowedAbsoluteMaxSpeedSignalMpS = orgTrain.allowedAbsoluteMaxSpeedSignalMpS;
 
             if (orgTrain.StationStops != null)
             {
                 foreach (StationStop thisStop in orgTrain.StationStops)
                 {
-                    StationStop newStop = new StationStop(thisStop);
+                    StationStop newStop = thisStop.CreateCopy();
                     StationStops.Add(newStop);
                 }
             }
@@ -376,6 +475,7 @@ namespace ORTS
             {
                 StationStops = null;
             }
+
         }
 
         //================================================================================================//
@@ -393,15 +493,17 @@ namespace ORTS
             CheckFreight();
             Number = inf.ReadInt32();
             TotalNumber = Math.Max(Number + 1, TotalNumber);
+            Name = inf.ReadString();
             SpeedMpS = inf.ReadSingle();
             TrainType = (TRAINTYPE)inf.ReadInt32();
             MUDirection = (Direction)inf.ReadInt32();
             MUThrottlePercent = inf.ReadSingle();
+            MUGearboxGearIndex = inf.ReadInt32();
             MUDynamicBrakePercent = inf.ReadSingle();
-            BrakeLine1PressurePSI = inf.ReadSingle();
+            BrakeLine1PressurePSIorInHg = inf.ReadSingle();
             BrakeLine2PressurePSI = inf.ReadSingle();
             BrakeLine3PressurePSI = inf.ReadSingle();
-            BrakeLine4PressurePSI = inf.ReadSingle();
+            BrakeLine4 = inf.ReadSingle();
             aiBrakePercent = inf.ReadSingle();
             LeadLocomotiveIndex = inf.ReadInt32();
             RetainerSetting = (RetainerSetting)inf.ReadInt32();
@@ -413,6 +515,9 @@ namespace ORTS
             AllowedMaxSpeedMpS = inf.ReadSingle();
             allowedMaxSpeedSignalMpS = inf.ReadSingle();
             allowedMaxSpeedLimitMpS = inf.ReadSingle();
+            allowedAbsoluteMaxSpeedSignalMpS = inf.ReadSingle();
+            allowedAbsoluteMaxSpeedLimitMpS = inf.ReadSingle();
+            IncorporatedTrainNo = inf.ReadInt32();
 
             SignalObjectItems = new List<ObjectItemInfo>();
             signalRef = simulator.Signals;
@@ -420,6 +525,31 @@ namespace ORTS
             TrainType = (TRAINTYPE)inf.ReadInt32();
             tilted = inf.ReadBoolean();
             ClaimState = inf.ReadBoolean();
+            DatalogTrainSpeed = inf.ReadBoolean();
+            DatalogTSInterval = inf.ReadInt32();
+            int dslenght = inf.ReadInt32();
+            if (dslenght > 0)
+            {
+                DatalogTSContents = new int[dslenght];
+                for (int iDs = 0; iDs <= dslenght - 1; iDs++)
+                {
+                    DatalogTSContents[iDs] = inf.ReadInt32();
+                }
+            }
+            else
+            {
+                DatalogTSContents = null;
+            }
+
+            int dsfile = inf.ReadInt32();
+            if (dsfile < 0)
+            {
+                DataLogFile = String.Empty;
+            }
+            else
+            {
+                DataLogFile = inf.ReadString();
+            }
 
             TCRoute = null;
             bool routeAvailable = inf.ReadBoolean();
@@ -464,6 +594,33 @@ namespace ORTS
                 StationStops.Add(thisStation);
             }
 
+            int prevStopAvail = inf.ReadInt32();
+            if (prevStopAvail >= 0)
+            {
+                PreviousStop = new StationStop(inf, signalRef);
+            }
+            else
+            {
+                PreviousStop = null;
+            }
+
+            AtStation = inf.ReadBoolean();
+            MayDepart = inf.ReadBoolean();
+            CheckStations = inf.ReadBoolean();
+            AttachTo = inf.ReadInt32();
+
+            DisplayMessage = inf.ReadString();
+
+            int DelaySeconds = inf.ReadInt32();
+            if (DelaySeconds < 0) // delay value (in seconds, as integer)
+            {
+                Delay = null;
+            }
+            else
+            {
+                Delay = TimeSpan.FromSeconds(DelaySeconds);
+            }
+
             int totalPassedSignals = inf.ReadInt32();
             for (int iPassedSignal = 0; iPassedSignal < totalPassedSignals; iPassedSignal++)
             {
@@ -490,7 +647,7 @@ namespace ORTS
             DistanceToEndNodeAuthorityM[0] = inf.ReadSingle();
             DistanceToEndNodeAuthorityM[1] = inf.ReadSingle();
 
-            if (TrainType != TRAINTYPE.AI_NOTSTARTED)
+            if (TrainType != TRAINTYPE.AI_NOTSTARTED && TrainType != TRAINTYPE.AI_AUTOGENERATE)
             {
                 CalculatePositionOfCars(0);
 
@@ -520,7 +677,6 @@ namespace ORTS
             for (int iAction = 0; iAction < activeActions; iAction++)
             {
                 int actionType = inf.ReadInt32();
-
                 switch (actionType)
                 {
                     case 1:
@@ -535,6 +691,11 @@ namespace ORTS
                         AIActionItem actionItem = new AIActionItem(inf, signalRef);
                         requiredActions.InsertAction(actionItem);
                         break;
+                    case 4:
+                        AuxActionItem auxAction = new AuxActionItem(inf, signalRef);
+                        requiredActions.InsertAction(auxAction);
+                        Trace.TraceWarning("DistanceTravelledItem type 4 restored as AuxActionItem");
+                        break;
                     default:
                         Trace.TraceWarning("Unknown type of DistanceTravelledItem (type {0}",
                                 actionType.ToString());
@@ -542,24 +703,10 @@ namespace ORTS
                 }
             }
 
+            AuxActionsContain = new AuxActionsContainer(this, inf, Simulator.RoutePath);
             RestoreDeadlockInfo(inf);
 
-            // restore signal references depending on state
-            if (TrainType != TRAINTYPE.AI_NOTSTARTED)
-            {
-                if (ControlMode == TRAIN_CONTROL.EXPLORER)
-                {
-                    RestoreExplorerMode();
-                }
-                else if (ControlMode == TRAIN_CONTROL.MANUAL)
-                {
-                    RestoreManualMode();
-                }
-                else
-                {
-                    InitializeSignals(true);
-                }
-            }
+            InitialSpeed = inf.ReadSingle();
 
             // restore leadlocomotive
             if (LeadLocomotiveIndex >= 0)
@@ -567,20 +714,28 @@ namespace ORTS
                 LeadLocomotive = Cars[LeadLocomotiveIndex];
                 Program.Simulator.PlayerLocomotive = LeadLocomotive;
             }
+
+            // restore logfile
+            if (DatalogTrainSpeed)
+            {
+                CreateLogFile();
+            }
         }
 
         private void RestoreCars(Simulator simulator, BinaryReader inf)
         {
             int count = inf.ReadInt32();
-            for (int i = 0; i < count; ++i)
-                Cars.Add(RollingStock.Restore(simulator, inf, this));
+            if (count > 0)
+            {
+                for (int i = 0; i < count; ++i)
+                    Cars.Add(RollingStock.Restore(simulator, inf, this));
+            }
         }
 
-        private Traffic_Service_Definition RestoreTrafficSDefinition(BinaryReader inf)
+        static Traffic_Service_Definition RestoreTrafficSDefinition(BinaryReader inf)
         {
             Traffic_Service_Definition thisDefinition = new Traffic_Service_Definition();
             thisDefinition.Time = inf.ReadInt32();
-            thisDefinition.TrafficDetails = new List<Traffic_Traffic_Item>();
 
             int totalTrafficItems = inf.ReadInt32();
 
@@ -593,7 +748,7 @@ namespace ORTS
             return (thisDefinition);
         }
 
-        private Traffic_Traffic_Item RestoreTrafficItem(BinaryReader inf)
+        static Traffic_Traffic_Item RestoreTrafficItem(BinaryReader inf)
         {
             Traffic_Traffic_Item thisTraffic = new Traffic_Traffic_Item();
             thisTraffic.ArrivalTime = inf.ReadInt32();
@@ -643,15 +798,17 @@ namespace ORTS
         {
             SaveCars(outf);
             outf.Write(Number);
+            outf.Write(Name);
             outf.Write(SpeedMpS);
             outf.Write((int)TrainType);
             outf.Write((int)MUDirection);
             outf.Write(MUThrottlePercent);
+            outf.Write(MUGearboxGearIndex);
             outf.Write(MUDynamicBrakePercent);
-            outf.Write(BrakeLine1PressurePSI);
+            outf.Write(BrakeLine1PressurePSIorInHg);
             outf.Write(BrakeLine2PressurePSI);
             outf.Write(BrakeLine3PressurePSI);
-            outf.Write(BrakeLine4PressurePSI);
+            outf.Write(BrakeLine4);
             outf.Write(aiBrakePercent);
             outf.Write(LeadLocomotiveIndex);
             outf.Write((int)RetainerSetting);
@@ -663,10 +820,38 @@ namespace ORTS
             outf.Write(AllowedMaxSpeedMpS);
             outf.Write(allowedMaxSpeedSignalMpS);
             outf.Write(allowedMaxSpeedLimitMpS);
+            outf.Write(allowedAbsoluteMaxSpeedSignalMpS);
+            outf.Write(allowedAbsoluteMaxSpeedLimitMpS);
+            outf.Write(IncorporatedTrainNo);
 
             outf.Write((int)TrainType);
             outf.Write(tilted);
             outf.Write(ClaimState);
+            outf.Write(DatalogTrainSpeed);
+            outf.Write(DatalogTSInterval);
+
+            if (DatalogTSContents == null)
+            {
+                outf.Write(-1);
+            }
+            else
+            {
+                outf.Write(DatalogTSContents.Length);
+                foreach (int dselect in DatalogTSContents)
+                {
+                    outf.Write(dselect);
+                }
+            }
+
+            if (String.IsNullOrEmpty(DataLogFile))
+            {
+                outf.Write(-1);
+            }
+            else
+            {
+                outf.Write(1);
+                outf.Write(DataLogFile);
+            }
 
             if (TCRoute == null)
             {
@@ -716,6 +901,26 @@ namespace ORTS
                 thisStop.Save(outf);
             }
 
+            if (PreviousStop == null)
+            {
+                outf.Write(-1);
+            }
+            else
+            {
+                outf.Write(1);
+                PreviousStop.Save(outf);
+            }
+
+            outf.Write(AtStation);
+            outf.Write(MayDepart);
+            outf.Write(CheckStations);
+            outf.Write(AttachTo);
+
+            outf.Write(DisplayMessage);
+
+            int DelaySeconds = Delay.HasValue ? (int)Delay.Value.TotalSeconds : -1;
+            outf.Write(DelaySeconds);
+
             outf.Write(PassedSignalSpeeds.Count);
             foreach (KeyValuePair<int, float> thisPair in PassedSignalSpeeds)
             {
@@ -749,14 +954,18 @@ namespace ORTS
             PresentPosition[0].Save(outf);
             PresentPosition[1].Save(outf);
             PreviousPosition[0].Save(outf);
-
+            //  Save requiredAction, the original actions
             outf.Write(requiredActions.Count);
             foreach (DistanceTravelledItem thisAction in requiredActions)
             {
                 thisAction.Save(outf);
             }
+            //  Then, save the Auxiliary Action Container
+            SaveAuxContainer(outf);
 
             SaveDeadlockInfo(outf);
+            // Save initial speed
+            outf.Write(InitialSpeed);
         }
 
         private void SaveCars(BinaryWriter outf)
@@ -766,7 +975,7 @@ namespace ORTS
                 RollingStock.Save(outf, car);
         }
 
-        private void SaveTrafficSDefinition(BinaryWriter outf, Traffic_Service_Definition thisTSD)
+        static void SaveTrafficSDefinition(BinaryWriter outf, Traffic_Service_Definition thisTSD)
         {
             outf.Write(thisTSD.Time);
             outf.Write(thisTSD.TrafficDetails.Count);
@@ -776,7 +985,7 @@ namespace ORTS
             }
         }
 
-        private void SaveTrafficItem(BinaryWriter outf, Traffic_Traffic_Item thisTI)
+        static void SaveTrafficItem(BinaryWriter outf, Traffic_Traffic_Item thisTI)
         {
             outf.Write(thisTI.ArrivalTime);
             outf.Write(thisTI.DepartTime);
@@ -804,6 +1013,12 @@ namespace ORTS
             }
         }
 
+        private void SaveAuxContainer(BinaryWriter outf)
+        {
+            AuxActionsContain.Save(outf, Convert.ToInt32(Math.Floor(Simulator.ClockTime)));
+        }
+
+
         //================================================================================================//
         /// <summary>
         /// Changes the Lead locomotive (i.e. the loco which the player controls) to the next in the consist.
@@ -819,7 +1034,7 @@ namespace ORTS
             // negative numbers used if rear cab selected
             // because '0' has no negative, all indices are shifted by 1!!!!
 
-            int presentIndex = LeadLocomotiveIndex+1;
+            int presentIndex = LeadLocomotiveIndex + 1;
             if (((MSTSLocomotive)LeadLocomotive).UsingRearCab) presentIndex = -presentIndex;
 
             List<int> cabList = new List<int>();
@@ -829,13 +1044,13 @@ namespace ORTS
                 if (SkipOtherUsersCar(i)) continue;
                 if (Cars[i].Flipped)
                 {
-                    if (Cars[i].HasRearCab) cabList.Add(-(i+1));
-                    if (Cars[i].HasFrontCab) cabList.Add(i+1);
+                    if (Cars[i].HasRearCab) cabList.Add(-(i + 1));
+                    if (Cars[i].HasFrontCab) cabList.Add(i + 1);
                 }
                 else
                 {
-                    if (Cars[i].HasFrontCab) cabList.Add(i+1);
-                    if (Cars[i].HasRearCab) cabList.Add(-(i+1));
+                    if (Cars[i].HasFrontCab) cabList.Add(i + 1);
+                    if (Cars[i].HasRearCab) cabList.Add(-(i + 1));
                 }
             }
 
@@ -845,7 +1060,7 @@ namespace ORTS
             int nextCabIndex = cabList[lastIndex + 1];
 
             TrainCar oldLead = LeadLocomotive;
-            LeadLocomotiveIndex = Math.Abs(nextCabIndex)-1;
+            LeadLocomotiveIndex = Math.Abs(nextCabIndex) - 1;
             Trace.Assert(LeadLocomotive != null, "Tried to switch to non-existent loco");
             TrainCar newLead = LeadLocomotive;  // Changing LeadLocomotiveIndex also changed LeadLocomotive
             ((MSTSLocomotive)newLead).UsingRearCab = nextCabIndex < 0;
@@ -859,11 +1074,12 @@ namespace ORTS
                 // seems there is nothing to attach camera to car
             }
 
+            // If there is a player locomotive, and it is in this train, update it to match the new lead locomotive.
             if (Simulator.PlayerLocomotive != null && Simulator.PlayerLocomotive.Train == this)
-            {
+
                 Simulator.PlayerLocomotive = newLead;
-            }
-            return Simulator.PlayerLocomotive;
+
+            return newLead;
         }
 
         //this function is needed for Multiplayer games as they do not need to have cabs, but need to know lead locomotives
@@ -992,6 +1208,17 @@ namespace ORTS
             // Shift all the coupler data along the train by 1 car.
             for (var i = Cars.Count - 1; i > 0; i--)
                 Cars[i].CopyCoupler(Cars[i - 1]);
+            // Reverse brake hose connections and angle cocks
+            for (var i = 0; i < Cars.Count; i++)
+            {
+                var ac = Cars[i].BrakeSystem.AngleCockAOpen;
+                Cars[i].BrakeSystem.AngleCockAOpen = Cars[i].BrakeSystem.AngleCockBOpen;
+                Cars[i].BrakeSystem.AngleCockBOpen = ac;
+                if (i == Cars.Count - 1)
+                    Cars[i].BrakeSystem.FrontBrakeHoseConnected = false;
+                else
+                    Cars[i].BrakeSystem.FrontBrakeHoseConnected = Cars[i + 1].BrakeSystem.FrontBrakeHoseConnected;
+            }
             // Reverse the actual order of the cars in the train.
             Cars.Reverse();
             // Update leading locomotive index.
@@ -1021,10 +1248,77 @@ namespace ORTS
 
         public void SignalEvent(Event evt)
         {
-            foreach (var car in Cars)
+            foreach (TrainCar car in Cars)
                 car.SignalEvent(evt);
         }
 
+        public void SignalEvent(PowerSupplyEvent evt)
+        {
+            foreach (TrainCar car in Cars)
+                car.SignalEvent(evt);
+        }
+
+        public void SignalEvent(PowerSupplyEvent evt, int id)
+        {
+            foreach (TrainCar car in Cars)
+                car.SignalEvent(evt, id);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Set starting conditions when speed > 0 
+        /// <\summary>
+
+        public virtual void InitializeMoving()
+        {
+            SpeedMpS = InitialSpeed;
+            MUDirection = Direction.Forward;
+            float initialThrottlepercent = InitialThrottlepercent;
+            MUDynamicBrakePercent = -1;
+            //            aiBrakePercent = 0;
+            //            AITrainBrakePercent = 0;
+            if (LeadLocomotiveIndex >= 0)
+            {
+                MSTSLocomotive lead = (MSTSLocomotive)Cars[LeadLocomotiveIndex];
+                if (lead is MSTSSteamLocomotive) MUReverserPercent = 25;
+                lead.CurrentElevationPercent = 100f * lead.WorldPosition.XNAMatrix.M32;
+
+                //TODO: next if block has been inserted to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
+                // To achieve the same result with other means, without flipping trainset physics, the block should be deleted
+                //         
+                if (lead.IsDriveable && (lead as MSTSLocomotive).UsingRearCab)
+                {
+                    lead.CurrentElevationPercent = -lead.CurrentElevationPercent;
+                }
+                // give it a bit more gas if it is uphill
+                if (lead.CurrentElevationPercent < -2.0) initialThrottlepercent = 40f;
+                // better block gas if it is downhill
+                else if (lead.CurrentElevationPercent > 1.0) initialThrottlepercent = 0f;
+
+                if (lead.TrainBrakeController != null)
+                {
+                    BrakeLine1PressurePSIorInHg = lead.TrainBrakeController.MaxPressurePSI;
+                }
+            }
+            MUThrottlePercent = initialThrottlepercent;
+            AITrainThrottlePercent = initialThrottlepercent;
+
+            TraincarsInitializeMoving();
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Set starting conditions for TrainCars when speed > 0 
+        /// <\summary>
+
+        public void TraincarsInitializeMoving()
+        {
+            for (int i = 0; i < Cars.Count; ++i)
+            {
+                TrainCar car = Cars[i];
+                car.InitializeMoving();
+            }
+        }
 
         //================================================================================================//
         /// <summary>
@@ -1038,6 +1332,12 @@ namespace ORTS
             physicsUpdate(elapsedClockSeconds);
 
             //Exit here when train is static consist (no further actions required)
+
+            if (GetAIMovementState() == AITrain.AI_MOVEMENT_STATE.AI_STATIC)
+            {
+                int presentTime = Convert.ToInt32(Math.Floor(Simulator.ClockTime));
+                UpdateAIStaticState(presentTime);
+            }
 
             if (TrainType == TRAINTYPE.STATIC)
                 return;
@@ -1056,19 +1356,42 @@ namespace ORTS
 
             else if (ValidRoute[0] != null)     // no actions required for static objects //
             {
-                movedBackward = CheckBackwardClearance();                                       // check clearance at rear //
+                if (ControlMode != TRAIN_CONTROL.OUT_OF_CONTROL) movedBackward = CheckBackwardClearance();  // check clearance at rear if not out of control //
                 UpdateTrainPosition();                                                          // position update         //
                 UpdateTrainPositionInformation();                                               // position update         //
                 int SignalObjIndex = CheckSignalPassed(0, PresentPosition[0], PreviousPosition[0]);   // check if passed signal  //
                 UpdateSectionState(movedBackward);                                              // update track occupation //
                 ObtainRequiredActions(movedBackward);                                           // process list of actions //
-                if (TrainType != TRAINTYPE.AI && ControlMode != TRAIN_CONTROL.OUT_OF_CONTROL)
+
+                if (TrainType == TRAINTYPE.PLAYER && CheckStations)                             // if player train is to check own stations
+                {
+                    CheckStationTask();
+                }
+
+                if ((TrainType != TRAINTYPE.AI && TrainType != TRAINTYPE.AI_PLAYERHOSTING) && ControlMode != TRAIN_CONTROL.OUT_OF_CONTROL)
                 {
                     CheckRouteActions(elapsedClockSeconds);                                     // check routepath (AI check at other point) //
                 }
+
                 UpdateRouteClearanceAhead(SignalObjIndex, movedBackward, elapsedClockSeconds);  // update route clearance  //
-                UpdateSignalState(movedBackward);                                               // update signal state     //
+                if (!(TrainType == TRAINTYPE.REMOTE && MultiPlayer.MPManager.IsClient()))
+                    UpdateSignalState(movedBackward);                                               // update signal state     //
             }
+
+            // calculate minimal delay (Timetable only)
+            UpdateMinimalDelay();
+
+            // check position of train wrt tunnels
+
+            ProcessTunnels();
+
+            // log train details
+
+            if (DatalogTrainSpeed)
+            {
+                LogTrainSpeed(Simulator.ClockTime);
+            }
+
         } // end Update
 
         //================================================================================================//
@@ -1085,7 +1408,7 @@ namespace ORTS
                 {//if both travellers are out, very rare occation, but have to treat it
                     RearTDBTraveller.ReverseDirection();
                     RearTDBTraveller.NextTrackNode();
-                } 
+                }
                 else if (FrontTDBTraveller.IsEnd) RearTDBTraveller.Move(-1);//if front is out, move back
                 else if (RearTDBTraveller.IsEnd) RearTDBTraveller.Move(1);//if rear is out, move forward
                 foreach (var car in Cars) { car.SpeedMpS = 0; } //can set crash here by setting XNA matrix
@@ -1101,18 +1424,67 @@ namespace ORTS
 
             PropagateBrakePressure(elapsedClockSeconds);
 
+            bool whlslp = false;
+            bool whlslpwrn = false;
+
+            TrainCar uncoupleBehindCar = null;
+
+            float massKg = 0f;
             foreach (TrainCar car in Cars)
             {
                 car.MotiveForceN = 0;
                 car.Update(elapsedClockSeconds);
                 car.TotalForceN = car.MotiveForceN + car.GravityForceN;
-
-                if (car.Flipped)
+                massKg += car.MassKG;
+                //TODO: next code line has been modified to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
+                // To achieve the same result with other means, without flipping trainset physics, the line should be changed as follows:
+                //                 if (car.Flipped)
+                if (car.Flipped ^ (car.IsDriveable && car.Train.IsPlayerDriven && ((MSTSLocomotive)car).UsingRearCab))
                 {
                     car.TotalForceN = -car.TotalForceN;
                     car.SpeedMpS = -car.SpeedMpS;
                 }
+                if (car.WheelSlip)
+                    whlslp = true;
+                if (car.WheelSlipWarning)
+                    whlslpwrn = true;
+
+                if (car.CouplerOverloaded)
+                    uncoupleBehindCar = car;
             }
+            MassKg = massKg;
+
+            IsWheelSlip = whlslp;
+            IsWheelSlipWarninq = whlslpwrn;
+
+            // Coupler breaker
+            if (uncoupleBehindCar != null)
+            {
+                if (uncoupleBehindCar.CouplerOverloaded)
+                {
+                    if (!numOfCouplerBreaksNoted)
+                    {
+                        NumOfCouplerBreaks++;
+                        Trace.WriteLine(String.Format("Num of coupler breaks: {0}", NumOfCouplerBreaks));
+                        numOfCouplerBreaksNoted = true;
+
+                        if (Simulator.BreakCouplers)
+                        {
+                            Simulator.UncoupleBehind(uncoupleBehindCar, true);
+                            uncoupleBehindCar.CouplerOverloaded = false;
+                            Simulator.Confirmer.Warning(Viewer.Catalog.GetString("Coupler broken!"));
+                        }
+                        else
+                            Simulator.Confirmer.Warning(Viewer.Catalog.GetString("Coupler overloaded!"));
+                    }
+                }
+                else
+                    numOfCouplerBreaksNoted = false;
+
+                uncoupleBehindCar = null;
+            }
+            else
+                numOfCouplerBreaksNoted = false;
 
             AddCouplerImpuseForces();
             ComputeCouplerForces();
@@ -1129,7 +1501,10 @@ namespace ORTS
             foreach (TrainCar car1 in Cars)
             {
                 SpeedMpS += car1.SpeedMpS;
-                if (car1.Flipped)
+                //TODO: next code line has been modified to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
+                // To achieve the same result with other means, without flipping trainset physics, the line should be changed as follows:
+                //                 if (car1.Flipped)
+                if (car1.Flipped ^ (car1.IsDriveable && car1.Train.IsPlayerDriven && ((MSTSLocomotive)car1).UsingRearCab))
                     car1.SpeedMpS = -car1.SpeedMpS;
             }
             SpeedMpS /= Cars.Count;
@@ -1145,6 +1520,371 @@ namespace ORTS
             ProjectedSpeedMpS = SpeedMpS + 60 * AccelerationMpSpS.SmoothedValue;
             ProjectedSpeedMpS = SpeedMpS > float.Epsilon ?
                 Math.Max(0, ProjectedSpeedMpS) : SpeedMpS < -float.Epsilon ? Math.Min(0, ProjectedSpeedMpS) : 0;
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Update mininal delay
+        /// Dummy for TTTrain override
+        /// <\summary>
+
+        public virtual void UpdateMinimalDelay()
+        {
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// ProcessTunnels : check position of each car in train wrt tunnel
+        /// <\summary>
+
+        public void ProcessTunnels()
+        {
+            // start at front of train
+            int thisSectionIndex = PresentPosition[0].TCSectionIndex;
+            float thisSectionOffset = PresentPosition[0].TCOffset;
+            int thisSectionDirection = PresentPosition[0].TCDirection;
+
+            for (int icar = 0; icar <= Cars.Count - 1; icar++)
+            {
+                var car = Cars[icar];
+
+                float usedCarLength = car.CarLengthM;
+                float processedCarLength = 0;
+                bool validSections = true;
+
+                float? FrontCarPositionInTunnel = null;
+                float? FrontCarLengthOfTunnelAhead = null;
+                float? RearCarLengthOfTunnelBehind = null;
+                int numTunnelPaths = 0;
+
+                while (validSections)
+                {
+                    TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisSectionIndex];
+                    bool inTunnel = false;
+
+                    // car spans sections
+                    if ((car.CarLengthM - processedCarLength) > thisSectionOffset)
+                    {
+                        usedCarLength = thisSectionOffset - processedCarLength;
+                    }
+
+                    // section has tunnels
+                    if (thisSection.TunnelInfo != null)
+                    {
+                        foreach (TrackCircuitSection.tunnelInfoData[] thisTunnel in thisSection.TunnelInfo)
+                        {
+                            float tunnelStartOffset = thisTunnel[thisSectionDirection].TunnelStart;
+                            float tunnelEndOffset = thisTunnel[thisSectionDirection].TunnelEnd;
+
+                            if (tunnelStartOffset > 0 && tunnelStartOffset > thisSectionOffset)      // start of tunnel is in section beyond present position - cannot be in this tunnel nor any following
+                            {
+                                break;
+                            }
+
+                            if (tunnelEndOffset > 0 && tunnelEndOffset < (thisSectionOffset - usedCarLength)) // beyond end of tunnel, test next
+                            {
+                                continue;
+                            }
+
+                            if (tunnelStartOffset <= 0 || tunnelStartOffset < (thisSectionOffset - usedCarLength)) // start of tunnel is behind
+                            {
+                                if (tunnelEndOffset < 0) // end of tunnel is out of this section
+                                {
+                                    if (processedCarLength != 0)
+                                    {
+                                        Trace.TraceInformation("Train : " + Number + " ; found tunnel in section " + thisSectionIndex + " with End < 0 while processed length : " + processedCarLength + "\n");
+                                    }
+                                }
+
+                                inTunnel = true;
+
+                                numTunnelPaths = thisTunnel[thisSectionDirection].numTunnelPaths;
+
+                                // get position in tunnel
+                                if (tunnelStartOffset < 0)
+                                {
+                                    FrontCarPositionInTunnel = thisSectionOffset + thisTunnel[thisSectionDirection].TCSStartOffset;
+                                    FrontCarLengthOfTunnelAhead = thisTunnel[thisSectionDirection].TotalLength - FrontCarPositionInTunnel;
+                                    RearCarLengthOfTunnelBehind = thisTunnel[thisSectionDirection].TotalLength - (FrontCarLengthOfTunnelAhead + car.CarLengthM);
+                                }
+                                else
+                                {
+                                    FrontCarPositionInTunnel = thisSectionOffset - tunnelStartOffset;
+                                    FrontCarLengthOfTunnelAhead = thisTunnel[thisSectionDirection].TotalLength - FrontCarPositionInTunnel - processedCarLength;
+                                    RearCarLengthOfTunnelBehind = thisTunnel[thisSectionDirection].TotalLength - (FrontCarLengthOfTunnelAhead + car.CarLengthM);
+                                }
+
+                                break;  // only test one tunnel
+                            }
+                        }
+                    }
+                    // tested this section, any need to go beyond?
+
+                    processedCarLength += usedCarLength;
+                    if (inTunnel || processedCarLength >= car.CarLengthM)
+                    {
+                        validSections = false;  // end of while loop through sections
+                        thisSectionOffset = thisSectionOffset - usedCarLength;   // position of next car in this section
+
+                        car.CarTunnelData.FrontPositionBeyondStartOfTunnel = FrontCarPositionInTunnel.HasValue ? FrontCarPositionInTunnel : null;
+                        car.CarTunnelData.LengthMOfTunnelAheadFront = FrontCarLengthOfTunnelAhead.HasValue ? FrontCarLengthOfTunnelAhead : null;
+                        car.CarTunnelData.LengthMOfTunnelBehindRear = RearCarLengthOfTunnelBehind.HasValue ? RearCarLengthOfTunnelBehind : null;
+                        car.CarTunnelData.numTunnelPaths = numTunnelPaths;
+                    }
+                    else
+                    {
+                        // go back one section
+                        int thisSectionRouteIndex = ValidRoute[0].GetRouteIndexBackward(thisSectionIndex, PresentPosition[0].RouteListIndex);
+                        if (thisSectionRouteIndex >= 0)
+                        {
+                            thisSectionIndex = thisSectionRouteIndex;
+                            thisSection = signalRef.TrackCircuitList[thisSectionIndex];
+                            thisSectionOffset = thisSection.Length;  // always at end of next section
+                            thisSectionDirection = ValidRoute[0][thisSectionRouteIndex].Direction;
+                        }
+                        else // ran out of train
+                        {
+                            validSections = false;
+
+                            car.CarTunnelData.FrontPositionBeyondStartOfTunnel = FrontCarPositionInTunnel.HasValue ? FrontCarPositionInTunnel : null;
+                            car.CarTunnelData.LengthMOfTunnelAheadFront = FrontCarLengthOfTunnelAhead.HasValue ? FrontCarLengthOfTunnelAhead : null;
+                            car.CarTunnelData.LengthMOfTunnelBehindRear = RearCarLengthOfTunnelBehind.HasValue ? RearCarLengthOfTunnelBehind : null;
+                            car.CarTunnelData.numTunnelPaths = numTunnelPaths;
+                        }
+                    }
+                }
+            }
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Train speed evaluation logging - open file
+        /// <\summary>
+
+        public void CreateLogFile()
+        {
+            //Time, Train Speed, Max Speed, Signal Aspect, Elevation, Direction, Control Mode, Distance Travelled, Throttle, Brake, Dyn Brake, Gear
+
+            var stringBuild = new StringBuilder();
+
+            if (!File.Exists(DataLogFile))
+            {
+                char Separator = (char)(DataLogger.Separators)Enum.Parse(typeof(DataLogger.Separators), Simulator.Settings.DataLoggerSeparator);
+
+                if (DatalogTSContents[0] == 1)
+                {
+                    stringBuild.Append("TIME");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[1] == 1)
+                {
+                    stringBuild.Append("TRAINSPEED");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[2] == 1)
+                {
+                    stringBuild.Append("MAXSPEED");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[3] == 1)
+                {
+                    stringBuild.Append("SIGNALASPECT");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[4] == 1)
+                {
+                    stringBuild.Append("ELEVATION");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[5] == 1)
+                {
+                    stringBuild.Append("DIRECTION");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[6] == 1)
+                {
+                    stringBuild.Append("CONTROLMODE");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[7] == 1)
+                {
+                    stringBuild.Append("DISTANCETRAVELLED");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[8] == 1)
+                {
+                    stringBuild.Append("THROTTLEPERC");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[9] == 1)
+                {
+                    stringBuild.Append("BRAKEPRESSURE");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[10] == 1)
+                {
+                    stringBuild.Append("DYNBRAKEPERC");
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[11] == 1)
+                {
+                    stringBuild.Append("GEARINDEX");
+                    stringBuild.Append(Separator);
+                }
+
+                stringBuild.Append("\n");
+
+                try
+                {
+                    File.AppendAllText(DataLogFile, stringBuild.ToString());
+                }
+                catch (Exception e)
+                {
+                    Trace.TraceWarning("Cannot open required logfile : " + DataLogFile + " : " + e.Message);
+                    DatalogTrainSpeed = false;
+                }
+            }
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Train speed evaluation logging
+        /// <\summary>
+
+        public void LogTrainSpeed(double clockTime)
+        {
+            int clockInt = Convert.ToInt32(clockTime);
+            int deltaLastLog = clockInt - lastSpeedLog;
+
+            if (deltaLastLog >= DatalogTSInterval)
+            {
+                lastSpeedLog = clockInt;
+
+                // User settings flag indices :
+                //Time, Train Speed, Max Speed, Signal Aspect, Elevation, Direction, Control Mode, Distance Travelled, Throttle, Brake, Dyn Brake, Gear
+
+                var stringBuild = new StringBuilder();
+
+                char Separator = (char)(DataLogger.Separators)Enum.Parse(typeof(DataLogger.Separators), Simulator.Settings.DataLoggerSeparator);
+
+                if (DatalogTSContents[0] == 1)
+                {
+                    stringBuild.Append(InfoDisplay.FormattedTime(clockTime));
+                    stringBuild.Append(Separator);
+                }
+
+                bool moveForward = (Math.Sign(SpeedMpS) >= 0);
+                if (DatalogTSContents[1] == 1)
+                {
+                    stringBuild.Append(MpS.FromMpS(Math.Abs(SpeedMpS), Simulator.Confirmer.Viewer.MilepostUnitsMetric).ToString("0000.0"));
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[2] == 1)
+                {
+                    stringBuild.Append(MpS.FromMpS(AllowedMaxSpeedMpS, Simulator.Confirmer.Viewer.MilepostUnitsMetric).ToString("0000.0"));
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[3] == 1)
+                {
+                    if (moveForward)
+                    {
+                        if (NextSignalObject[0] == null)
+                        {
+                            stringBuild.Append("-");
+                        }
+                        else
+                        {
+                            MstsSignalAspect nextAspect = NextSignalObject[0].this_sig_lr(MstsSignalFunction.NORMAL);
+                            stringBuild.Append(nextAspect.ToString());
+                        }
+                    }
+                    else
+                    {
+                        if (NextSignalObject[1] == null)
+                        {
+                            stringBuild.Append("-");
+                        }
+                        else
+                        {
+                            MstsSignalAspect nextAspect = NextSignalObject[1].this_sig_lr(MstsSignalFunction.NORMAL);
+                            stringBuild.Append(nextAspect.ToString());
+                        }
+                    }
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[4] == 1)
+                {
+                    stringBuild.Append((0 - Cars[LeadLocomotiveIndex].CurrentElevationPercent).ToString("00.0"));
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[5] == 1)
+                {
+                    if (moveForward)
+                    {
+                        stringBuild.Append("F");
+                    }
+                    else
+                    {
+                        stringBuild.Append("B");
+                    }
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[6] == 1)
+                {
+                    stringBuild.Append(ControlMode.ToString());
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[7] == 1)
+                {
+                    stringBuild.Append(PresentPosition[0].DistanceTravelledM.ToString());
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[8] == 1)
+                {
+                    stringBuild.Append(MUThrottlePercent.ToString("000"));
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[9] == 1)
+                {
+                    //                    stringBuild.Append(BrakeLine1PressurePSIorInHg.ToString("000"));
+                    stringBuild.Append(Cars[LeadLocomotiveIndex].BrakeSystem.GetCylPressurePSI().ToString("000"));
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[10] == 1)
+                {
+                    stringBuild.Append(MUDynamicBrakePercent.ToString("000"));
+                    stringBuild.Append(Separator);
+                }
+
+                if (DatalogTSContents[11] == 1)
+                {
+                    stringBuild.Append(MUGearboxGearIndex.ToString("0"));
+                    stringBuild.Append(Separator);
+                }
+
+                stringBuild.Append("\n");
+                File.AppendAllText(DataLogFile, stringBuild.ToString());
+            }
         }
 
         //================================================================================================//
@@ -1167,7 +1907,7 @@ namespace ORTS
 
         //================================================================================================//
         /// <summary>
-        /// Update in manual mode
+        /// Update in explorer mode
         /// <\summary>
 
         public void UpdateExplorer(float elapsedClockSeconds)
@@ -1201,7 +1941,42 @@ namespace ORTS
                 if (TrainType != TRAINTYPE.STATIC)
                     CheckDeadlock(ValidRoute[0], Number);    // Check deadlock against all other trains (not for static trains)
                 if (TCRoute != null) TCRoute.SetReversalOffset(Length);
+
+                AuxActionsContain.SetAuxAction(this);
             }
+
+
+            // set train speed logging flag (valid per activity, so will be restored after save)
+
+            if (IsActualPlayerTrain)
+            {
+                DatalogTrainSpeed = Simulator.Settings.DataLogTrainSpeed;
+                DatalogTSInterval = Simulator.Settings.DataLogTSInterval;
+
+                DatalogTSContents = new int[Simulator.Settings.DataLogTSContents.Length];
+                Simulator.Settings.DataLogTSContents.CopyTo(DatalogTSContents, 0);
+
+                // if logging required, derive filename and open file
+                if (DatalogTrainSpeed)
+                {
+                    DataLogFile = Simulator.DeriveLogFile("Speed");
+                    if (String.IsNullOrEmpty(DataLogFile))
+                    {
+                        DatalogTrainSpeed = false;
+                    }
+                    else
+                    {
+                        CreateLogFile();
+                    }
+                }
+
+                // if debug, print out all passing paths
+
+#if DEBUG_DEADLOCK
+                Printout_PassingPaths();
+#endif
+            }
+
             return (validPosition);
         }
 
@@ -1210,12 +1985,12 @@ namespace ORTS
         /// get aspect of next signal ahead
         /// </summary>
 
-        public SignalHead.SIGASP GetNextSignalAspect(int direction)
+        public MstsSignalAspect GetNextSignalAspect(int direction)
         {
-            SignalHead.SIGASP thisAspect = SignalHead.SIGASP.STOP;
+            MstsSignalAspect thisAspect = MstsSignalAspect.STOP;
             if (NextSignalObject[direction] != null)
             {
-                thisAspect = NextSignalObject[direction].this_sig_lr(SignalHead.SIGFN.NORMAL);
+                thisAspect = NextSignalObject[direction].this_sig_lr(MstsSignalFunction.NORMAL);
             }
 
             return thisAspect;
@@ -1233,6 +2008,7 @@ namespace ORTS
             // to initialize, use direction 0 only
             // preset indices
 
+            SignalObjectItems.Clear();
             IndexNextSignal = -1;
             IndexNextSpeedlimit = -1;
 
@@ -1240,6 +2016,8 @@ namespace ORTS
 
             if (!existingSpeedLimits)
             {
+                if ((TrainMaxSpeedMpS <= 0f) && (this.LeadLocomotive != null))
+                    TrainMaxSpeedMpS = (this.LeadLocomotive as MSTSLocomotive).MaxSpeedMpS;
                 AllowedMaxSpeedMpS = TrainMaxSpeedMpS;   // set default
                 allowedMaxSpeedSignalMpS = TrainMaxSpeedMpS;   // set default
 
@@ -1250,8 +2028,8 @@ namespace ORTS
 
                 if (speedpostList.Count > 0)
                 {
-                    SignalObject thisSpeedpost = signalRef.SignalObjects[speedpostList[0]];
-                    ObjectSpeedInfo speed_info = thisSpeedpost.this_lim_speed(SignalHead.SIGFN.SPEED);
+                    var thisSpeedpost = signalRef.SignalObjects[speedpostList[0]];
+                    var speed_info = thisSpeedpost.this_lim_speed(MstsSignalFunction.SPEED);
 
                     AllowedMaxSpeedMpS = Math.Min(AllowedMaxSpeedMpS, IsFreight ? speed_info.speed_freight : speed_info.speed_pass);
                 }
@@ -1273,8 +2051,8 @@ namespace ORTS
 
                     if (speedpostList.Count > 0)
                     {
-                        SignalObject thisSpeedpost = signalRef.SignalObjects[speedpostList[0]];
-                        ObjectSpeedInfo speed_info = thisSpeedpost.this_lim_speed(SignalHead.SIGFN.SPEED);
+                        var thisSpeedpost = signalRef.SignalObjects[speedpostList[0]];
+                        var speed_info = thisSpeedpost.this_lim_speed(MstsSignalFunction.SPEED);
                         float distanceFromFront = Length - thisSpeedpost.DistanceTo(RearTDBTraveller);
                         if (distanceFromFront >= 0)
                         {
@@ -1318,22 +2096,23 @@ namespace ORTS
 
             //  get first item from train (irrespective of distance)
 
-            ObjectItemInfo.ObjectItemFindState returnState = ObjectItemInfo.ObjectItemFindState.NONE_FOUND;
+            ObjectItemInfo.ObjectItemFindState returnState = ObjectItemInfo.ObjectItemFindState.None;
             float distanceToLastObject = 9E29f;  // set to overlarge value
-            SignalHead.SIGASP nextAspect = SignalHead.SIGASP.UNKNOWN;
+            MstsSignalAspect nextAspect = MstsSignalAspect.UNKNOWN;
 
             ObjectItemInfo firstObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
                 PresentPosition[0].RouteListIndex, PresentPosition[0].TCOffset, -1,
-                ObjectItemInfo.ObjectItemType.ANY);
+                ObjectItemInfo.ObjectItemType.Any);
 
             returnState = firstObject.ObjectState;
-            if (returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
+            if (returnState == ObjectItemInfo.ObjectItemFindState.Object)
             {
                 firstObject.distance_to_train = firstObject.distance_found;
                 SignalObjectItems.Add(firstObject);
                 if (firstObject.ObjectDetails.isSignal)
                 {
-                    nextAspect = firstObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                    nextAspect = firstObject.ObjectDetails.this_sig_lr(MstsSignalFunction.NORMAL);
+                    firstObject.signal_state = nextAspect;
                 }
                 distanceToLastObject = firstObject.distance_found;
             }
@@ -1351,13 +2130,13 @@ namespace ORTS
             float offset = PresentPosition[0].TCOffset;
             int nextIndex = routeListIndex;
 
-            while (returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND &&
+            while (returnState == ObjectItemInfo.ObjectItemFindState.Object &&
                 distanceToLastObject < maxDistance &&
-                nextAspect != SignalHead.SIGASP.STOP)
+                nextAspect != MstsSignalAspect.STOP)
             {
                 int foundSection = -1;
 
-                SignalObject thisSignal = prevObject.ObjectDetails;
+                var thisSignal = prevObject.ObjectDetails;
 
                 int reqTCReference = thisSignal.TCReference;
                 float reqOffset = thisSignal.TCOffset + 0.0001f;   // make sure you find NEXT object ! //
@@ -1382,15 +2161,15 @@ namespace ORTS
                 }
 
                 nextObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
-                nextIndex, offset, -1, ObjectItemInfo.ObjectItemType.ANY);
+                nextIndex, offset, -1, ObjectItemInfo.ObjectItemType.Any);
 
                 returnState = nextObject.ObjectState;
 
-                if (returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
+                if (returnState == ObjectItemInfo.ObjectItemFindState.Object)
                 {
                     if (nextObject.ObjectDetails.isSignal)
                     {
-                        nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                        nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(MstsSignalFunction.NORMAL);
                         nextAspect = nextObject.signal_state;
 
                     }
@@ -1416,7 +2195,7 @@ namespace ORTS
                 if (!signalFound)
                 {
                     ObjectItemInfo thisObject = SignalObjectItems[isig];
-                    if (thisObject.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                    if (thisObject.ObjectType == ObjectItemInfo.ObjectItemType.Signal)
                     {
                         signalFound = true;
                         IndexNextSignal = isig;
@@ -1426,7 +2205,7 @@ namespace ORTS
                 if (!speedlimFound)
                 {
                     ObjectItemInfo thisObject = SignalObjectItems[isig];
-                    if (thisObject.ObjectType == ObjectItemInfo.ObjectItemType.SPEEDLIMIT)
+                    if (thisObject.ObjectType == ObjectItemInfo.ObjectItemType.Speedlimit)
                     {
                         speedlimFound = true;
                         IndexNextSpeedlimit = isig;
@@ -1449,9 +2228,9 @@ namespace ORTS
             {
                 ObjectItemInfo firstSignalObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
                     PresentPosition[0].RouteListIndex, PresentPosition[0].TCOffset, -1,
-                    ObjectItemInfo.ObjectItemType.SIGNAL);
+                    ObjectItemInfo.ObjectItemType.Signal);
 
-                if (firstSignalObject.ObjectState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
+                if (firstSignalObject.ObjectState == ObjectItemInfo.ObjectItemFindState.Object)
                 {
                     NextSignalObject[0] = firstSignalObject.ObjectDetails;
                     firstSignalObject.distance_to_train = firstSignalObject.distance_found;
@@ -1474,8 +2253,7 @@ namespace ORTS
         public void UpdateSignalState(int backward)
         {
             // for AUTO mode, use direction 0 only
-
-            ObjectItemInfo.ObjectItemFindState returnState = ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND;
+            ObjectItemInfo.ObjectItemFindState returnState = ObjectItemInfo.ObjectItemFindState.Object;
 
             bool listChanged = false;
             bool signalFound = false;
@@ -1501,30 +2279,53 @@ namespace ORTS
                 while (firstObject.distance_to_train < 0.0f && SignalObjectItems.Count > 0)
                 {
 #if DEBUG_REPORTS
-                        File.AppendAllText(@"C:\temp\printproc.txt", "Passed Signal : " + firstObject.ObjectDetails.thisRef.ToString() +
-                            " with speed : " + firstObject.actual_speed.ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\printproc.txt", "Passed Signal : " + firstObject.ObjectDetails.thisRef.ToString() +
+                        " with speed : " + firstObject.actual_speed.ToString() + "\n");
 #endif
+                    var temp1MaxSpeedMpS = IsFreight ? firstObject.speed_freight : firstObject.speed_passenger;
+                    if (firstObject.ObjectDetails.isSignal)
+                    {
+                        allowedAbsoluteMaxSpeedSignalMpS = temp1MaxSpeedMpS == -1 ? (float)Program.Simulator.TRK.Tr_RouteFile.SpeedLimit : temp1MaxSpeedMpS;
+                    }
+                    else if (firstObject.speed_reset == 0)
+                    {
+                        allowedAbsoluteMaxSpeedLimitMpS = temp1MaxSpeedMpS == -1 ? allowedAbsoluteMaxSpeedLimitMpS : temp1MaxSpeedMpS;
+                    }
+                    else
+                    {
+                        allowedAbsoluteMaxSpeedSignalMpS = allowedAbsoluteMaxSpeedLimitMpS;
+                    }
+
                     if (firstObject.actual_speed > 0)
                     {
 #if DEBUG_REPORTS
                         File.AppendAllText(@"C:\temp\printproc.txt", "Passed speedpost : " + firstObject.ObjectDetails.thisRef.ToString() +
-                            " = " + firstObject.actual_speed.ToString()+"\n");
+                            " = " + firstObject.actual_speed.ToString() + "\n");
 
                         File.AppendAllText(@"C:\temp\printproc.txt", "Present Limits : " +
-                            "Limit : "+allowedMaxSpeedLimitMpS.ToString() + " ; " +
-                            "Signal : "+allowedMaxSpeedSignalMpS.ToString() + " ; " +
-                            "Overall : "+AllowedMaxSpeedMpS.ToString() + "\n");
+                            "Limit : " + allowedMaxSpeedLimitMpS.ToString() + " ; " +
+                            "Signal : " + allowedMaxSpeedSignalMpS.ToString() + " ; " +
+                            "Overall : " + AllowedMaxSpeedMpS.ToString() + "\n");
 #endif
                         if (firstObject.actual_speed <= AllowedMaxSpeedMpS)
                         {
                             AllowedMaxSpeedMpS = firstObject.actual_speed;
+                            float tempMaxSpeedMps = AllowedMaxSpeedMpS;
+                            if (!Simulator.TimetableMode)
+                            {
+                                tempMaxSpeedMps = IsFreight ? firstObject.speed_freight : firstObject.speed_passenger;
+                                if (tempMaxSpeedMps == -1f)
+                                    tempMaxSpeedMps = AllowedMaxSpeedMpS;
+                            }
+
+
                             if (firstObject.ObjectDetails.isSignal)
                             {
-                                allowedMaxSpeedSignalMpS = AllowedMaxSpeedMpS;
+                                allowedMaxSpeedSignalMpS = tempMaxSpeedMps;
                             }
                             else
                             {
-                                allowedMaxSpeedLimitMpS = AllowedMaxSpeedMpS;
+                                allowedMaxSpeedLimitMpS = tempMaxSpeedMps;
                             }
                             requiredActions.UpdatePendingSpeedlimits(AllowedMaxSpeedMpS);  // update any older pending speed limits
                         }
@@ -1536,12 +2337,28 @@ namespace ORTS
                             {
                                 speedLimit = new ActivateSpeedLimit(reqDistance, -1f, firstObject.actual_speed);
                             }
-                            else
+                            else if (Simulator.TimetableMode || firstObject.speed_reset == 0)
                             {
                                 speedLimit = new ActivateSpeedLimit(reqDistance, firstObject.actual_speed, -1f);
                             }
+                            else speedLimit = new ActivateSpeedLimit(reqDistance, firstObject.actual_speed, firstObject.actual_speed);
                             requiredActions.InsertAction(speedLimit);
                             requiredActions.UpdatePendingSpeedlimits(firstObject.actual_speed);  // update any older pending speed limits
+                        }
+                    }
+                    else if (!Simulator.TimetableMode)
+                    {
+                        var tempMaxSpeedMps = IsFreight ? firstObject.speed_freight : firstObject.speed_passenger;
+                        if (tempMaxSpeedMps >= 0)
+                        {
+                            if (firstObject.ObjectDetails.isSignal)
+                            {
+                                allowedMaxSpeedSignalMpS = tempMaxSpeedMps;
+                            }
+                            else
+                            {
+                                allowedMaxSpeedLimitMpS = tempMaxSpeedMps;
+                            }
                         }
                     }
 
@@ -1576,10 +2393,10 @@ namespace ORTS
                     while (!noMoreNewSignals)
                     {
                         ObjectItemInfo newObjectItem = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
-                           thisIndex, offset, -1, ObjectItemInfo.ObjectItemType.SIGNAL);
+                           thisIndex, offset, -1, ObjectItemInfo.ObjectItemType.Signal);
 
                         returnState = newObjectItem.ObjectState;
-                        if (returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
+                        if (returnState == ObjectItemInfo.ObjectItemFindState.Object)
                         {
                             newSignalIndex = newObjectItem.ObjectDetails.thisRef;
 
@@ -1622,10 +2439,10 @@ namespace ORTS
             {
                 firstObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
                       PresentPosition[0].RouteListIndex, PresentPosition[0].TCOffset, -1,
-                      ObjectItemInfo.ObjectItemType.ANY);
+                      ObjectItemInfo.ObjectItemType.Any);
 
                 returnState = firstObject.ObjectState;
-                if (returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
+                if (returnState == ObjectItemInfo.ObjectItemFindState.Object)
                 {
                     firstObject.distance_to_train = firstObject.distance_found;
                     SignalObjectItems.Add(firstObject);
@@ -1634,10 +2451,11 @@ namespace ORTS
 
             // reset next signal object if none found
 
-            if (SignalObjectItems.Count <= 0 || (SignalObjectItems.Count == 1 && SignalObjectItems[0].ObjectType == ObjectItemInfo.ObjectItemType.SPEEDLIMIT))
+            if (SignalObjectItems.Count <= 0 || (SignalObjectItems.Count == 1 && SignalObjectItems[0].ObjectType == ObjectItemInfo.ObjectItemType.Speedlimit))
             {
                 NextSignalObject[0] = null;
                 distanceToSignal = 0;
+                listChanged = true;
             }
 
             //
@@ -1653,11 +2471,23 @@ namespace ORTS
 
                 if (firstObject.ObjectDetails.isSignal)
                 {
-                    firstObject.signal_state = firstObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
-                    ObjectSpeedInfo thisSpeed = firstObject.ObjectDetails.this_sig_speed(SignalHead.SIGFN.NORMAL);
+                    firstObject.signal_state = firstObject.ObjectDetails.this_sig_lr(MstsSignalFunction.NORMAL);
+                    ObjectSpeedInfo thisSpeed = firstObject.ObjectDetails.this_sig_speed(MstsSignalFunction.NORMAL);
                     firstObject.speed_passenger = thisSpeed == null ? -1 : thisSpeed.speed_pass;
                     firstObject.speed_freight = thisSpeed == null ? -1 : thisSpeed.speed_freight;
                     firstObject.speed_flag = thisSpeed == null ? 0 : thisSpeed.speed_flag;
+                    firstObject.speed_reset = thisSpeed == null ? 0 : thisSpeed.speed_reset;
+                }
+                else if (firstObject.ObjectDetails.SignalHeads != null)  // check if object is SPEED info signal
+                {
+                    if (firstObject.ObjectDetails.SignalHeads[0].sigFunction == MstsSignalFunction.SPEED)
+                    {
+                        ObjectSpeedInfo thisSpeed = firstObject.ObjectDetails.this_sig_speed(MstsSignalFunction.SPEED);
+                        firstObject.speed_passenger = thisSpeed == null ? -1 : thisSpeed.speed_pass;
+                        firstObject.speed_freight = thisSpeed == null ? -1 : thisSpeed.speed_freight;
+                        firstObject.speed_flag = thisSpeed == null ? 0 : thisSpeed.speed_flag;
+                        firstObject.speed_reset = thisSpeed == null ? 0 : thisSpeed.speed_reset;
+                    }
                 }
 
                 //
@@ -1676,14 +2506,27 @@ namespace ORTS
 
                     if (nextObject.ObjectDetails.isSignal)
                     {
-                        nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                        nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(MstsSignalFunction.NORMAL);
                         if (nextObject.ObjectDetails.enabledTrain != null && nextObject.ObjectDetails.enabledTrain.Train != this)
-                            nextObject.signal_state = SignalHead.SIGASP.STOP; // state not valid if not enabled for this train
-                        ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_sig_speed(SignalHead.SIGFN.NORMAL);
-                        nextObject.speed_passenger = thisSpeed == null || nextObject.signal_state == SignalHead.SIGASP.STOP ? -1 : thisSpeed.speed_pass;
-                        nextObject.speed_freight = thisSpeed == null || nextObject.signal_state == SignalHead.SIGASP.STOP ? -1 : thisSpeed.speed_freight;
-                        nextObject.speed_flag = thisSpeed == null || nextObject.signal_state == SignalHead.SIGASP.STOP ? 0 : thisSpeed.speed_flag;
+                            nextObject.signal_state = MstsSignalAspect.STOP; // state not valid if not enabled for this train
+                        ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_sig_speed(MstsSignalFunction.NORMAL);
+                        nextObject.speed_passenger = thisSpeed == null || nextObject.signal_state == MstsSignalAspect.STOP ? -1 : thisSpeed.speed_pass;
+                        nextObject.speed_freight = thisSpeed == null || nextObject.signal_state == MstsSignalAspect.STOP ? -1 : thisSpeed.speed_freight;
+                        nextObject.speed_flag = thisSpeed == null || nextObject.signal_state == MstsSignalAspect.STOP ? 0 : thisSpeed.speed_flag;
+                        nextObject.speed_reset = thisSpeed == null || nextObject.signal_state == MstsSignalAspect.STOP ? 0 : thisSpeed.speed_reset;
                     }
+                    else if (nextObject.ObjectDetails.SignalHeads != null)  // check if object is SPEED info signal
+                    {
+                        if (nextObject.ObjectDetails.SignalHeads[0].sigFunction == MstsSignalFunction.SPEED)
+                        {
+                            ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_sig_speed(MstsSignalFunction.SPEED);
+                            nextObject.speed_passenger = thisSpeed == null ? -1 : thisSpeed.speed_pass;
+                            nextObject.speed_freight = thisSpeed == null ? -1 : thisSpeed.speed_freight;
+                            nextObject.speed_flag = thisSpeed == null ? 0 : thisSpeed.speed_flag;
+                            nextObject.speed_reset = thisSpeed == null ? 0 : thisSpeed.speed_reset;
+                        }
+                    }
+
 
                     prevObject = nextObject;
                 }
@@ -1693,17 +2536,15 @@ namespace ORTS
                 // If so, no check on list is required
                 //
 
-                SignalHead.SIGASP nextAspect = SignalHead.SIGASP.UNKNOWN;
+                MstsSignalAspect nextAspect = MstsSignalAspect.UNKNOWN;
 
                 for (int isig = SignalObjectItems.Count - 1; isig >= 0 && !signalFound; isig--)
                 {
                     ObjectItemInfo nextObject = SignalObjectItems[isig];
-                    if (nextObject.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                    if (nextObject.ObjectType == ObjectItemInfo.ObjectItemType.Signal)
                     {
                         signalFound = true;
                         nextAspect = nextObject.signal_state;
-
-                        SignalObject nextSignal = nextObject.ObjectDetails;
                     }
                 }
 
@@ -1720,15 +2561,15 @@ namespace ORTS
                 prevObject = SignalObjectItems[SignalObjectItems.Count - 1];  // last object
 
                 while (lastDistance < maxDistance &&
-                          returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND &&
-                          nextAspect != SignalHead.SIGASP.STOP)
+                          returnState == ObjectItemInfo.ObjectItemFindState.Object &&
+                          nextAspect != MstsSignalAspect.STOP)
                 {
 
-                    SignalObject prevSignal = prevObject.ObjectDetails;
+                    var prevSignal = prevObject.ObjectDetails;
                     int reqTCReference = prevSignal.TCReference;
                     float reqOffset = prevSignal.TCOffset + 0.0001f;   // make sure you find NEXT object ! //
 
-                    if (prevSignal.TCNextTC > 0)
+                    if (prevSignal.TCNextTC > 0 && ValidRoute[0].GetRouteIndex(prevSignal.TCNextTC, lastIndex) > 0)
                     {
                         reqTCReference = prevSignal.TCNextTC;
                         reqOffset = 0.0f;
@@ -1742,11 +2583,11 @@ namespace ORTS
                     }
 
                     ObjectItemInfo nextObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
-                         lastIndex, offset, -1, ObjectItemInfo.ObjectItemType.ANY);
+                         lastIndex, offset, -1, ObjectItemInfo.ObjectItemType.Any);
 
                     returnState = nextObject.ObjectState;
 
-                    if (returnState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
+                    if (returnState == ObjectItemInfo.ObjectItemFindState.Object)
                     {
                         nextObject.distance_to_object = nextObject.distance_found;
                         nextObject.distance_to_train = prevObject.distance_to_train + nextObject.distance_to_object;
@@ -1756,12 +2597,24 @@ namespace ORTS
 
                         if (nextObject.ObjectDetails.isSignal)
                         {
-                            nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL);
+                            nextObject.signal_state = nextObject.ObjectDetails.this_sig_lr(MstsSignalFunction.NORMAL);
                             nextAspect = nextObject.signal_state;
-                            ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_sig_speed(SignalHead.SIGFN.NORMAL);
+                            ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_sig_speed(MstsSignalFunction.NORMAL);
                             nextObject.speed_passenger = thisSpeed == null ? -1 : thisSpeed.speed_pass;
                             nextObject.speed_freight = thisSpeed == null ? -1 : thisSpeed.speed_freight;
                             nextObject.speed_flag = thisSpeed == null ? 0 : thisSpeed.speed_flag;
+                            nextObject.speed_reset = thisSpeed == null ? 0 : thisSpeed.speed_reset;
+                        }
+                        else if (nextObject.ObjectDetails.SignalHeads != null)  // check if object is SPEED info signal
+                        {
+                            if (nextObject.ObjectDetails.SignalHeads[0].sigFunction == MstsSignalFunction.SPEED)
+                            {
+                                ObjectSpeedInfo thisSpeed = nextObject.ObjectDetails.this_sig_speed(MstsSignalFunction.SPEED);
+                                nextObject.speed_passenger = thisSpeed == null ? -1 : thisSpeed.speed_pass;
+                                nextObject.speed_freight = thisSpeed == null ? -1 : thisSpeed.speed_freight;
+                                nextObject.speed_flag = thisSpeed == null ? 0 : thisSpeed.speed_flag;
+                                nextObject.speed_reset = thisSpeed == null ? 0 : thisSpeed.speed_reset;
+                            }
                         }
 
                         prevObject = nextObject;
@@ -1776,92 +2629,81 @@ namespace ORTS
                 if (IndexNextSignal >= SignalObjectItems.Count)
                 {
                     if (CheckTrain)
-                        File.AppendAllText(@"F:\temp\checktrain.txt", "Error in UpdateSignalState: IndexNextSignal out of range : " + IndexNextSignal + 
+                        File.AppendAllText(@"C:\temp\checktrain.txt", "Error in UpdateSignalState: IndexNextSignal out of range : " + IndexNextSignal +
                                              " (max value : " + SignalObjectItems.Count + ") \n");
                     listChanged = true;
                 }
-
-                //
-                // if list is changed, get new indices to first signal and speedpost
-                //
-
-                if (listChanged)
-                {
-                    signalFound = false;
-                    speedlimFound = false;
-
-                    IndexNextSignal = -1;
-                    IndexNextSpeedlimit = -1;
-                    NextSignalObject[0] = null;
-
-                    for (int isig = 0; isig < SignalObjectItems.Count && (!signalFound || !speedlimFound); isig++)
-                    {
-                        ObjectItemInfo nextObject = SignalObjectItems[isig];
-                        if (!signalFound && nextObject.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
-                        {
-                            signalFound = true;
-                            IndexNextSignal = isig;
-                        }
-                        else if (!speedlimFound && nextObject.ObjectType == ObjectItemInfo.ObjectItemType.SPEEDLIMIT)
-                        {
-                            speedlimFound = true;
-                            IndexNextSpeedlimit = isig;
-                        }
-                    }
-                }
-
-                //
-                // check if any signal in list, if not get direct from train
-                // get state and details
-                //
-
-                if (IndexNextSignal < 0)
-                {
-                    ObjectItemInfo firstSignalObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
-                            PresentPosition[0].RouteListIndex, PresentPosition[0].TCOffset, -1,
-                            ObjectItemInfo.ObjectItemType.SIGNAL);
-
-                    if (firstSignalObject.ObjectState == ObjectItemInfo.ObjectItemFindState.OBJECT_FOUND)
-                    {
-                        NextSignalObject[0] = firstSignalObject.ObjectDetails;
-                        firstSignalObject.distance_to_train = firstSignalObject.distance_found;
-                    }
-                }
-                else
-                {
-                    NextSignalObject[0] = SignalObjectItems[IndexNextSignal].ObjectDetails;
-                }
-
-                //
-                // update distance of signal if out of list
-                // get state of next signal
-                //
-
-                SignalHead.SIGASP thisState = SignalHead.SIGASP.UNKNOWN;
-
-                if (IndexNextSignal >= 0)
-                {
-                    distanceToSignal = SignalObjectItems[IndexNextSignal].distance_to_train;
-                    thisState = SignalObjectItems[IndexNextSignal].signal_state;
-
-                    SignalObject thisSignal = SignalObjectItems[IndexNextSignal].ObjectDetails;
-                }
-                else if (NextSignalObject[0] != null)
-                {
-                    distanceToSignal = NextSignalObject[0].DistanceTo(FrontTDBTraveller);
-                    thisState = NextSignalObject[0].this_sig_lr(SignalHead.SIGFN.NORMAL);
-                }
-
-                CABAspect = thisState;
-                SignalObject dummyObject = new SignalObject();
-                TMaspect = dummyObject.TranslateTMAspect(thisState);
-
-                //
-                // determine actual speed limits depending on overall speed and type of train
-                //
-
-                updateSpeedInfo();
             }
+
+
+            //
+            // if list is changed, get new indices to first signal and speedpost
+            //
+
+            if (listChanged)
+            {
+                signalFound = false;
+                speedlimFound = false;
+
+                IndexNextSignal = -1;
+                IndexNextSpeedlimit = -1;
+                NextSignalObject[0] = null;
+
+                for (int isig = 0; isig < SignalObjectItems.Count && (!signalFound || !speedlimFound); isig++)
+                {
+                    ObjectItemInfo nextObject = SignalObjectItems[isig];
+                    if (!signalFound && nextObject.ObjectType == ObjectItemInfo.ObjectItemType.Signal)
+                    {
+                        signalFound = true;
+                        IndexNextSignal = isig;
+                    }
+                    else if (!speedlimFound && nextObject.ObjectType == ObjectItemInfo.ObjectItemType.Speedlimit)
+                    {
+                        speedlimFound = true;
+                        IndexNextSpeedlimit = isig;
+                    }
+                }
+            }
+
+            //
+            // check if any signal in list, if not get direct from train
+            // get state and details
+            //
+
+            if (IndexNextSignal < 0)
+            {
+                ObjectItemInfo firstSignalObject = signalRef.GetNextObject_InRoute(routedForward, ValidRoute[0],
+                        PresentPosition[0].RouteListIndex, PresentPosition[0].TCOffset, -1,
+                        ObjectItemInfo.ObjectItemType.Signal);
+
+                if (firstSignalObject.ObjectState == ObjectItemInfo.ObjectItemFindState.Object)
+                {
+                    NextSignalObject[0] = firstSignalObject.ObjectDetails;
+                    firstSignalObject.distance_to_train = firstSignalObject.distance_found;
+                }
+            }
+            else
+            {
+                NextSignalObject[0] = SignalObjectItems[IndexNextSignal].ObjectDetails;
+            }
+
+            //
+            // update distance of signal if out of list
+            //
+            if (IndexNextSignal >= 0)
+            {
+                distanceToSignal = SignalObjectItems[IndexNextSignal].distance_to_train;
+            }
+            else if (NextSignalObject[0] != null)
+            {
+                distanceToSignal = NextSignalObject[0].DistanceTo(FrontTDBTraveller);
+            }
+
+            //
+            // determine actual speed limits depending on overall speed and type of train
+            //
+
+            updateSpeedInfo();
 
         }
 
@@ -1876,9 +2718,30 @@ namespace ORTS
             float validSpeedSignalMpS = allowedMaxSpeedSignalMpS;
             float validSpeedLimitMpS = allowedMaxSpeedLimitMpS;
 
+            // update valid speed with pending actions
+
+            foreach (var thisAction in requiredActions)
+            {
+                if (thisAction is ActivateSpeedLimit)
+                {
+                    ActivateSpeedLimit thisLimit = (thisAction as ActivateSpeedLimit);
+
+                    if (thisLimit.MaxSpeedMpSLimit > validSpeedLimitMpS)
+                    {
+                        validSpeedLimitMpS = thisLimit.MaxSpeedMpSLimit;
+                    }
+
+                    if (thisLimit.MaxSpeedMpSSignal > validSpeedSignalMpS)
+                    {
+                        validSpeedSignalMpS = thisLimit.MaxSpeedMpSSignal;
+                    }
+                }
+            }
+
+            // loop through objects
+
             foreach (ObjectItemInfo thisObject in SignalObjectItems)
             {
-
                 //
                 // select speed on type of train 
                 //
@@ -1887,7 +2750,7 @@ namespace ORTS
 
                 if (thisObject.ObjectDetails.isSignal)
                 {
-                    if (actualSpeedMpS > 0 && thisObject.speed_flag == 0)
+                    if (actualSpeedMpS > 0 && (thisObject.speed_flag == 0 || !Program.Simulator.TimetableMode))
                     {
                         validSpeedSignalMpS = actualSpeedMpS;
                         if (validSpeedSignalMpS > validSpeedLimitMpS)
@@ -1926,19 +2789,74 @@ namespace ORTS
                         validSpeedMpS = actualSpeedMpS;
                     }
                 }
-                else
+                else if (Program.Simulator.TimetableMode)
+                {
+                    {
+                        if (actualSpeedMpS > 998f)
+                        {
+                            actualSpeedMpS = TrainMaxSpeedMpS;
+                        }
+
+                        if (actualSpeedMpS > 0)
+                        {
+                            validSpeedMpS = actualSpeedMpS;
+                            validSpeedLimitMpS = actualSpeedMpS;
+                        }
+                        else if (actualSpeedMpS < 0 && thisObject.speed_reset == 1)
+                        {
+                            validSpeedMpS = validSpeedLimitMpS;
+                            actualSpeedMpS = validSpeedLimitMpS;
+                        }
+
+                        thisObject.actual_speed = actualSpeedMpS;
+                    }
+                }
+
+                else  // Enhanced Compatibility on & SpeedLimit
                 {
                     if (actualSpeedMpS > 998f)
                     {
-                        actualSpeedMpS = TrainMaxSpeedMpS;
+                        actualSpeedMpS = (float)Simulator.TRK.Tr_RouteFile.SpeedLimit;
                     }
 
                     if (actualSpeedMpS > 0)
                     {
-                        validSpeedMpS = actualSpeedMpS;
                         validSpeedLimitMpS = actualSpeedMpS;
+                        if (validSpeedLimitMpS > validSpeedSignalMpS)
+                        {
+                            if (validSpeedMpS < validSpeedSignalMpS)
+                            {
+                                actualSpeedMpS = validSpeedSignalMpS;
+                            }
+                            else
+                            {
+                                actualSpeedMpS = -1;
+                            }
+                        }
                     }
+                    else if (actualSpeedMpS < 0 && thisObject.speed_reset == 0)
+                    {
+                        float newSpeedMpS1 = Math.Min(validSpeedSignalMpS, validSpeedLimitMpS);
+
+                        if (newSpeedMpS1 != validSpeedMpS)
+                        {
+                            actualSpeedMpS = newSpeedMpS1;
+                        }
+                        else
+                        {
+                            actualSpeedMpS = -1;
+                        }
+                    }
+                    else if (thisObject.speed_reset == 1)
+                    {
+                        actualSpeedMpS = validSpeedLimitMpS;
+                    }
+
                     thisObject.actual_speed = actualSpeedMpS;
+                    if (actualSpeedMpS > 0)
+                    {
+                        validSpeedMpS = actualSpeedMpS;
+                    }
                 }
             }
         }
@@ -1956,19 +2874,36 @@ namespace ORTS
                     Simulator.Confirmer.Warning(CabControl.InitializeBrakes, CabSetting.Warn1);
                 return;
             }
+            UnconditionalInitializeBrakes();
+            return;
+        }
+
+        /// <summary>
+        /// Initializes brakes also if Speed != 0; directly used by keyboard command
+        /// <\summary>
+        public void UnconditionalInitializeBrakes()
+        {
             if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
                 Simulator.Confirmer.Confirm(CabControl.InitializeBrakes, CabSetting.Off);
 
             float maxPressurePSI = 90;
+            float fullServPressurePSI = 64;
+            if (FirstCar != null && FirstCar.BrakeSystem is VacuumSinglePipe)
+            {
+                maxPressurePSI = 21;
+                fullServPressurePSI = 16;
+            }
+
             if (LeadLocomotiveIndex >= 0)
             {
                 MSTSLocomotive lead = (MSTSLocomotive)Cars[LeadLocomotiveIndex];
                 if (lead.TrainBrakeController != null)
                 {
-                    lead.TrainBrakeController.UpdatePressure(ref BrakeLine1PressurePSI, 1000, ref BrakeLine4PressurePSI);
-                    maxPressurePSI = lead.TrainBrakeController.GetMaxPressurePSI();
-                    BrakeLine1PressurePSI =
-                            MathHelper.Max(BrakeLine1PressurePSI, maxPressurePSI - lead.TrainBrakeController.GetFullServReductionPSI());
+                    lead.TrainBrakeController.UpdatePressure(ref BrakeLine1PressurePSIorInHg, 1000, ref BrakeLine4);
+                    maxPressurePSI = lead.TrainBrakeController.MaxPressurePSI;
+                    fullServPressurePSI = lead.BrakeSystem is VacuumSinglePipe ? 16 : maxPressurePSI - lead.TrainBrakeController.FullServReductionPSI;
+                    BrakeLine1PressurePSIorInHg =
+                            MathHelper.Max(BrakeLine1PressurePSIorInHg, fullServPressurePSI);
                 }
                 if (lead.EngineBrakeController != null)
                     lead.EngineBrakeController.UpdateEngineBrakePressure(ref BrakeLine3PressurePSI, 1000);
@@ -1978,18 +2913,20 @@ namespace ORTS
                     if (MUDynamicBrakePercent == 0)
                         MUDynamicBrakePercent = -1;
                 }
+                BrakeLine2PressurePSI = maxPressurePSI;
+                ConnectBrakeHoses();
             }
             else
             {
-                BrakeLine1PressurePSI = BrakeLine3PressurePSI = BrakeLine4PressurePSI = 0;
+                BrakeLine1PressurePSIorInHg = BrakeLine2PressurePSI = BrakeLine3PressurePSI = 0;
+                // Initialize static consists airless for allowing proper shunting operations,
+                // but set AI trains pumped up with air.
+                if (TrainType == TRAINTYPE.STATIC)
+                    maxPressurePSI = 0;
+                BrakeLine4 = -1;
             }
-            BrakeLine2PressurePSI = maxPressurePSI;
             foreach (TrainCar car in Cars)
-            {
-                car.BrakeSystem.Initialize(LeadLocomotiveIndex < 0, maxPressurePSI, false);
-                if (LeadLocomotiveIndex < 0)
-                    car.BrakeSystem.BrakeLine1PressurePSI = -1;
-            }
+                car.BrakeSystem.Initialize(LeadLocomotiveIndex < 0, maxPressurePSI, fullServPressurePSI, false);
         }
 
         //================================================================================================//
@@ -2012,10 +2949,13 @@ namespace ORTS
 
         public void ConnectBrakeHoses()
         {
-            if (SpeedMpS < -.1 || SpeedMpS > .1)
-                return;
-            foreach (TrainCar car in Cars)
-                car.BrakeSystem.Connect();
+            for (var i = 0; i < Cars.Count; i++)
+            {
+                Cars[i].BrakeSystem.FrontBrakeHoseConnected = i > 0;
+                Cars[i].BrakeSystem.AngleCockAOpen = i > 0;
+                Cars[i].BrakeSystem.AngleCockBOpen = i < Cars.Count - 1;
+                Cars[i].BrakeSystem.BleedOffValveOpen = false;
+            }
         }
 
         //================================================================================================//
@@ -2032,10 +2972,9 @@ namespace ORTS
             FindLeadLocomotives(ref first, ref last);
             for (int i = 0; i < Cars.Count; i++)
             {
-                if (first <= i && i <= last)
-                    continue;
-                TrainCar car = Cars[i];
-                car.BrakeSystem.Disconnect();
+                Cars[i].BrakeSystem.FrontBrakeHoseConnected = first < i && i <= last;
+                Cars[i].BrakeSystem.AngleCockAOpen = i != first;
+                Cars[i].BrakeSystem.AngleCockBOpen = i != last;
             }
         }
 
@@ -2101,32 +3040,67 @@ namespace ORTS
             }
         }
 
+        public TrainCar FindLeadLocomotive()
+        {
+            int first = -1;
+            int last = -1;
+            FindLeadLocomotives(ref first, ref last);
+            if (first != -1 && first < LeadLocomotiveIndex)
+            {
+                return Cars[first];
+            }
+            else if (last != -1 && last > LeadLocomotiveIndex)
+            {
+                return Cars[last];
+            }
+            for (int idx = 0; idx < Cars.Count(); idx++)
+            {
+                if (Cars[idx].IsDriveable)
+                    return Cars[idx];
+            }
+            return null;
+        }
+
         //================================================================================================//
         /// <summary>
         /// Propagate brake pressure
         /// <\summary>
 
-        private void PropagateBrakePressure(float elapsedClockSeconds)
+        public void PropagateBrakePressure(float elapsedClockSeconds)
         {
             if (LeadLocomotiveIndex >= 0)
             {
                 MSTSLocomotive lead = (MSTSLocomotive)Cars[LeadLocomotiveIndex];
                 if (lead.TrainBrakeController != null)
-                    lead.TrainBrakeController.UpdatePressure(ref BrakeLine1PressurePSI, elapsedClockSeconds, ref BrakeLine4PressurePSI);
+                    lead.TrainBrakeController.UpdatePressure(ref BrakeLine1PressurePSIorInHg, elapsedClockSeconds, ref BrakeLine4);
                 if (lead.EngineBrakeController != null)
                     lead.EngineBrakeController.UpdateEngineBrakePressure(ref BrakeLine3PressurePSI, elapsedClockSeconds);
                 lead.BrakeSystem.PropagateBrakePressure(elapsedClockSeconds);
             }
+            else if (TrainType == TRAINTYPE.STATIC)
+            {
+                // Propagate brake pressure of locomotiveless static consists in the advanced way,
+                // to allow proper shunting operations.
+                Cars[0].BrakeSystem.PropagateBrakePressure(elapsedClockSeconds);
+            }
             else
             {
-                foreach (TrainCar car in Cars)
-                {
-                    if (car.BrakeSystem.BrakeLine1PressurePSI < 0)
-                        continue;
-                    car.BrakeSystem.BrakeLine1PressurePSI = BrakeLine1PressurePSI;
-                    car.BrakeSystem.BrakeLine2PressurePSI = BrakeLine2PressurePSI;
-                    car.BrakeSystem.BrakeLine3PressurePSI = 0;
-                }
+                // Propagate brake pressure of AI trains simplified
+                AISetUniformBrakePressures();
+            }
+        }
+
+        /// <summary>
+        /// AI trains simplyfied brake control is done by setting their Train.BrakeLine1PressurePSIorInHg,
+        /// that is propagated promptly to each car directly.
+        /// </summary>
+        private void AISetUniformBrakePressures()
+        {
+            foreach (TrainCar car in Cars)
+            {
+                car.BrakeSystem.BrakeLine1PressurePSI = car.BrakeSystem.InternalPressure(BrakeLine1PressurePSIorInHg);
+                car.BrakeSystem.BrakeLine2PressurePSI = BrakeLine2PressurePSI;
+                car.BrakeSystem.BrakeLine3PressurePSI = 0;
             }
         }
 
@@ -2151,11 +3125,11 @@ namespace ORTS
                 }
                 else
                 {
-                    var bogieSpacing = car.Length * 0.65f;  // we'll use this approximation since the wagfile doesn't contain info on bogie position
+                    var bogieSpacing = car.CarLengthM * 0.65f;  // we'll use this approximation since the wagfile doesn't contain info on bogie position
 
                     // traveller is positioned at the front of the car
                     // advance to the first bogie 
-                    traveller.Move((car.Length - bogieSpacing) / 2.0f);
+                    traveller.Move((car.CarLengthM - bogieSpacing) / 2.0f);
                     var tileX = traveller.TileX;
                     var tileZ = traveller.TileZ;
                     var x = traveller.X;
@@ -2197,14 +3171,14 @@ namespace ORTS
                     car.WorldPosition.TileX = traveller.TileX;
                     car.WorldPosition.TileZ = traveller.TileZ;
 
-                    traveller.Move((car.Length - bogieSpacing) / 2.0f);
+                    traveller.Move((car.CarLengthM - bogieSpacing) / 2.0f);
                 }
                 if (i < Cars.Count - 1)
                 {
                     traveller.Move(car.CouplerSlackM + car.GetCouplerZeroLengthM());
                     length += car.CouplerSlackM + car.GetCouplerZeroLengthM();
                 }
-                length += car.Length;
+                length += car.CarLengthM;
             }
 
             traveller.ReverseDirection();
@@ -2221,10 +3195,13 @@ namespace ORTS
         public void CheckFreight()
         {
             IsFreight = false;
+            PassengerCarsNumber = 0;
             foreach (var car in Cars)
             {
                 if (car.IsFreight)
                     IsFreight = true;
+                if ((!car.IsFreight && !car.IsTender && !car.IsDriveable) || (car.IsDriveable && car.HasPassengerCapacity))
+                    PassengerCarsNumber++;
             }
         } // CheckFreight
 
@@ -2238,7 +3215,6 @@ namespace ORTS
         {
             if (float.IsNaN(distance)) distance = 0;//sanity check
 
-            var tn = RearTDBTraveller.TN;
             RearTDBTraveller.Move(distance);
 
             // TODO : check if train moved back into previous section
@@ -2262,11 +3238,11 @@ namespace ORTS
                 }
                 else
                 {
-                    var bogieSpacing = car.Length * 0.65f;  // we'll use this approximation since the wagfile doesn't contain info on bogie position
+                    var bogieSpacing = car.CarLengthM * 0.65f;  // we'll use this approximation since the wagfile doesn't contain info on bogie position
 
                     // traveller is positioned at the back of the car
                     // advance to the first bogie 
-                    traveller.Move((car.Length - bogieSpacing) / 2.0f);
+                    traveller.Move((car.CarLengthM - bogieSpacing) / 2.0f);
                     var tileX = traveller.TileX;
                     var tileZ = traveller.TileZ;
                     var x = traveller.X;
@@ -2316,9 +3292,9 @@ namespace ORTS
                         car.SuperElevation(SpeedMpS, Program.Simulator.UseSuperElevation, traveller);
                     }
 
-                    traveller.Move((car.Length - bogieSpacing) / 2.0f);  // Move to the front of the car 
+                    traveller.Move((car.CarLengthM - bogieSpacing) / 2.0f);  // Move to the front of the car 
                 }
-                length += car.Length;
+                length += car.CarLengthM;
             }
 
             FrontTDBTraveller = traveller;
@@ -2342,9 +3318,15 @@ namespace ORTS
             SpeedMpS = (kg1 * SpeedMpS + kg2 * otherTrain.SpeedMpS * otherMult) / (kg1 + kg2);
             otherTrain.SpeedMpS = SpeedMpS;
             foreach (TrainCar car1 in Cars)
-                car1.SpeedMpS = car1.Flipped ? -SpeedMpS : SpeedMpS;
+                //TODO: next code line has been modified to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
+                // To achieve the same result with other means, without flipping trainset physics, the line should be changed as follows:
+                //                 car1.SpeedMpS = car1.Flipped ? -SpeedMpS : SpeedMpS;
+                car1.SpeedMpS = car1.Flipped ^ (car1.IsDriveable && car1.Train.IsPlayerDriven && ((MSTSLocomotive)car1).UsingRearCab) ? -SpeedMpS : SpeedMpS;
             foreach (TrainCar car2 in otherTrain.Cars)
-                car2.SpeedMpS = car2.Flipped ? -SpeedMpS : SpeedMpS;
+                //TODO: next code line has been modified to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
+                // To achieve the same result with other means, without flipping trainset physics, the line should be changed as follows:
+                //                 car2.SpeedMpS = car2.Flipped ? -SpeedMpS : SpeedMpS;
+                car2.SpeedMpS = car2.Flipped ^ (car2.IsDriveable && car2.Train.IsPlayerDriven && ((MSTSLocomotive)car2).UsingRearCab) ? -SpeedMpS : SpeedMpS;
         }
 
 
@@ -2427,7 +3409,7 @@ namespace ORTS
         /// changes the coupler force equation for car to make the corresponding force equal to forceN
         /// <\summary>
 
-        void SetCouplerForce(TrainCar car, float forceN)
+        static void SetCouplerForce(TrainCar car, float forceN)
         {
             car.CouplerForceA = car.CouplerForceC = 0;
             car.CouplerForceB = 1;
@@ -2473,7 +3455,7 @@ namespace ORTS
         /// computes and applies coupler impulse forces which force speeds to match when no relative movement is possible
         /// <\summary>
 
-        void AddCouplerImpuseForces()
+        public void AddCouplerImpuseForces()
         {
             if (Cars.Count < 2)
                 return;
@@ -2511,13 +3493,14 @@ namespace ORTS
         /// computes coupler acceleration balancing forces
         /// <\summary>
 
-        void ComputeCouplerForces()
+        public void ComputeCouplerForces()
         {
+            // TODO: this loop could be extracted and become a separate method, that could be called also by TTTrain.physicsPreUpdate
             for (int i = 0; i < Cars.Count; i++)
                 if (Cars[i].SpeedMpS > 0)
-                    Cars[i].TotalForceN -= (Cars[i].FrictionForceN + Cars[i].BrakeForceN);
+                    Cars[i].TotalForceN -= (Cars[i].FrictionForceN + Cars[i].BrakeForceN + Cars[i].CurveForceN + Cars[i].TunnelForceN);
                 else if (Cars[i].SpeedMpS < 0)
-                    Cars[i].TotalForceN += Cars[i].FrictionForceN + Cars[i].BrakeForceN;
+                    Cars[i].TotalForceN += Cars[i].FrictionForceN + Cars[i].BrakeForceN + Cars[i].CurveForceN + Cars[i].TunnelForceN;
             if (Cars.Count < 2)
                 return;
             SetupCouplerForceEquations();
@@ -2570,12 +3553,23 @@ namespace ORTS
         /// Update Car speeds
         /// <\summary>
 
-        void UpdateCarSpeeds(float elapsedTime)
+        public void UpdateCarSpeeds(float elapsedTime)
         {
             int n = 0;
 
             foreach (TrainCar car in Cars)
             {
+                if (TrainMaxSpeedMpS <= 0f)
+                {
+                    if (car is MSTSLocomotive)
+                        TrainMaxSpeedMpS = (car as MSTSLocomotive).MaxSpeedMpS;
+                    if (car is MSTSElectricLocomotive)
+                        TrainMaxSpeedMpS = (car as MSTSElectricLocomotive).MaxSpeedMpS;
+                    if (car is MSTSDieselLocomotive)
+                        TrainMaxSpeedMpS = (car as MSTSDieselLocomotive).MaxSpeedMpS;
+                    if (car is MSTSSteamLocomotive)
+                        TrainMaxSpeedMpS = (car as MSTSSteamLocomotive).MaxSpeedMpS;
+                }
                 if (car.SpeedMpS > 0)
                 {
                     car.SpeedMpS += car.TotalForceN / car.MassKG * elapsedTime;
@@ -2599,7 +3593,7 @@ namespace ORTS
             for (int i = 0; i < Cars.Count; i++)
             {
                 TrainCar car = Cars[i];
-                if (car.SpeedMpS != 0 || car.TotalForceN <= (car.FrictionForceN + car.BrakeForceN))
+                if (car.SpeedMpS != 0 || car.TotalForceN <= (car.FrictionForceN + car.BrakeForceN + car.CurveForceN + car.TunnelForceN))
                     continue;
                 int j = i;
                 float f = 0;
@@ -2607,9 +3601,9 @@ namespace ORTS
                 for (; ; )
                 {
                     if (car.IsDriveable)
-                        f += car.TotalForceN - (car.FrictionForceN);
+                        f += car.TotalForceN - (car.FrictionForceN + car.CurveForceN + car.TunnelForceN);
                     else
-                        f += car.TotalForceN - (car.FrictionForceN + car.BrakeForceN);
+                        f += car.TotalForceN - (car.FrictionForceN + car.BrakeForceN + car.CurveForceN + car.TunnelForceN);
                     m += car.MassKG;
                     if (j == Cars.Count - 1 || car.CouplerSlackM < car.GetMaximumCouplerSlack2M())
                         break;
@@ -2629,7 +3623,7 @@ namespace ORTS
             for (int i = Cars.Count - 1; i >= 0; i--)
             {
                 TrainCar car = Cars[i];
-                if (car.SpeedMpS != 0 || car.TotalForceN > (-1.0f * (car.FrictionForceN + car.BrakeForceN)))
+                if (car.SpeedMpS != 0 || car.TotalForceN > (-1.0f * (car.FrictionForceN + car.BrakeForceN + car.CurveForceN + car.TunnelForceN)))
                     continue;
                 int j = i;
                 float f = 0;
@@ -2637,9 +3631,9 @@ namespace ORTS
                 for (; ; )
                 {
                     if (car.IsDriveable)
-                        f += car.TotalForceN + car.FrictionForceN;
+                        f += car.TotalForceN + car.FrictionForceN + car.CurveForceN + car.TunnelForceN;
                     else
-                        f += car.TotalForceN + car.FrictionForceN + car.BrakeForceN;
+                        f += car.TotalForceN + car.FrictionForceN + car.BrakeForceN + car.CurveForceN + car.TunnelForceN;
                     m += car.MassKG;
                     if (j == 0 || car.CouplerSlackM > -car.GetMaximumCouplerSlack2M())
                         break;
@@ -2659,7 +3653,7 @@ namespace ORTS
         /// Update coupler slack
         /// <\summary>
 
-        void UpdateCouplerSlack(float elapsedTime)
+        public void UpdateCouplerSlack(float elapsedTime)
         {
             TotalCouplerSlackM = 0;
             NPull = NPush = 0;
@@ -2688,7 +3682,7 @@ namespace ORTS
         /// Calculate initial position
         /// </summary>
 
-        public TCSubpathRoute CalculateInitialTrainPosition(ref bool trackClear)
+        public virtual TCSubpathRoute CalculateInitialTrainPosition(ref bool trackClear)
         {
 
             // calculate train length
@@ -2702,7 +3696,7 @@ namespace ORTS
                 {
                     trainLength += car.CouplerSlackM + car.GetCouplerZeroLengthM();
                 }
-                trainLength += car.Length;
+                trainLength += car.CarLengthM;
             }
 
             // get starting position and route
@@ -2711,7 +3705,7 @@ namespace ORTS
             float offset = RearTDBTraveller.TrackNodeOffset;
             int direction = (int)RearTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[1]);
+            PresentPosition[1].SetTCPosition(tn.TCCrossReference, offset, direction);
             TrackCircuitSection thisSection = signalRef.TrackCircuitList[PresentPosition[1].TCSectionIndex];
             offset = PresentPosition[1].TCOffset;
 
@@ -2720,7 +3714,7 @@ namespace ORTS
             if (ValidRoute[0] == null)
             {
                 ValidRoute[0] = signalRef.BuildTempRoute(this, thisSection.Index, PresentPosition[1].TCOffset,
-                            PresentPosition[1].TCDirection, trainLength, false, true, true);
+                            PresentPosition[1].TCDirection, trainLength, true, true, false);
             }
 
             // find sections
@@ -2763,7 +3757,7 @@ namespace ORTS
                     }
                     else
                     {
-                        Trace.TraceWarning("Not sufficient track to place train {0}", Number);
+                        Trace.TraceWarning("Not sufficient track to place train {0} , service name {1} ", Number, Name);
                         sectionAvailable = false;
                     }
                 }
@@ -2821,7 +3815,7 @@ namespace ORTS
         // Initial train placement
         //
 
-        public bool InitialTrainPlacement()
+        public virtual bool InitialTrainPlacement()
         {
             // for initial placement, use direction 0 only
             // set initial positions
@@ -2830,7 +3824,7 @@ namespace ORTS
             float offset = FrontTDBTraveller.TrackNodeOffset;
             int direction = (int)FrontTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[0]);
+            PresentPosition[0].SetTCPosition(tn.TCCrossReference, offset, direction);
             PresentPosition[0].CopyTo(ref PreviousPosition[0]);
 
             DistanceTravelledM = 0.0f;
@@ -2839,14 +3833,14 @@ namespace ORTS
             offset = RearTDBTraveller.TrackNodeOffset;
             direction = (int)RearTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[1]);
+            PresentPosition[1].SetTCPosition(tn.TCCrossReference, offset, direction);
 
             // check if train has route, if not create dummy
 
             if (ValidRoute[0] == null)
             {
                 ValidRoute[0] = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                        PresentPosition[1].TCDirection, Length, false, true, true);
+                        PresentPosition[1].TCDirection, Length, true, true, false);
             }
 
             // get index of first section in route
@@ -2854,7 +3848,10 @@ namespace ORTS
             int rearIndex = ValidRoute[0].GetRouteIndex(PresentPosition[1].TCSectionIndex, 0);
             if (rearIndex < 0)
             {
-                Trace.TraceWarning("Start position of end of train {0} not on route ", Number);
+                if (CheckTrain)
+                {
+                    File.AppendAllText(@"C:\temp\checktrain.txt", "Start position of end of train {0} not on route " + Number);
+                }
                 rearIndex = 0;
             }
 
@@ -2865,7 +3862,7 @@ namespace ORTS
             int frontIndex = ValidRoute[0].GetRouteIndex(PresentPosition[0].TCSectionIndex, 0);
             if (frontIndex < 0)
             {
-                Trace.TraceWarning("Start position of front of train {0} not on route ", Number);
+                Trace.TraceWarning("Start position of front of train {0}, service name {1} not on route ", Number, Name);
                 frontIndex = 0;
             }
 
@@ -2921,27 +3918,104 @@ namespace ORTS
                 return (false);
             }
 
-            // set track occupied
+            // set any deadlocks for sections ahead of start with end beyond start
+
+            for (int iIndex = 0; iIndex < rearIndex; iIndex++)
+            {
+                int rearSectionIndex = ValidRoute[0][iIndex].TCSectionIndex;
+                if (DeadlockInfo.ContainsKey(rearSectionIndex))
+                {
+                    foreach (Dictionary<int, int> thisDeadlock in DeadlockInfo[rearSectionIndex])
+                    {
+                        foreach (KeyValuePair<int, int> thisDetail in thisDeadlock)
+                        {
+                            int endSectionIndex = thisDetail.Value;
+                            if (ValidRoute[0].GetRouteIndex(endSectionIndex, rearIndex) >= 0)
+                            {
+                                TrackCircuitSection endSection = signalRef.TrackCircuitList[endSectionIndex];
+                                endSection.SetDeadlockTrap(Number, thisDetail.Key);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // set track occupied (if not done yet)
 
             foreach (TrackCircuitSection thisSection in placementSections)
             {
-                thisSection.Reserve(routedForward, ValidRoute[0]);
-                thisSection.SetOccupied(routedForward);
+                if (!thisSection.IsSet(routedForward, false))
+                {
+                    thisSection.Reserve(routedForward, ValidRoute[0]);
+                    thisSection.SetOccupied(routedForward);
+                }
             }
 
             return (true);
         }
+        //================================================================================================//
+        /// <summary>
+        /// Set Formed Occupied
+        /// Set track occupied for train formed out of other train
+        /// </summary>
+
+        public void SetFormedOccupied()
+        {
+
+            int rearIndex = PresentPosition[1].RouteListIndex;
+            int frontIndex = PresentPosition[0].RouteListIndex;
+
+            int routeIndex = rearIndex;
+
+            List<TrackCircuitSection> placementSections = new List<TrackCircuitSection>();
+
+            // route is always available as previous train was there
+
+            float offset = PresentPosition[1].TCOffset;
+            float remLength = Length;
+
+            for (int iRouteIndex = rearIndex; iRouteIndex <= frontIndex; iRouteIndex++)
+            {
+                TrackCircuitSection thisSection = signalRef.TrackCircuitList[ValidRoute[0][iRouteIndex].TCSectionIndex];
+                placementSections.Add(thisSection);
+                remLength -= (thisSection.Length - offset);
+
+                if (remLength > 0)
+                {
+                    if (routeIndex < ValidRoute[0].Count - 1)
+                    {
+                        routeIndex++;
+                        TCRouteElement thisElement = ValidRoute[0][routeIndex];
+                        thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                        offset = 0.0f;
+                    }
+                    else
+                    {
+                        Trace.TraceWarning("Not sufficient track to place train");
+                    }
+                }
+            }
+
+            // set track occupied (if not done yet)
+
+            foreach (TrackCircuitSection thisSection in placementSections)
+            {
+                if (!thisSection.IsSet(routedForward, false))
+                {
+                    thisSection.Reserve(routedForward, ValidRoute[0]);
+                    thisSection.SetOccupied(routedForward);
+                }
+            }
+        }
+
 
         //================================================================================================//
         /// <summary>
         /// Update train position
-        /// Returns indices in present route path for sections which train has entered
         /// </summary>
 
         public void UpdateTrainPosition()
         {
-            List<int> sectionsPassed = new List<int>();
-
             // update positions
 
             PresentPosition[0].CopyTo(ref PreviousPosition[0]);
@@ -2950,7 +4024,7 @@ namespace ORTS
             float offset = FrontTDBTraveller.TrackNodeOffset;
             int direction = (int)FrontTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[0]);
+            PresentPosition[0].SetTCPosition(tn.TCCrossReference, offset, direction);
             int routeIndex = ValidRoute[0].GetRouteIndex(PresentPosition[0].TCSectionIndex, 0);
             PresentPosition[0].RouteListIndex = routeIndex;
 
@@ -2958,9 +4032,12 @@ namespace ORTS
             offset = RearTDBTraveller.TrackNodeOffset;
             direction = (int)RearTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[1]);
+            PresentPosition[1].SetTCPosition(tn.TCCrossReference, offset, direction);
             routeIndex = ValidRoute[0].GetRouteIndex(PresentPosition[1].TCSectionIndex, 0);
             PresentPosition[1].RouteListIndex = routeIndex;
+
+            // get reserved length
+            ReservedTrackLengthM = GetReservedLength();
         }
 
         //================================================================================================//
@@ -2984,18 +4061,200 @@ namespace ORTS
             else if (StationStops.Count > 0)
             {
                 StationStop thisStation = StationStops[0];
+                thisStation.DistanceToTrainM = ComputeDistanceToNextStation(thisStation);
+            }
+        }
 
-                int thisSectionIndex = PresentPosition[0].TCSectionIndex;
-                TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisSectionIndex];
-                float leftInSectionM = thisSection.Length - PresentPosition[0].TCOffset;
+        //================================================================================================//
+        /// <summary>
+        /// Compute distance to next station
+        /// <\summary>
+        /// 
+        public float ComputeDistanceToNextStation(StationStop thisStation)
+        {
+            int thisSectionIndex = PresentPosition[0].TCSectionIndex;
+            TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisSectionIndex];
+            float leftInSectionM = thisSection.Length - PresentPosition[0].TCOffset;
+            float distanceToTrainM = -1;
+            int stationIndex;
 
+            if (thisStation.SubrouteIndex > TCRoute.activeSubpath && !Simulator.TimetableMode)
+            // if the station is in a further subpath, distance computation is longer
+            {
+                // first compute distance up to end or reverse point of activeSubpath. To be restudied for subpaths with no reversal
+                if (TCRoute.ReversalInfo[TCRoute.activeSubpath].Valid)
+                    distanceToTrainM = ComputeDistanceToReversalPoint();
+                else
+                {
+                    int lastSectionRouteIndex = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath].Count - 1;
+                    float lastSectionLength = signalRef.TrackCircuitList[TCRoute.TCRouteSubpaths[TCRoute.activeSubpath][lastSectionRouteIndex].TCSectionIndex].Length;
+                    distanceToTrainM = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath].GetDistanceAlongRoute(PresentPosition[0].RouteListIndex,
+                 leftInSectionM, lastSectionRouteIndex, lastSectionLength, true, signalRef);
+                }
+                float lengthOfIntSubpath = 0;
+                int firstSection = 0;
+                float firstSectionOffsetToGo = 0;
+                int lastSection = 0;
+                float lastSectionOffsetToGo = 0;
+                int tempSectionTCSectionIndex;
+                if (distanceToTrainM >= 0)
+                {
+
+                    // compute length of intermediate subpaths, if any, from reversal or section at beginning to reversal or section at end
+
+                    for (int iSubpath = TCRoute.activeSubpath + 1; iSubpath < thisStation.SubrouteIndex; iSubpath++)
+                    {
+                        if (TCRoute.ReversalInfo[iSubpath - 1].Valid)
+                        // skip sections before reversal at beginning of path
+                        {
+                            for (int iSection = 0; iSection < TCRoute.TCRouteSubpaths[iSubpath].Count; iSection++)
+                            {
+                                if (TCRoute.TCRouteSubpaths[iSubpath][iSection].TCSectionIndex == TCRoute.ReversalInfo[iSubpath - 1].ReversalSectionIndex)
+                                {
+                                    firstSection = iSection;
+                                    firstSectionOffsetToGo = TCRoute.ReversalInfo[iSubpath - 1].ReverseReversalOffset;
+                                    break;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            for (int iSection = 0; iSection < TCRoute.TCRouteSubpaths[iSubpath].Count; iSection++)
+                            {
+                                if (TCRoute.TCRouteSubpaths[iSubpath][iSection].TCSectionIndex ==
+                                    TCRoute.TCRouteSubpaths[iSubpath - 1][TCRoute.TCRouteSubpaths[iSubpath - 1].Count - 1].TCSectionIndex)
+                                {
+                                    firstSection = iSection + 1;
+                                    tempSectionTCSectionIndex = TCRoute.TCRouteSubpaths[iSubpath][firstSection].TCSectionIndex;
+                                    firstSectionOffsetToGo = signalRef.TrackCircuitList[tempSectionTCSectionIndex].Length;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (TCRoute.ReversalInfo[iSubpath].Valid)
+                        // skip sections before reversal at beginning of path
+                        {
+                            for (int iSection = TCRoute.TCRouteSubpaths[iSubpath].Count - 1; iSection >= 0; iSection--)
+                            {
+                                if (TCRoute.TCRouteSubpaths[iSubpath][iSection].TCSectionIndex == TCRoute.ReversalInfo[iSubpath].ReversalSectionIndex)
+                                {
+                                    lastSection = iSection;
+                                    lastSectionOffsetToGo = TCRoute.ReversalInfo[iSubpath].ReverseReversalOffset;
+                                    break;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            lastSection = TCRoute.TCRouteSubpaths[iSubpath].Count - 1;
+                            tempSectionTCSectionIndex = TCRoute.TCRouteSubpaths[iSubpath][lastSection].TCSectionIndex;
+                            lastSectionOffsetToGo = signalRef.TrackCircuitList[tempSectionTCSectionIndex].Length;
+                        }
+
+                        lengthOfIntSubpath = TCRoute.TCRouteSubpaths[iSubpath].GetDistanceAlongRoute(firstSection,
+                            firstSectionOffsetToGo, lastSection, lastSectionOffsetToGo, true, signalRef);
+                        if (lengthOfIntSubpath < 0)
+                        {
+                            distanceToTrainM = -1;
+                            break;
+                        }
+                        distanceToTrainM += lengthOfIntSubpath;
+                    }
+                }
+                if (distanceToTrainM >= 0)
+                {
+                    // finally compute distance from start of station subpath up to station
+                    if (TCRoute.ReversalInfo[thisStation.SubrouteIndex - 1].Valid)
+                    // skip sections before reversal at beginning of path
+                    {
+                        for (int iSection = 0; iSection < TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex].Count; iSection++)
+                        {
+                            if (TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex][iSection].TCSectionIndex == TCRoute.ReversalInfo[thisStation.SubrouteIndex - 1].ReversalSectionIndex)
+                            {
+                                firstSection = iSection;
+                                firstSectionOffsetToGo = TCRoute.ReversalInfo[thisStation.SubrouteIndex - 1].ReverseReversalOffset;
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (int iSection = 0; iSection < TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex].Count; iSection++)
+                        {
+                            if (TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex][iSection].TCSectionIndex ==
+                                TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex - 1][TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex - 1].Count - 1].TCSectionIndex)
+                            {
+                                firstSection = iSection + 1;
+                                tempSectionTCSectionIndex = TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex][firstSection].TCSectionIndex;
+                                firstSectionOffsetToGo = signalRef.TrackCircuitList[tempSectionTCSectionIndex].Length;
+                                break;
+                            }
+                        }
+                    }
+
+                    stationIndex = thisStation.RouteIndex;
+                    float distanceFromStartOfsubPath = TCRoute.TCRouteSubpaths[thisStation.SubrouteIndex].GetDistanceAlongRoute(firstSection,
+                        firstSectionOffsetToGo, stationIndex, thisStation.StopOffset, true, signalRef);
+                    if (distanceFromStartOfsubPath < 0) distanceToTrainM = -1;
+                    else distanceToTrainM += distanceFromStartOfsubPath;
+                }
+            }
+
+            else
+            {
+                // No enhanced compatibility, simple computation
                 // if present position off route, try rear position
                 // if both off route, skip station stop
-                int stationIndex = ValidRoute[0].GetRouteIndex(thisStation.TCSectionIndex, PresentPosition[0].RouteListIndex);
-                float distanceToTrainM = ValidRoute[0].GetDistanceAlongRoute(PresentPosition[0].RouteListIndex,
+                stationIndex = ValidRoute[0].GetRouteIndex(thisStation.TCSectionIndex, PresentPosition[0].RouteListIndex);
+                distanceToTrainM = ValidRoute[0].GetDistanceAlongRoute(PresentPosition[0].RouteListIndex,
                     leftInSectionM, stationIndex, thisStation.StopOffset, true, signalRef);
+            }
+            return distanceToTrainM;
+        }
 
-                thisStation.DistanceToTrainM = distanceToTrainM;
+
+        //================================================================================================//
+        /// <summary>
+        /// Compute distance to reversal point
+        /// <\summary>
+
+        public float ComputeDistanceToReversalPoint()
+        {
+
+
+            float lengthToGoM = -PresentPosition[0].TCOffset;
+            TrackCircuitSection thisSection;
+            int reversalRouteIndex = ValidRoute[0].GetRouteIndex(TCRoute.ReversalInfo[TCRoute.activeSubpath].ReversalSectionIndex, PresentPosition[0].RouteListIndex);
+            if (PresentPosition[0].RouteListIndex == -1) return -1;
+            if (PresentPosition[0].RouteListIndex <= reversalRouteIndex)
+            {
+                for (int iElement = PresentPosition[0].RouteListIndex; iElement < ValidRoute[0].Count; iElement++)
+                {
+                    TCRouteElement thisElement = ValidRoute[0][iElement];
+                    thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                    if (thisSection.Index == TCRoute.ReversalInfo[TCRoute.activeSubpath].ReversalSectionIndex)
+                    {
+                        break;
+                    }
+                    else lengthToGoM += thisSection.Length;
+                }
+                return lengthToGoM += TCRoute.ReversalInfo[TCRoute.activeSubpath].ReverseReversalOffset;
+            }
+            else
+            {
+                for (int iElement = PresentPosition[0].RouteListIndex - 1; iElement >= 0; iElement--)
+                {
+                    TCRouteElement thisElement = ValidRoute[0][iElement];
+                    thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                    if (thisSection.Index == TCRoute.ReversalInfo[TCRoute.activeSubpath].ReversalSectionIndex)
+                    {
+                        break;
+                    }
+                    else lengthToGoM -= thisSection.Length;
+                }
+                return lengthToGoM += TCRoute.ReversalInfo[TCRoute.activeSubpath].ReverseReversalOffset -
+                    signalRef.TrackCircuitList[TCRoute.ReversalInfo[TCRoute.activeSubpath].ReversalSectionIndex].Length;
             }
         }
 
@@ -3014,6 +4273,12 @@ namespace ORTS
                 {
                     PerformActions(nowActions);
                 }
+                nowActions = AuxActionsContain.specRequiredActions.GetAuxActions(this, DistanceTravelledM);
+
+                if (nowActions.Count > 0)
+                {
+                    PerformActions(nowActions);
+                }
             }
         }
 
@@ -3026,12 +4291,16 @@ namespace ORTS
         public void UpdateSectionState(int backward)
         {
 
-            List<int> sectionList = new List<int>();
+            List<int[]> sectionList = new List<int[]>();
 
             int lastIndex = PreviousPosition[0].RouteListIndex;
-            float lastOffset = PreviousPosition[0].TCOffset;
             int presentIndex = PresentPosition[0].RouteListIndex;
-            float presentOffset = PresentPosition[0].TCOffset;
+
+            int lastDTM = Convert.ToInt32(PreviousPosition[0].DistanceTravelledM);
+            TrackCircuitSection lastSection = signalRef.TrackCircuitList[PreviousPosition[0].TCSectionIndex];
+            int lastDTatEndLastSectionM = lastDTM + Convert.ToInt32(lastSection.Length - PreviousPosition[0].TCOffset);
+
+            int presentDTM = Convert.ToInt32(DistanceTravelledM);
 
             // don't bother with update if train out of control - all will be reset when train is stopped
 
@@ -3056,18 +4325,17 @@ namespace ORTS
                 {
                     int sectionIndex;
                     TrackCircuitSection thisSection;
-                    float offset = PreviousPosition[0].TCOffset;
 
                     for (int iIndex = lastIndex; iIndex > presentIndex; iIndex--)
                     {
                         sectionIndex = ValidRoute[0][iIndex].TCSectionIndex;
-                        sectionList.Add(iIndex);
+                        sectionList.Add(new int[2] { iIndex, presentDTM });
                         thisSection = signalRef.TrackCircuitList[sectionIndex];
                     }
 
                     sectionIndex = ValidRoute[0][presentIndex].TCSectionIndex;
                     thisSection = signalRef.TrackCircuitList[sectionIndex];
-                    sectionList.Add(presentIndex);
+                    sectionList.Add(new int[2] { presentIndex, presentDTM });
                 }
             }
 
@@ -3082,28 +4350,33 @@ namespace ORTS
 
                     sectionIndex = ValidRoute[0][lastIndex].TCSectionIndex;
                     thisSection = signalRef.TrackCircuitList[sectionIndex];
+                    int lastValidDTM = lastDTatEndLastSectionM;
 
                     for (int iIndex = lastIndex + 1; iIndex < presentIndex; iIndex++)
                     {
                         sectionIndex = ValidRoute[0][iIndex].TCSectionIndex;
-                        sectionList.Add(iIndex);
+                        sectionList.Add(new int[2] { iIndex, lastValidDTM });
                         thisSection = signalRef.TrackCircuitList[sectionIndex];
+                        lastValidDTM += Convert.ToInt32(thisSection.Length);
                     }
 
                     sectionIndex = ValidRoute[0][presentIndex].TCSectionIndex;
-                    sectionList.Add(presentIndex);
+                    sectionList.Add(new int[2] { presentIndex, presentDTM });
                 }
             }
 
             // set section states, for AUTOMODE use direction 0 only
 
-            foreach (int routeListIndex in sectionList)
+            foreach (int[] routeListIndex in sectionList)
             {
-                int sectionIndex = ValidRoute[0][routeListIndex].TCSectionIndex;
+                int sectionIndex = ValidRoute[0][routeListIndex[0]].TCSectionIndex;
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[sectionIndex];
                 if (!thisSection.CircuitState.ThisTrainOccupying(routedForward))
                 {
-                    thisSection.SetOccupied(routedForward);
+                    thisSection.SetOccupied(routedForward, routeListIndex[1]);
+
+                    // additional actions for child classes
+                    UpdateSectionState_Additional(sectionIndex);
                 }
             }
         }
@@ -3120,13 +4393,15 @@ namespace ORTS
             if (NextSignalObject[direction] != null)
             {
 
-                TrackCircuitSection nextSection = signalRef.TrackCircuitList[NextSignalObject[direction].TCNextTC];
                 while (NextSignalObject[direction] != null && !ValidRoute[direction].SignalIsAheadOfTrain(NextSignalObject[direction], trainPosition)) // signal not in front //
                 {
+                    // correct route index if necessary
+                    int correctedRouteIndex = ValidRoute[0].GetRouteIndex(trainPreviousPos.TCSectionIndex, 0);
+                    if (correctedRouteIndex >= 0) trainPreviousPos.RouteListIndex = correctedRouteIndex;
                     // check if train really went passed signal in correct direction
                     if (ValidRoute[direction].SignalIsAheadOfTrain(NextSignalObject[direction], trainPreviousPos)) // train was in front on last check, so we did pass
                     {
-                        SignalHead.SIGASP signalState = GetNextSignalAspect(direction);
+                        MstsSignalAspect signalState = GetNextSignalAspect(direction);
                         passedSignalIndex = NextSignalObject[direction].thisRef;
 
 #if DEBUG_REPORTS
@@ -3149,7 +4424,7 @@ namespace ORTS
                             File.AppendAllText(@"C:\temp\checktrain.txt", reportCT + "\n");
                         }
 
-                        if (signalState == SignalHead.SIGASP.STOP && NextSignalObject[direction].hasPermission == SignalObject.PERMISSION.DENIED)
+                        if (signalState == MstsSignalAspect.STOP && NextSignalObject[direction].hasPermission == SignalObject.Permission.Denied)
                         {
                             Trace.TraceWarning("Train {0} passing signal {1} at {2} at danger at {3}",
                                Number.ToString(), NextSignalObject[direction].thisRef.ToString(),
@@ -3158,12 +4433,12 @@ namespace ORTS
                             break;
                         }
 
-                        else if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL && NextSignalObject[direction].sigfound[(int)SignalHead.SIGFN.NORMAL] < 0) // no next signal
+                        else if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL && NextSignalObject[direction].sigfound[(int)MstsSignalFunction.NORMAL] < 0) // no next signal
                         {
                             SwitchToNodeControl(LastReservedSection[direction]);
 #if DEBUG_REPORTS
-                        File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
-                                        " set to NODE control for no next signal from " + NextSignalObject[direction].thisRef.ToString() + "\n");
+                            File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
+                                            " set to NODE control for no next signal from " + NextSignalObject[direction].thisRef.ToString() + "\n");
 #endif
                             if (CheckTrain)
                             {
@@ -3172,12 +4447,12 @@ namespace ORTS
                             }
                             break;
                         }
-                        else if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL && NextSignalObject[direction].block_state() != SignalObject.BLOCKSTATE.CLEAR) // route to next signal not clear
+                        else if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL && NextSignalObject[direction].block_state() != MstsBlockState.CLEAR) // route to next signal not clear
                         {
                             SwitchToNodeControl(LastReservedSection[direction]);
 #if DEBUG_REPORTS
-                        File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
-                                        " set to NODE control for route to next signal not clear from " + NextSignalObject[direction].thisRef.ToString() + "\n");
+                            File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
+                                            " set to NODE control for route to next signal not clear from " + NextSignalObject[direction].thisRef.ToString() + "\n");
 #endif
                             if (CheckTrain)
                             {
@@ -3186,18 +4461,17 @@ namespace ORTS
                             }
                             break;
                         }
-                    }
 
-                    // get next signal
-                    int nextSignalIndex = NextSignalObject[direction].sigfound[(int)SignalHead.SIGFN.NORMAL];
-                    if (nextSignalIndex >= 0)
-                    {
-                        NextSignalObject[direction] = signalRef.SignalObjects[nextSignalIndex];
-                        nextSection = signalRef.TrackCircuitList[NextSignalObject[direction].TCNextTC];
-                    }
-                    else
-                    {
-                        NextSignalObject[direction] = null;
+                        // get next signal
+                        int nextSignalIndex = NextSignalObject[direction].sigfound[(int)MstsSignalFunction.NORMAL];
+                        if (nextSignalIndex >= 0)
+                        {
+                            NextSignalObject[direction] = signalRef.SignalObjects[nextSignalIndex];
+                        }
+                        else
+                        {
+                            NextSignalObject[direction] = null;
+                        }
                     }
                 }
             }
@@ -3283,9 +4557,9 @@ namespace ORTS
                     overlapPosition.TCDirection = overlapPosition.TCDirection == 0 ? 1 : 0; // looking backwards, so reverse direction
 
                     TrackCircuitSection rearSection = signalRef.TrackCircuitList[RearSignalObject.TCNextTC];
-                    if (!ValidRoute[0].IsAheadOfTrain(rearSection, 0.0f, overlapPosition))
+                    if (!TCSubpathRoute.IsAheadOfTrain(rearSection, 0.0f, overlapPosition))
                     {
-                        if (RearSignalObject.this_sig_lr(SignalHead.SIGFN.NORMAL) == SignalHead.SIGASP.STOP)
+                        if (RearSignalObject.this_sig_lr(MstsSignalFunction.NORMAL) == MstsSignalAspect.STOP)
                         {
                             SetTrainOutOfControl(OUTOFCONTROL.SPAD_REAR);
                             outOfControl = true;
@@ -3329,19 +4603,19 @@ namespace ORTS
                                     List<TrainRouted> trainsInSection = nextSection.CircuitState.TrainsOccupying();
                                     foreach (TrainRouted nextTrain in trainsInSection)
                                     {
-                                        nextTrain.Train.ForcedStop("Other train is blocking path", Number);
+                                        nextTrain.Train.ForcedStop(Viewer.Catalog.GetString("Other train is blocking path"), Number);
                                     }
 
                                     if (nextSection.CircuitState.TrainReserved != null)
                                     {
-                                        nextSection.CircuitState.TrainReserved.Train.ForcedStop("Other train is blocking path", Number);
+                                        nextSection.CircuitState.TrainReserved.Train.ForcedStop(Viewer.Catalog.GetString("Other train is blocking path"), Number);
                                     }
                                 }
                                 else
                                 {
                                     clearPath += nextSection.Length;
                                     thisSection = nextSection;
-                                    if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                                    if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.EndOfTrack)
                                     {
                                         SetTrainOutOfControl(OUTOFCONTROL.SLIPPED_TO_ENDOFTRACK);
                                         outOfControl = true;
@@ -3381,7 +4655,7 @@ namespace ORTS
         /// </summary>
         //
 
-        public void CheckRouteActions(float elapsedClockSeconds)
+        public virtual void CheckRouteActions(float elapsedClockSeconds)
         {
             int directionNow = PresentPosition[0].TCDirection;
             int positionNow = PresentPosition[0].TCSectionIndex;
@@ -3389,6 +4663,8 @@ namespace ORTS
             if (PresentPosition[0].RouteListIndex >= 0) directionNow = ValidRoute[0][PresentPosition[0].RouteListIndex].Direction;
 
             bool[] nextRoute = UpdateRouteActions(elapsedClockSeconds);
+
+            AuxActionsContain.SetAuxAction(this);
             if (!nextRoute[0]) return;  // not at end of route
 
             // check if train reversed
@@ -3397,11 +4673,15 @@ namespace ORTS
             {
                 if (positionNow == PresentPosition[0].TCSectionIndex && directionNow != PresentPosition[0].TCDirection)
                 {
-                    ReverseFormation(true);
+                    ReverseFormation(IsActualPlayerTrain);
+                    // active subpath must be incremented in parallel in incorporated train if present
+                    if (IncorporatedTrainNo >= 0) IncrementSubpath(Simulator.TrainDictionary[IncorporatedTrainNo]);
                 }
                 else if (positionNow == PresentPosition[1].TCSectionIndex && directionNow != PresentPosition[1].TCDirection)
                 {
-                    ReverseFormation(true);
+                    ReverseFormation(IsActualPlayerTrain);
+                    // active subpath must be incremented in parallel in incorporated train if present
+                    if (IncorporatedTrainNo >= 0) IncrementSubpath(Simulator.TrainDictionary[IncorporatedTrainNo]);
                 }
             }
 
@@ -3418,6 +4698,7 @@ namespace ORTS
 
         }
 
+
         //================================================================================================//
         /// <summary>
         /// Check for end of route actions
@@ -3429,7 +4710,6 @@ namespace ORTS
 
         public bool[] UpdateRouteActions(float elapsedClockSeconds)
         {
-
             bool endOfRoute = false;
             bool[] returnState = new bool[2] { false, false };
 
@@ -3445,6 +4725,42 @@ namespace ORTS
                 }
             }
 
+            // check if train in loop
+            // if so, forward to next subroute and continue
+
+            if (TCRoute != null && (ControlMode == TRAIN_CONTROL.AUTO_NODE || ControlMode == TRAIN_CONTROL.AUTO_SIGNAL) && TCRoute.LoopEnd[TCRoute.activeSubpath] >= 0)
+            {
+                int loopSectionIndex = ValidRoute[0].GetRouteIndex(TCRoute.LoopEnd[TCRoute.activeSubpath], 0);
+
+                if (loopSectionIndex >= 0 && PresentPosition[1].RouteListIndex > loopSectionIndex)
+                {
+                    int frontSection = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath][PresentPosition[0].RouteListIndex].TCSectionIndex;
+                    int rearSection = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath][PresentPosition[1].RouteListIndex].TCSectionIndex;
+
+                    TCRoute.activeSubpath++;
+                    ValidRoute[0] = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath];
+
+                    PresentPosition[0].RouteListIndex = ValidRoute[0].GetRouteIndex(frontSection, 0);
+                    PresentPosition[1].RouteListIndex = ValidRoute[0].GetRouteIndex(rearSection, 0);
+
+                    // Invalidate preceding section indexes to avoid wrong indexing when building route forward (in Reserve())
+
+                    for (int routeListIndex = 0; routeListIndex < PresentPosition[1].RouteListIndex; routeListIndex++)
+                    {
+                        ValidRoute[0][routeListIndex].TCSectionIndex = -1;
+                    }
+                    returnState[0] = true;
+                    returnState[1] = true;
+                    return (returnState);
+                }
+
+                // if loopend no longer on this valid route, remove loopend indication
+                else if (loopSectionIndex < 0)
+                {
+                    TCRoute.LoopEnd[TCRoute.activeSubpath] = -1;
+                }
+            }
+
             // can only be performed if train is stationary
 
             if (Math.Abs(SpeedMpS) > 0.01)
@@ -3453,11 +4769,12 @@ namespace ORTS
             // check position in relation to present end of path
 
             if (ControlMode == TRAIN_CONTROL.AUTO_NODE &&
-                (EndAuthorityType[0] == END_AUTHORITY.END_OF_TRACK ||
-                 EndAuthorityType[0] == END_AUTHORITY.END_OF_PATH))
+                (EndAuthorityType[0] == END_AUTHORITY.END_OF_TRACK || EndAuthorityType[0] == END_AUTHORITY.END_OF_PATH) ||
+                !Simulator.TimetableMode)
             {
                 // front is in last route section
-                if (PresentPosition[0].RouteListIndex == (ValidRoute[0].Count - 1))
+                if (PresentPosition[0].RouteListIndex == (ValidRoute[0].Count - 1) && (Simulator.TimetableMode ||
+                    (!TCRoute.ReversalInfo[TCRoute.activeSubpath].Valid && TCRoute.activeSubpath < TCRoute.TCRouteSubpaths.Count - 1)))
                 {
                     endOfRoute = true;
                 }
@@ -3468,31 +4785,45 @@ namespace ORTS
                     float lengthToGo = thisSection.Length - PresentPosition[0].TCOffset;
 
                     bool junctionFound = false;
-                    for (int iIndex = PresentPosition[0].RouteListIndex + 1; iIndex < ValidRoute[0].Count && !junctionFound; iIndex++)
+                    if (Simulator.TimetableMode || TCRoute.activeSubpath < TCRoute.TCRouteSubpaths.Count - 1)
                     {
-                        thisSection = signalRef.TrackCircuitList[ValidRoute[0][iIndex].TCSectionIndex];
-                        junctionFound = thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION;
-                        lengthToGo += thisSection.Length;
+                        for (int iIndex = PresentPosition[0].RouteListIndex + 1; iIndex < ValidRoute[0].Count && !junctionFound; iIndex++)
+                        {
+                            thisSection = signalRef.TrackCircuitList[ValidRoute[0][iIndex].TCSectionIndex];
+                            junctionFound = thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction;
+                            lengthToGo += thisSection.Length;
+                        }
                     }
+                    else lengthToGo = ComputeDistanceToReversalPoint();
+                    float compatibilityNegligibleRouteChunk = ((TrainType == TRAINTYPE.AI || TrainType == TRAINTYPE.AI_PLAYERHOSTING)
+                        && TCRoute.TCRouteSubpaths.Count - 1 == TCRoute.activeSubpath) ? 40f : 5f;
+                    float negligibleRouteChunk = (Simulator.TimetableMode) ? 150f : compatibilityNegligibleRouteChunk;
 
-                    if (lengthToGo < 150f && !junctionFound)
+                    if (lengthToGo < negligibleRouteChunk && !junctionFound &&
+                        (Simulator.TimetableMode || !TCRoute.ReversalInfo[TCRoute.activeSubpath].Valid))
                     {
                         endOfRoute = true;
                     }
                 }
             }
-
+            //<CSComment: check of vicinity to reverse point; only in subpaths ending with reversal
+            if (!Simulator.TimetableMode && TCRoute.ReversalInfo[TCRoute.activeSubpath].Valid)
+            {
+                float distanceToReversalPoint = ComputeDistanceToReversalPoint();
+                if (distanceToReversalPoint < 50 && PresentPosition[1].RouteListIndex >= reversalSectionIndex)
+                    endOfRoute = true;
+            }
             // other checks unrelated to state
             if (!endOfRoute)
             {
                 // if last entry in route is END_OF_TRACK, check against previous entry as this can never be the trains position nor a signal reference section
                 int lastValidRouteIndex = ValidRoute[0].Count - 1;
-                if (signalRef.TrackCircuitList[ValidRoute[0][lastValidRouteIndex].TCSectionIndex].CircuitType == TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                if (signalRef.TrackCircuitList[ValidRoute[0][lastValidRouteIndex].TCSectionIndex].CircuitType == TrackCircuitSection.TrackCircuitType.EndOfTrack)
                     lastValidRouteIndex--;
-                
+
                 // if end of train on last section in route - end of route reached
 
-                if (PresentPosition[1].RouteListIndex == lastValidRouteIndex)
+                if (PresentPosition[1].RouteListIndex == lastValidRouteIndex && (Simulator.TimetableMode))
                 {
                     endOfRoute = true;
                 }
@@ -3500,7 +4831,8 @@ namespace ORTS
                 // if waiting for next signal and section in front of signal is last in route - end of route reached
 
                 if (NextSignalObject[0] != null && PresentPosition[0].TCSectionIndex == NextSignalObject[0].TCReference &&
-                     NextSignalObject[0].TCReference == ValidRoute[0][lastValidRouteIndex].TCSectionIndex)
+                     NextSignalObject[0].TCReference == ValidRoute[0][lastValidRouteIndex].TCSectionIndex &&
+                     Simulator.TimetableMode)
                 {
                     endOfRoute = true;
                 }
@@ -3514,7 +4846,8 @@ namespace ORTS
 
                 // if rear of train is beyond reversal section
 
-                else if (reversalSectionIndex >= 0 && PresentPosition[1].RouteListIndex >= reversalSectionIndex)
+                else if (reversalSectionIndex >= 0 && PresentPosition[1].RouteListIndex >= reversalSectionIndex &&
+                    Simulator.TimetableMode)
                 {
                     endOfRoute = true;
                 }
@@ -3527,7 +4860,7 @@ namespace ORTS
                     bool intermediateSignal = false;
                     float length = 0f;
                     float distanceToNextJunction = -1f;
-                    float distanceToNextSignal   = -1f;
+                    float distanceToNextSignal = -1f;
 
                     if (PresentPosition[1].RouteListIndex >= 0) // end of train is on route
                     {
@@ -3540,7 +4873,7 @@ namespace ORTS
                             distanceToNextSignal = length + Length; // distance is total length plus train length (must be re-compensated)
                         }
 
-                        if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION || thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                        if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction || thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                         {
                             intermediateJunction = true;
                             distanceToNextJunction = 0f;
@@ -3551,8 +4884,8 @@ namespace ORTS
                             thisSection = signalRef.TrackCircuitList[ValidRoute[0][iIndex].TCSectionIndex];
                             length += thisSection.Length;
 
-                            if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION ||
-                                thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                            if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction ||
+                                thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                             {
                                 intermediateJunction = true;
                                 distanceToNextJunction = distanceToNextJunction < 0 ? length : distanceToNextJunction;
@@ -3589,8 +4922,8 @@ namespace ORTS
                             TrackCircuitSection thisSection = signalRef.TrackCircuitList[ValidRoute[0][iIndex].TCSectionIndex];
                             int direction = ValidRoute[0][iIndex].Direction;
 
-                            if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION ||
-                                thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                            if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction ||
+                                thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                             {
                                 intermediateJunction = true;
                             }
@@ -3604,15 +4937,15 @@ namespace ORTS
 
                     // check overall position
 
-                    if (!intermediateJunction && !intermediateSignal)  // no more junctions and no more signal - reverse subpath
+                    if (!intermediateJunction && !intermediateSignal && Simulator.TimetableMode)  // no more junctions and no more signal - reverse subpath
                     {
                         endOfRoute = true;
                     }
 
-//                    if (length < Length && !intermediateJunction)  // no more junctions and short track - reverse subpath
-//                    {
-//                        endOfRoute = true;
-//                    }
+                    //                    if (length < Length && !intermediateJunction)  // no more junctions and short track - reverse subpath
+                    //                    {
+                    //                        endOfRoute = true;
+                    //                    }
                 }
             }
             // not end of route - no action
@@ -3622,33 +4955,7 @@ namespace ORTS
                 return (returnState);
             }
 
-            // if end of route and waiting point, check or set waiting time (PLAYER only, AI uses station stop)
-
-            if (endOfRoute && TrainType == TRAINTYPE.PLAYER)
-            {
-                if (waitingPointWaitTimeS > 0)
-                {
-                    waitingPointWaitTimeS -= elapsedClockSeconds;
-                    endOfRoute = false;
-                }
-                else if (waitingPointWaitTimeS < 0)
-                {
-                    for (int iWP = 0; iWP <= TCRoute.WaitingPoints.Count - 1; iWP++)
-                    {
-                        if (TCRoute.WaitingPoints[iWP][0] == TCRoute.activeSubpath)
-                        {
-                            waitingPointWaitTimeS = TCRoute.WaitingPoints[iWP][2];   // TODO : if absolute time set, use that
-                            endOfRoute = false;
-                            TCRoute.WaitingPoints[iWP][0] = -1; // invalidate waiting point
-
-                            if (TCRoute.WaitingPoints[iWP][4] > 0) // clear holding signal
-                            {
-                                if (HoldingSignals.Contains(TCRoute.WaitingPoints[iWP][4])) HoldingSignals.Remove(TCRoute.WaitingPoints[iWP][4]);
-                            }
-                        }
-                    }
-                }
-            }
+            // <CSComment> TODO: check if holding signals correctly released in case of reversal point between WP and signal
 
             // if next subpath available : check if it can be activated
 
@@ -3701,7 +5008,7 @@ namespace ORTS
                             {
                                 int thisSectionIndex = nextRoute[iIndex].TCSectionIndex;
                                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisSectionIndex];
-                                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                                 {
                                     junctionFound = true;
                                     if (thisSection.CircuitState.ThisTrainOccupying(this))
@@ -3761,12 +5068,15 @@ namespace ORTS
                                     "Train " + Number.ToString() + " at end of path\n");
                 }
 
-
                 int nextIndex = PresentPosition[0].RouteListIndex + 1;
                 if (nextIndex <= (ValidRoute[0].Count - 1))
                 {
                     signalRef.BreakDownRoute(ValidRoute[0][nextIndex].TCSectionIndex, routedForward);
                 }
+
+                // clear any remaining deadlocks
+                ClearDeadlocks();
+                DeadlockInfo.Clear();
             }
 
             // if next route available : reverse train, reset and reinitiate signals
@@ -3807,8 +5117,6 @@ namespace ORTS
 
                 // perform any remaining actions of type clear section (except sections now occupied)
 
-                ClearSectionItem dummyItem = new ClearSectionItem(0.0f, 0);
-
 #if DEBUG_REPORTS
                 int nextSubpath = TCRoute.activeSubpath + 1;
                 File.AppendAllText(@"C:\temp\printproc.txt",
@@ -3826,25 +5134,38 @@ namespace ORTS
                 // reset old actions
                 ClearActiveSectionItems();
 
+                if (CheckTrain)
+                {
+                    File.AppendAllText(@"C:\temp\checktrain.txt", "* Remaining active items : \n");
+                    LinkedListNode<DistanceTravelledItem> nextNode = requiredActions.First;
+                    while (nextNode != null)
+                    {
+                        File.AppendAllText(@"C:\temp\checktrain.txt",
+                            " -- Distance : " + nextNode.Value.RequiredDistance + " ; Type : " + nextNode.Value.GetType().ToString() + "\n");
+                        nextNode = nextNode.Next;
+                    }
+                }
+
                 // set new route
                 TCRoute.activeSubpath++;
                 ValidRoute[0] = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath];
+
+
                 TCRoute.SetReversalOffset(Length);
 
                 // clear existing list of occupied track, and build new list
-                for (int iSection = OccupiedTrack.Count() - 1; iSection >= 0; iSection--)
+                for (int iSection = OccupiedTrack.Count - 1; iSection >= 0; iSection--)
                 {
                     TrackCircuitSection thisSection = OccupiedTrack[iSection];
                     thisSection.ResetOccupied(this);
 
                 }
                 int rearIndex = PresentPosition[1].RouteListIndex;
-                int frontIndex = PresentPosition[0].RouteListIndex;
 
                 if (rearIndex < 0) // end of train not on new route
                 {
                     TCSubpathRoute tempRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                        PresentPosition[1].TCDirection, Length, false, false, true);
+                        PresentPosition[1].TCDirection, Length, false, true, false);
 
                     for (int iIndex = 0; iIndex < tempRoute.Count; iIndex++)
                     {
@@ -3864,7 +5185,6 @@ namespace ORTS
                 // Check deadlock against all other trains
                 CheckDeadlock(ValidRoute[0], Number);
 
-
                 // reset signal information
 
                 SignalObjectItems.Clear();
@@ -3873,6 +5193,14 @@ namespace ORTS
                 InitializeSignals(true);
 
                 LastReservedSection[0] = PresentPosition[0].TCSectionIndex;
+
+                // clear claims of any trains which have claimed present occupied sections upto common point - this avoids deadlocks
+                // trains may have claimed while train was reversing
+
+                TrackCircuitSection presentSection = signalRef.TrackCircuitList[LastReservedSection[0]];
+                presentSection.ClearReversalClaims(routedForward);
+
+                // switch to NODE mode
                 if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL)
                 {
                     SwitchToNodeControl(PresentPosition[0].TCSectionIndex);
@@ -3905,13 +5233,11 @@ namespace ORTS
                         UpdateNodeMode();
                         break;
                     }
-                case (TRAIN_CONTROL.MANUAL):
-                    {
-                        break;   // called directly
-                    }
                 case (TRAIN_CONTROL.OUT_OF_CONTROL):
                     {
                         UpdateOutOfControl();
+                        if (LeadLocomotive != null)
+                            ((MSTSLocomotive)LeadLocomotive).SetEmergency(true);
                         break;
                     }
                 case (TRAIN_CONTROL.UNDEFINED):
@@ -3919,17 +5245,21 @@ namespace ORTS
                         SwitchToNodeControl(-1);
                         break;
                     }
+
+                // other modes are processed directly
+                default:
+                    break;
             }
 
             // reset signal which we've just passed
 
             if (signalObjectIndex >= 0)
             {
-                SignalObject signalObject = signalRef.SignalObjects[signalObjectIndex];
+                var signalObject = signalRef.SignalObjects[signalObjectIndex];
 
                 //the following is added by JTang, passing a hold signal, will take back control by the system
-                if (signalObject.holdState == SignalObject.HOLDSTATE.MANUAL_PASS ||
-                    signalObject.holdState == SignalObject.HOLDSTATE.MANUAL_APPROACH) signalObject.holdState = SignalObject.HOLDSTATE.NONE;
+                if (signalObject.holdState == SignalObject.HoldState.ManualPass ||
+                    signalObject.holdState == SignalObject.HoldState.ManualApproach) signalObject.holdState = SignalObject.HoldState.None;
 
                 signalObject.resetSignalEnabled();
             }
@@ -3958,29 +5288,55 @@ namespace ORTS
             }
 
             // if signal passed, send request to clear to next signal
+            // if next signal not enabled, also send request (can happen after choosing passing path)
 
             if (signalObjectIndex >= 0)
             {
-                SignalObject thisSignal = signalRef.SignalObjects[signalObjectIndex];
-                int nextSignalIndex = thisSignal.sigfound[(int)SignalHead.SIGFN.NORMAL];
+                var thisSignal = signalRef.SignalObjects[signalObjectIndex];
+                int nextSignalIndex = thisSignal.sigfound[(int)MstsSignalFunction.NORMAL];
                 if (nextSignalIndex >= 0)
                 {
-                    SignalObject nextSignal = signalRef.SignalObjects[nextSignalIndex];
+                    var nextSignal = signalRef.SignalObjects[nextSignalIndex];
                     nextSignal.requestClearSignal(ValidRoute[0], routedForward, 0, false, null);
                 }
             }
+
+            // if next signal not enabled, also send request (can happen after choosing passing path)
+
+            else if (NextSignalObject[0] != null && !NextSignalObject[0].enabled)
+            {
+                NextSignalObject[0].requestClearSignal(ValidRoute[0], routedForward, 0, false, null);
+            }
+
 
      // check if waiting for signal
 
             else if (SpeedMpS < Math.Abs(0.1) &&
              NextSignalObject[0] != null &&
-             GetNextSignalAspect(0) == SignalHead.SIGASP.STOP &&
+                     GetNextSignalAspect(0) == MstsSignalAspect.STOP &&
                      CheckTrainWaitingForSignal(NextSignalObject[0], 0))
             {
                 bool hasClaimed = ClaimState;
-                bool DeadlockWait = CheckDeadlockWait(NextSignalObject[0]);
+                bool claimAllowed = true;
 
-                if (!DeadlockWait) // cannot claim on deadlock to prevent further deadlocks
+                // cannot claim on deadlock to prevent further deadlocks
+                bool DeadlockWait = CheckDeadlockWait(NextSignalObject[0]);
+                if (DeadlockWait) claimAllowed = false;
+
+                // cannot claim while in waitstate as this would lock path for other train
+                if (isInWaitState()) claimAllowed = false;
+
+                // cannot claim on hold signal
+                if (HoldingSignals.Contains(NextSignalObject[0].thisRef)) claimAllowed = false;
+
+                // cannot claim if in station and noclaim is set (timetable mode only)
+                if (Simulator.TimetableMode && AtStation)
+                {
+                    if (StationStops[0].NoClaimAllowed) claimAllowed = false;
+                }
+
+
+                if (claimAllowed)
                 {
                     if (CheckStoppedTrains(NextSignalObject[0].signalRoute)) // do not claim when train ahead is stationary or in Manual mode
                     {
@@ -4000,14 +5356,16 @@ namespace ORTS
                 {
                     actualWaitTimeS = 0.0f;
                     ClaimState = false;
-                }
 
-                if (hasClaimed && !ClaimState)
-                {
-                    foreach (TCRouteElement thisElement in NextSignalObject[0].signalRoute)
+                    //<RRComment reset any invalid claims (occurs on WAIT commands, reason still to be checked! - not unclaiming causes deadlocks
+                    for (int iIndex = PresentPosition[0].RouteListIndex; iIndex <= ValidRoute[0].Count - 1; iIndex++)
                     {
-                        TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                        thisSection.UnreserveTrain(routedForward, false);
+                        int sectionIndex = ValidRoute[0][iIndex].TCSectionIndex;
+                        TrackCircuitSection claimSection = signalRef.TrackCircuitList[sectionIndex];
+                        if (claimSection.CircuitState.TrainClaimed.ContainsTrain(routedForward))
+                        {
+                            claimSection.UnclaimTrain(routedForward);
+                        }
                     }
                 }
             }
@@ -4016,7 +5374,6 @@ namespace ORTS
                 actualWaitTimeS = 0.0f;
                 ClaimState = false;
             }
-
         }
 
         //================================================================================================//
@@ -4073,7 +5430,12 @@ namespace ORTS
 
             if (trainAhead.Count > 0)
             {
-                return (false);
+                KeyValuePair<Train, float> foundTrain = trainAhead.ElementAt(0);
+                // check if train is closer as signal
+                if (foundTrain.Value < distanceToSignal)
+                {
+                    return (false);
+                }
             }
 
             // check if any other sections inbetween train and signal
@@ -4096,29 +5458,6 @@ namespace ORTS
                     {
                         Trace.TraceWarning("Train {0} in Signal control but route to signal not cleared - switching to Node control",
                                 Number);
-
-                        File.AppendAllText(@"C:\temp\passtrain.txt",
-                                "Train " + Number.ToString() + " in Section : " + PresentPosition[0].TCSectionIndex.ToString() +
-                                " = " + PresentPosition[0].RouteListIndex + "\n");
-                        File.AppendAllText(@"C:\temp\passtrain.txt",
-                                "Signal " + thisSignal.thisRef.ToString() + " in Section : " +
-                                thisSignal.TCReference.ToString() + "\n");
-                        File.AppendAllText(@"C:\temp\passtrain.txt",
-                                "This section : " + nextSection.Index.ToString() + "\n");
-
-                        bool signalFound = false;
-
-                        for (int iSection = PresentPosition[0].RouteListIndex + 1; iSection < ValidRoute[0].Count && !signalFound; iSection++)
-                        {
-                            TrackCircuitSection printSection = signalRef.TrackCircuitList[ValidRoute[0][iSection].TCSectionIndex];
-                            File.AppendAllText(@"C:\temp\passtrain.txt",
-                                    "Section : " + printSection.Index.ToString() + "\n");
-                            if (printSection.CircuitState.TrainReserved != null)
-                            {
-                                File.AppendAllText(@"C:\temp\passtrain.txt",
-                                    "Reserved : " + printSection.CircuitState.TrainReserved.Train.Number.ToString() + "\n");
-                            }
-                        }
 
                         if (thisSignal.enabledTrain == thisRouted)
                         {
@@ -4154,7 +5493,7 @@ namespace ORTS
                 otherTrain.LastReservedSection[0] = -1;
                 if (Math.Abs(otherTrain.SpeedMpS) > 0)
                 {
-                    otherTrain.ForcedStop("Stopped due to errors in route setting", Number);
+                    otherTrain.ForcedStop(Viewer.Catalog.GetString("Stopped due to errors in route setting"), Number);
                 }
                 otherTrain.SwitchToNodeControl(-1);
 
@@ -4167,18 +5506,41 @@ namespace ORTS
 
             // signal is in holding list - so not really waiting - but remove from list if held for station stop
 
-            if (thisSignal.holdState == SignalObject.HOLDSTATE.MANUAL_LOCK)
+            if (thisSignal.holdState == SignalObject.HoldState.ManualLock)
             {
                 return (false);
             }
-            else if (thisSignal.holdState == SignalObject.HOLDSTATE.STATION_STOP)
+            else if (thisSignal.holdState == SignalObject.HoldState.StationStop && HoldingSignals.Contains(thisSignal.thisRef))
             {
-                HoldingSignals.Remove(thisSignal.thisRef);
-                return (false);
+                if (StationStops != null && StationStops.Count > 0 && StationStops[0].ExitSignal != thisSignal.thisRef) // not present station stop
+                {
+                    HoldingSignals.Remove(thisSignal.thisRef);
+                    thisSignal.holdState = SignalObject.HoldState.None;
+                    return (false);
+                }
             }
 
             return (true);  // it is our signal and we are waiting //
         }
+
+        //================================================================================================//
+        /// <summary>
+        /// Breakdown claimed route when signal set to hold
+        /// </summary>
+
+        public void BreakdownClaim(TrackCircuitSection thisSection, int routeDirectionIndex, TrainRouted thisTrainRouted)
+        {
+            TrackCircuitSection nextSection = thisSection;
+            int routeIndex = ValidRoute[routeDirectionIndex].GetRouteIndex(thisSection.Index, PresentPosition[routeDirectionIndex].RouteListIndex);
+            bool isClaimed = thisSection.CircuitState.TrainClaimed.Contains(thisTrainRouted);
+
+            for (int iIndex = routeIndex + 1; iIndex < (ValidRoute[routeDirectionIndex].Count - 1) && isClaimed; iIndex++)
+            {
+                thisSection.RemoveTrain(this, false);
+                nextSection = signalRef.TrackCircuitList[ValidRoute[routeDirectionIndex][iIndex].TCSectionIndex];
+            }
+        }
+
 
         //================================================================================================//
         /// <summary>
@@ -4234,8 +5596,7 @@ namespace ORTS
         {
             // occupation is set in forward mode only
             // build route from rear to front - before reset occupy so correct switch alignment is used
-            TrainRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                            PresentPosition[1].TCDirection, Length, false, false, true);
+            TrainRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset, PresentPosition[1].TCDirection, Length, false, true, false);
 
             // save present occupation list
 
@@ -4245,35 +5606,7 @@ namespace ORTS
                 clearedSections.Add(OccupiedTrack[iindex]);
             }
 
-            // first, check for misaligned switch
-
-            foreach (TCRouteElement thisElement in TrainRoute)
-            {
-                TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-
-                // occupying misaligned switch : reset routes and position
-                if (thisSection.Index == MisalignedSwitch[0])
-                {
-                    // align switch
-                    thisSection.alignSwitchPins(MisalignedSwitch[1]);
-                    MisalignedSwitch[0] = -1;
-                    MisalignedSwitch[1] = -1;
-
-                    // set to out of control
-                    SetTrainOutOfControl(OUTOFCONTROL.MISALIGNED_SWITCH);
-
-                    // recalculate track position
-                    UpdateTrainPosition();
-
-                    // rebuild this list
-                    UpdateSectionStateManual();
-
-                    // exit, as routine has called itself
-                    return;
-                }
-            }
-
-            // if all is well, set track occupied
+            // set track occupied
 
             OccupiedTrack.Clear();
 
@@ -4344,11 +5677,11 @@ namespace ORTS
 
             if (signalObjectIndex >= 0)
             {
-                SignalObject thisSignal = signalRef.SignalObjects[signalObjectIndex];
-                thisSignal.hasPermission = SignalObject.PERMISSION.DENIED;
+                var thisSignal = signalRef.SignalObjects[signalObjectIndex];
+                thisSignal.hasPermission = SignalObject.Permission.Denied;
                 //the following is added by JTang, passing a hold signal, will take back control by the system
-                if (thisSignal.holdState == SignalObject.HOLDSTATE.MANUAL_PASS ||
-                    thisSignal.holdState == SignalObject.HOLDSTATE.MANUAL_APPROACH) thisSignal.holdState = SignalObject.HOLDSTATE.NONE;
+                if (thisSignal.holdState == SignalObject.HoldState.ManualPass ||
+                    thisSignal.holdState == SignalObject.HoldState.ManualApproach) thisSignal.holdState = SignalObject.HoldState.None;
 
                 thisSignal.resetSignalEnabled();
             }
@@ -4356,41 +5689,25 @@ namespace ORTS
             // get next signal
 
             // forward
-            SignalObject nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[0].Count && nextSignal == null; iindex++)
+            NextSignalObject[0] = null;
+            for (int iindex = 0; iindex < ValidRoute[0].Count && NextSignalObject[0] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[0][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[0] = thisSection.EndSignals[thisElement.Direction];
             }
 
-            NextSignalObject[0] = nextSignal;
-
             // backward
-            nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[1].Count && nextSignal == null; iindex++)
+            NextSignalObject[1] = null;
+            for (int iindex = 0; iindex < ValidRoute[1].Count && NextSignalObject[1] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[1][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[1] = thisSection.EndSignals[thisElement.Direction];
             }
-
-            NextSignalObject[1] = nextSignal;
 
             // clear all build up distance actions
             requiredActions.RemovePendingAIActionItems(true);
-
-            // set cabaspect
-
-            SignalHead.SIGASP forwardstate =
-                NextSignalObject[0] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[0].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            SignalHead.SIGASP backwardstate =
-                NextSignalObject[1] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[1].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            CABAspect = MUDirection == Direction.Forward ? forwardstate : backwardstate;
         }
 
 
@@ -4428,6 +5745,46 @@ namespace ORTS
             int thisRouteIndex = newRoute.GetRouteIndex(requiredPosition.TCSectionIndex, 0);
             if (thisRouteIndex < 0)    // no valid point in route
             {
+                // check if run out of route on misaligned switch
+
+                if (newRoute.Count > 0)
+                {
+                    // get last section, and get next expected section
+                    TrackCircuitSection lastSection = signalRef.TrackCircuitList[newRoute[newRoute.Count - 1].TCSectionIndex];
+                    int nextSectionIndex = lastSection.ActivePins[newRoute[newRoute.Count - 1].Direction, 0].Link;
+
+                    if (nextSectionIndex >= 0)
+                    {
+                        TrackCircuitSection nextSection = signalRef.TrackCircuitList[nextSectionIndex];
+
+                        // is next expected section misaligned switch and is present section trailing end of this switch
+                        if (nextSectionIndex == MisalignedSwitch[direction, 0] && lastSection.Index == MisalignedSwitch[direction, 1] &&
+                            nextSection.ActivePins[0, 0].Link == requiredPosition.TCSectionIndex)
+                        {
+
+                            // misaligned switch
+
+                            // reset indication
+                            MisalignedSwitch[direction, 0] = -1;
+                            MisalignedSwitch[direction, 1] = -1;
+
+                            // set to out of control
+                            SetTrainOutOfControl(OUTOFCONTROL.MISALIGNED_SWITCH);
+
+                            // recalculate track position
+                            UpdateTrainPosition();
+
+                            // rebuild this list
+                            UpdateSectionStateManual();
+
+                            // exit
+
+                            return (newRoute);
+                        }
+                    }
+                }
+
+
                 if (requiredRoute != null && requiredRoute.Count > 0)  // if route defined, then breakdown route
                 {
                     signalRef.BreakDownRouteList(requiredRoute, 0, thisRouted);
@@ -4436,6 +5793,9 @@ namespace ORTS
 
 
                 // build new route
+
+                MisalignedSwitch[direction, 0] = -1;
+                MisalignedSwitch[direction, 1] = -1;
 
                 List<int> tempSections = new List<int>();
                 tempSections = signalRef.ScanRoute(this, requiredPosition.TCSectionIndex, requiredPosition.TCOffset,
@@ -4488,11 +5848,11 @@ namespace ORTS
                 reqDirection = thisElement.Direction;
                 if (thisSection.EndSignals[reqDirection] != null)
                 {
-                    SignalObject endSignal = thisSection.EndSignals[reqDirection];
-                    SignalHead.SIGASP thisAspect = thisSection.EndSignals[reqDirection].this_sig_lr(SignalHead.SIGFN.NORMAL);
+                    var endSignal = thisSection.EndSignals[reqDirection];
+                    MstsSignalAspect thisAspect = thisSection.EndSignals[reqDirection].this_sig_lr(MstsSignalFunction.NORMAL);
                     hasEndSignal = true;
 
-                    if (thisAspect == SignalHead.SIGASP.STOP && endSignal.hasPermission != SignalObject.PERMISSION.GRANTED)
+                    if (thisAspect == MstsSignalAspect.STOP && endSignal.hasPermission != SignalObject.Permission.Granted)
                     {
                         endWithSignal = true;
                         sectionWithSignalIndex = iindex;
@@ -4534,23 +5894,23 @@ namespace ORTS
 
                 // check if last item is non-aligned switch
 
-                MisalignedSwitch[0] = -1;
-                MisalignedSwitch[1] = -1;
+                MisalignedSwitch[direction, 0] = -1;
+                MisalignedSwitch[direction, 1] = -1;
 
                 TrackCircuitSection nextSection = nextSectionIndex >= 0 ? signalRef.TrackCircuitList[nextSectionIndex] : null;
-                if (nextSection != null && nextSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                if (nextSection != null && nextSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                 {
                     if (nextSection.Pins[0, 0].Link != lastSectionIndex &&
                         nextSection.Pins[1, nextSection.JunctionLastRoute].Link != lastSectionIndex)
                     {
-                        MisalignedSwitch[0] = nextSection.Index;
-                        MisalignedSwitch[1] = lastSectionIndex;
+                        MisalignedSwitch[direction, 0] = nextSection.Index;
+                        MisalignedSwitch[direction, 1] = lastSectionIndex;
                     }
                 }
 
                 List<int> tempSections = new List<int>();
 
-                if (nextSectionIndex >= 0 && MisalignedSwitch[0] < 0)
+                if (nextSectionIndex >= 0 && MisalignedSwitch[direction, 0] < 0)
                 {
                     bool reqAutoAlign = hasEndSignal; // auto-align switchs if route is extended from signal
 
@@ -4680,15 +6040,15 @@ namespace ORTS
 
                         // check for end authority if not ended with signal
                         // last section is end of track
-                        if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                        if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.EndOfTrack)
                         {
                             endAuthority = END_AUTHORITY.END_OF_TRACK;
                             endAuthorityDistanceM = totalLengthM;
                         }
 
                         // first non-available section is switch or crossover
-                        else if (nextSection != null && (nextSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION ||
-                                     nextSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER))
+                        else if (nextSection != null && (nextSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction ||
+                                     nextSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover))
                         {
                             endAuthority = END_AUTHORITY.RESERVED_SWITCH;
                             endAuthorityDistanceM = totalLengthM;
@@ -4758,38 +6118,22 @@ namespace ORTS
             // get next signal
 
             // forward
-            SignalObject nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[0].Count && nextSignal == null; iindex++)
+            NextSignalObject[0] = null;
+            for (int iindex = 0; iindex < ValidRoute[0].Count && NextSignalObject[0] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[0][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[0] = thisSection.EndSignals[thisElement.Direction];
             }
 
-            NextSignalObject[0] = nextSignal;
-
             // backward
-            nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[1].Count && nextSignal == null; iindex++)
+            NextSignalObject[1] = null;
+            for (int iindex = 0; iindex < ValidRoute[1].Count && NextSignalObject[1] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[1][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[1] = thisSection.EndSignals[thisElement.Direction];
             }
-
-            NextSignalObject[1] = nextSignal;
-
-            // set cabaspect
-
-            SignalHead.SIGASP forwardstate =
-                NextSignalObject[0] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[0].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            SignalHead.SIGASP backwardstate =
-                NextSignalObject[1] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[1].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            CABAspect = MUDirection == Direction.Forward ? forwardstate : backwardstate;
         }
 
 
@@ -4811,22 +6155,23 @@ namespace ORTS
             if (lastSection.EndSignals[lastElement.Direction] == null)
             {
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Information, "No signal in train's path");
+                    Simulator.Confirmer.Message(ConfirmLevel.Information, Viewer.Catalog.GetString("No signal in train's path"));
                 return;
             }
 
-            SignalObject requestedSignal = lastSection.EndSignals[lastElement.Direction];
+            var requestedSignal = lastSection.EndSignals[lastElement.Direction];
             if (requestedSignal.enabledTrain != null && requestedSignal.enabledTrain.Train != this)
             {
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Warning, "Next signal already allocated to other train");
+                    Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("Next signal already allocated to other train"));
+                Simulator.SoundNotify = Event.PermissionDenied;
                 return;
             }
 
             requestedSignal.enabledTrain = routeIndex == 0 ? routedForward : routedBackward;
             requestedSignal.signalRoute.Clear();
-            requestedSignal.holdState = SignalObject.HOLDSTATE.NONE;
-            requestedSignal.hasPermission = SignalObject.PERMISSION.REQUESTED;
+            requestedSignal.holdState = SignalObject.HoldState.None;
+            requestedSignal.hasPermission = SignalObject.Permission.Requested;
 
             // get route from next signal - extend to next signal or maximum length
 
@@ -4879,7 +6224,8 @@ namespace ORTS
                 if (!requestValid)
                 {
                     if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                        Simulator.Confirmer.Message(ConfirmLevel.Information, "Request to clear signal cannot be processed");
+                        Simulator.Confirmer.Message(ConfirmLevel.Information, Viewer.Catalog.GetString("Request to clear signal cannot be processed"));
+                    Program.Simulator.SoundNotify = Event.PermissionDenied;
                 }
             }
         }
@@ -4900,7 +6246,7 @@ namespace ORTS
             for (int iindex = 0; iindex < ValidRoute[routeDirectionIndex].Count && reqSwitch == null; iindex++)
             {
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[ValidRoute[routeDirectionIndex][iindex].TCSectionIndex];
-                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                 {
                     reqSwitch = thisSection;
                 }
@@ -4915,11 +6261,11 @@ namespace ORTS
                 int curDirection = thisElement.Direction;
                 int nextSectionIndex = thisElement.TCSectionIndex;
 
-                bool validRoute = lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.NORMAL;
+                bool validRoute = lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Normal;
 
                 while (reqSwitch == null && validRoute)
                 {
-                    if (lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                    if (lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                     {
                         int outPinIndex = curDirection == 0 ? 1 : 0;
                         if (lastSection.Pins[curDirection, 0].Link == nextSectionIndex)
@@ -4940,11 +6286,11 @@ namespace ORTS
                         lastSection = signalRef.TrackCircuitList[nextSectionIndex];
                     }
 
-                    if (lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                    if (lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                     {
                         reqSwitch = lastSection;
                     }
-                    else if (lastSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                    else if (lastSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
                     {
                         validRoute = false;
                     }
@@ -4960,9 +6306,14 @@ namespace ORTS
                     signalRef.setSwitch(reqSwitch.OriginalIndex, reqSwitch.JunctionSetManual, reqSwitch);
                     switchSet = true;
                 }
-                // check if switch reserved by this train - if so, dealign
+                // check if switch reserved by this train - if so, dealign and breakdown route
                 else if (reqSwitch.CircuitState.TrainReserved != null && reqSwitch.CircuitState.TrainReserved.Train == this)
                 {
+                    int reqRouteIndex = reqSwitch.CircuitState.TrainReserved.TrainRouteDirectionIndex;
+                    int routeIndex = ValidRoute[reqRouteIndex].GetRouteIndex(reqSwitch.Index, 0);
+                    signalRef.BreakDownRouteList(ValidRoute[reqRouteIndex], routeIndex, reqSwitch.CircuitState.TrainReserved);
+                    ValidRoute[reqRouteIndex].RemoveRange(routeIndex, ValidRoute[reqRouteIndex].Count - routeIndex);
+
                     reqSwitch.deAlignSwitchPins();
                     reqSwitch.JunctionSetManual = reqSwitch.JunctionLastRoute == 0 ? 1 : 0;
                     signalRef.setSwitch(reqSwitch.OriginalIndex, reqSwitch.JunctionSetManual, reqSwitch);
@@ -4971,11 +6322,15 @@ namespace ORTS
 
                 if (switchSet)
                     ProcessManualSwitch(routeDirectionIndex, reqSwitch, direction);
+                if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
+                    Simulator.Confirmer.Confirm(
+                        (direction == Direction.Forward) ? CabControl.SwitchAhead : CabControl.SwitchBehind,
+                        CabSetting.On);
             }
             else
             {
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Warning, "No switch found");
+                    Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("No switch found"));
             }
 
             return (switchSet);
@@ -5065,9 +6420,13 @@ namespace ORTS
             // restore required position (is cleared by route breakdown)
             switchSection.JunctionSetManual = reqSwitchPosition;
 
+            // set switch
+            switchSection.deAlignSwitchPins();
+            signalRef.setSwitch(switchSection.OriginalIndex, switchSection.JunctionSetManual, switchSection);
+
             // reset indication for misaligned switch
-            MisalignedSwitch[0] = -1;
-            MisalignedSwitch[1] = -1;
+            MisalignedSwitch[routeDirectionIndex, 0] = -1;
+            MisalignedSwitch[routeDirectionIndex, 1] = -1;
 
             // build new route
 
@@ -5096,7 +6455,7 @@ namespace ORTS
             TrackCircuitSection lastSection = signalRef.TrackCircuitList[lastElement.TCSectionIndex];
             int lastDirection = lastElement.Direction == 0 ? 0 : 1;
 
-            SignalObject lastSignal = lastSection.EndSignals[lastDirection];
+            var lastSignal = lastSection.EndSignals[lastDirection];
 
             while (lastSignal != null && signalsFound.Contains(lastSignal))
             {
@@ -5130,8 +6489,8 @@ namespace ORTS
 
             if (foundSpeedLimit.Count > 0)
             {
-                SignalObject speedLimit = signalRef.SignalObjects[Math.Abs(foundSpeedLimit[0])];
-                ObjectSpeedInfo thisSpeedInfo = speedLimit.this_lim_speed(SignalHead.SIGFN.SPEED);
+                var speedLimit = signalRef.SignalObjects[Math.Abs(foundSpeedLimit[0])];
+                var thisSpeedInfo = speedLimit.this_lim_speed(MstsSignalFunction.SPEED);
                 float thisSpeedMpS = IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass;
 
                 if (thisSpeedMpS > 0)
@@ -5139,6 +6498,11 @@ namespace ORTS
                     allowedMaxSpeedLimitMpS = thisSpeedMpS;
                     AllowedMaxSpeedMpS = allowedMaxSpeedLimitMpS;
                 }
+            }
+                // No speed limits behind us, initialize allowedMaxSpeedLimitMpS.
+            else if (!Simulator.TimetableMode)
+            {
+                AllowedMaxSpeedMpS = allowedMaxSpeedLimitMpS;
             }
 
             // check backward for last signal in direction of train - check with list of pending signal speeds
@@ -5150,7 +6514,7 @@ namespace ORTS
 
             if (foundSpeedLimit.Count > 0)
             {
-                SignalObject thisSignal = signalRef.SignalObjects[Math.Abs(foundSpeedLimit[0])];
+                var thisSignal = signalRef.SignalObjects[Math.Abs(foundSpeedLimit[0])];
                 if (thisSignal.isSignal)
                 {
                     // if signal is now just behind train - set speed as signal speed limit, do not reenter in list
@@ -5188,7 +6552,7 @@ namespace ORTS
             bool limitAlongTrain = true;
             while (foundSpeedLimit.Count > 0 && limitAlongTrain)
             {
-                SignalObject thisObject = signalRef.SignalObjects[Math.Abs(foundSpeedLimit[0])];
+                var thisObject = signalRef.SignalObjects[Math.Abs(foundSpeedLimit[0])];
 
                 // check if not beyond end of train
                 TrackCircuitSection reqSection = signalRef.TrackCircuitList[thisObject.TCReference];
@@ -5215,12 +6579,13 @@ namespace ORTS
                             allowedMaxSpeedSignalMpS = PassedSignalSpeeds[thisObject.thisRef];
                             AllowedMaxSpeedMpS = Math.Min(AllowedMaxSpeedMpS, allowedMaxSpeedSignalMpS);
 
-                            remainingSignals.Add(thisObject.thisRef, allowedMaxSpeedSignalMpS);
+                            if (!remainingSignals.ContainsKey(thisObject.thisRef))
+                                remainingSignals.Add(thisObject.thisRef, allowedMaxSpeedSignalMpS);
                         }
                     }
                     else
                     {
-                        ObjectSpeedInfo thisSpeedInfo = thisObject.this_lim_speed(SignalHead.SIGFN.SPEED);
+                        ObjectSpeedInfo thisSpeedInfo = thisObject.this_lim_speed(MstsSignalFunction.SPEED);
                         float thisSpeedMpS = IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass;
 
                         if (thisSpeedMpS > 0)
@@ -5241,20 +6606,21 @@ namespace ORTS
             PassedSignalSpeeds.Clear();
             foreach (KeyValuePair<int, float> thisPair in remainingSignals)
             {
-                PassedSignalSpeeds.Add(thisPair.Key, thisPair.Value);
+                if (!PassedSignalSpeeds.ContainsKey(thisPair.Key))
+                    PassedSignalSpeeds.Add(thisPair.Key, thisPair.Value);
             }
 
             // check if signal passed posed a speed limit lower than present limit
 
             if (passedSignalIndex >= 0)
             {
-                SignalObject passedSignal = signalRef.SignalObjects[passedSignalIndex];
-                ObjectSpeedInfo thisSpeedInfo = passedSignal.this_sig_speed(SignalHead.SIGFN.NORMAL);
+                var passedSignal = signalRef.SignalObjects[passedSignalIndex];
+                var thisSpeedInfo = passedSignal.this_sig_speed(MstsSignalFunction.NORMAL);
 
                 if (thisSpeedInfo != null)
                 {
                     float thisSpeedMpS = IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass;
-                    if (thisSpeedMpS > 0)
+                    if (thisSpeedMpS > 0 && !PassedSignalSpeeds.ContainsKey(passedSignal.thisRef))
                     {
                         allowedMaxSpeedSignalMpS = allowedMaxSpeedSignalMpS > 0 ? Math.Min(allowedMaxSpeedSignalMpS, thisSpeedMpS) : thisSpeedMpS;
                         AllowedMaxSpeedMpS = Math.Min(AllowedMaxSpeedMpS, allowedMaxSpeedSignalMpS);
@@ -5276,7 +6642,7 @@ namespace ORTS
             // occupation is set in forward mode only
             // build route from rear to front - before reset occupy so correct switch alignment is used
             TrainRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                            PresentPosition[1].TCDirection, Length, false, false, true);
+                            PresentPosition[1].TCDirection, Length, false, true, false);
 
             // save present occupation list
 
@@ -5288,17 +6654,18 @@ namespace ORTS
 
             // first check for misaligned switch
 
+            int reqDirection = MUDirection == Direction.Forward ? 0 : 1;
             foreach (TCRouteElement thisElement in TrainRoute)
             {
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
 
                 // occupying misaligned switch : reset routes and position
-                if (thisSection.Index == MisalignedSwitch[0])
+                if (thisSection.Index == MisalignedSwitch[reqDirection, 0])
                 {
                     // align switch
-                    thisSection.alignSwitchPins(MisalignedSwitch[1]);
-                    MisalignedSwitch[0] = -1;
-                    MisalignedSwitch[1] = -1;
+                    thisSection.alignSwitchPins(MisalignedSwitch[reqDirection, 1]);
+                    MisalignedSwitch[reqDirection, 0] = -1;
+                    MisalignedSwitch[reqDirection, 1] = -1;
 
                     // recalculate track position
                     UpdateTrainPosition();
@@ -5381,11 +6748,8 @@ namespace ORTS
 
             if (signalObjectIndex >= 0)
             {
-                SignalObject thisSignal = signalRef.SignalObjects[signalObjectIndex];
-                thisSignal.hasPermission = SignalObject.PERMISSION.DENIED;
-                //the following is added by JTang, passing a hold signal, will take back control by the system
-                if (thisSignal.holdState == SignalObject.HOLDSTATE.MANUAL_PASS ||
-                    thisSignal.holdState == SignalObject.HOLDSTATE.MANUAL_APPROACH) thisSignal.holdState = SignalObject.HOLDSTATE.NONE;
+                var thisSignal = signalRef.SignalObjects[signalObjectIndex];
+                thisSignal.hasPermission = SignalObject.Permission.Denied;
 
                 thisSignal.resetSignalEnabled();
             }
@@ -5393,41 +6757,25 @@ namespace ORTS
             // get next signal
 
             // forward
-            SignalObject nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[0].Count && nextSignal == null; iindex++)
+            NextSignalObject[0] = null;
+            for (int iindex = 0; iindex < ValidRoute[0].Count && NextSignalObject[0] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[0][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[0] = thisSection.EndSignals[thisElement.Direction];
             }
 
-            NextSignalObject[0] = nextSignal;
-
             // backward
-            nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[1].Count && nextSignal == null; iindex++)
+            NextSignalObject[1] = null;
+            for (int iindex = 0; iindex < ValidRoute[1].Count && NextSignalObject[1] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[1][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[1] = thisSection.EndSignals[thisElement.Direction];
             }
-
-            NextSignalObject[1] = nextSignal;
 
             // clear all build up distance actions
             requiredActions.RemovePendingAIActionItems(true);
-
-            // set cabaspect
-
-            SignalHead.SIGASP forwardstate =
-                NextSignalObject[0] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[0].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            SignalHead.SIGASP backwardstate =
-                NextSignalObject[1] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[1].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            CABAspect = MUDirection == Direction.Forward ? forwardstate : backwardstate;
         }
 
         //================================================================================================//
@@ -5521,18 +6869,26 @@ namespace ORTS
                 totalLengthM += (thisSection.Length - offsetM);
                 offsetM = 0.0f; // reset offset for further sections
 
+                // check on state of signals
+                // also check if signal properly enabled
+
                 reqDirection = thisElement.Direction;
                 if (thisSection.EndSignals[reqDirection] != null)
                 {
-                    SignalObject endSignal = thisSection.EndSignals[reqDirection];
-                    SignalHead.SIGASP thisAspect = thisSection.EndSignals[reqDirection].this_sig_lr(SignalHead.SIGFN.NORMAL);
+                    var endSignal = thisSection.EndSignals[reqDirection];
+                    var thisAspect = thisSection.EndSignals[reqDirection].this_sig_lr(MstsSignalFunction.NORMAL);
                     hasEndSignal = true;
 
-                    if (thisAspect == SignalHead.SIGASP.STOP && endSignal.hasPermission != SignalObject.PERMISSION.GRANTED)
+                    if (thisAspect == MstsSignalAspect.STOP && endSignal.hasPermission != SignalObject.Permission.Granted)
                     {
                         endWithSignal = true;
                         sectionWithSignalIndex = iindex;
                     }
+                    else if (!endSignal.enabled)   // signal cleared by default only - request for proper clearing
+                    {
+                        endSignal.requestClearSignalExplorer(newRoute, 0.0f, thisRouted, true, 0);  // do NOT propagate
+                    }
+
                 }
             }
 
@@ -5565,24 +6921,24 @@ namespace ORTS
 
                 // check if last item is non-aligned switch
 
-                MisalignedSwitch[0] = -1;
-                MisalignedSwitch[1] = -1;
+                MisalignedSwitch[direction, 0] = -1;
+                MisalignedSwitch[direction, 1] = -1;
 
                 TrackCircuitSection nextSection = nextSectionIndex >= 0 ? signalRef.TrackCircuitList[nextSectionIndex] : null;
-                if (nextSection != null && nextSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                if (nextSection != null && nextSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                 {
                     if (nextSection.Pins[0, 0].Link != lastSectionIndex &&
                         nextSection.Pins[0, 1].Link != lastSectionIndex &&
                         nextSection.Pins[1, nextSection.JunctionLastRoute].Link != lastSectionIndex)
                     {
-                        MisalignedSwitch[0] = nextSection.Index;
-                        MisalignedSwitch[1] = lastSectionIndex;
+                        MisalignedSwitch[direction, 0] = nextSection.Index;
+                        MisalignedSwitch[direction, 1] = lastSectionIndex;
                     }
                 }
 
                 List<int> tempSections = new List<int>();
 
-                if (nextSectionIndex >= 0 && MisalignedSwitch[0] < 0)
+                if (nextSectionIndex >= 0 && MisalignedSwitch[direction, 0] < 0)
                 {
                     bool reqAutoAlign = hasEndSignal; // auto-align switches if route is extended from signal
 
@@ -5642,10 +6998,10 @@ namespace ORTS
                 thisElement = newRoute[iindex];
                 thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
 
-                SignalObject nextSignal = thisSection.EndSignals[thisElement.Direction];
+                var nextSignal = thisSection.EndSignals[thisElement.Direction];
                 if (nextSignal != null &&
-                    nextSignal.this_sig_lr(SignalHead.SIGFN.NORMAL) == SignalHead.SIGASP.STOP &&
-                    nextSignal.hasPermission != SignalObject.PERMISSION.GRANTED)
+                    nextSignal.this_sig_lr(MstsSignalFunction.NORMAL) == MstsSignalAspect.STOP &&
+                    nextSignal.hasPermission != SignalObject.Permission.Granted)
                 {
                     unclearedSignal = true;
                     signalIndex = iindex;
@@ -5734,15 +7090,15 @@ namespace ORTS
 
                         // check for end authority if not ended with signal
                         // last section is end of track
-                        if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                        if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.EndOfTrack)
                         {
                             endAuthority = END_AUTHORITY.END_OF_TRACK;
                             endAuthorityDistanceM = totalLengthM;
                         }
 
                         // first non-available section is switch or crossover
-                        else if (nextSection != null && (nextSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION ||
-                                     nextSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER))
+                        else if (nextSection != null && (nextSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction ||
+                                     nextSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover))
                         {
                             endAuthority = END_AUTHORITY.RESERVED_SWITCH;
                             endAuthorityDistanceM = totalLengthM;
@@ -5827,44 +7183,28 @@ namespace ORTS
             // get next signal
 
             // forward
-            SignalObject nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[0].Count && nextSignal == null; iindex++)
+            NextSignalObject[0] = null;
+            for (int iindex = 0; iindex < ValidRoute[0].Count && NextSignalObject[0] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[0][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[0] = thisSection.EndSignals[thisElement.Direction];
             }
 
-            NextSignalObject[0] = nextSignal;
-
             // backward
-            nextSignal = null;
-            for (int iindex = 0; iindex < ValidRoute[1].Count && nextSignal == null; iindex++)
+            NextSignalObject[1] = null;
+            for (int iindex = 0; iindex < ValidRoute[1].Count && NextSignalObject[1] == null; iindex++)
             {
                 TCRouteElement thisElement = ValidRoute[1][iindex];
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
-                nextSignal = thisSection.EndSignals[thisElement.Direction];
+                NextSignalObject[1] = thisSection.EndSignals[thisElement.Direction];
             }
-
-            NextSignalObject[1] = nextSignal;
-
-            // set cabaspect
-
-            SignalHead.SIGASP forwardstate =
-                NextSignalObject[0] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[0].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            SignalHead.SIGASP backwardstate =
-                NextSignalObject[1] == null ? SignalHead.SIGASP.UNKNOWN :
-                NextSignalObject[1].this_sig_lr(SignalHead.SIGFN.NORMAL);
-
-            CABAspect = MUDirection == Direction.Forward ? forwardstate : backwardstate;
         }
 
 
         //================================================================================================//
         //
-        // Request signal permission in manual mode
+        // Request signal permission in explorer mode
         //
 
         public void RequestExplorerSignalPermission(ref TCSubpathRoute selectedRoute, int routeIndex)
@@ -5884,7 +7224,7 @@ namespace ORTS
                     if (thisSection.EndSignals[direction] != null)
                     {
                         reqSignal = thisSection.EndSignals[direction];
-                        signalFound = (reqSignal.this_sig_lr(SignalHead.SIGFN.NORMAL) == SignalHead.SIGASP.STOP);
+                        signalFound = (reqSignal.this_sig_lr(MstsSignalFunction.NORMAL) == MstsSignalAspect.STOP);
                     }
                 }
             }
@@ -5893,13 +7233,13 @@ namespace ORTS
             if (!signalFound)
             {
                 if (Simulator.Confirmer != null && this.TrainType != TRAINTYPE.REMOTE) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Information, "No signal in train's path");
+                    Simulator.Confirmer.Message(ConfirmLevel.Information, Viewer.Catalog.GetString("No signal in train's path"));
                 return;
             }
 
             // signal at danger is found - set PERMISSION REQUESTED, and request clear signal
             // if signal has a route, set PERMISSION REQUESTED, and perform signal update
-            reqSignal.hasPermission = SignalObject.PERMISSION.REQUESTED;
+            reqSignal.hasPermission = SignalObject.Permission.Requested;
 
             TCPosition tempPos = new TCPosition();
 
@@ -5916,6 +7256,9 @@ namespace ORTS
             TCSubpathRoute newRouteR = CheckExplorerPath(routeIndex, tempPos, ValidRoute[routeIndex], true, ref EndAuthorityType[routeIndex],
                 ref DistanceToEndNodeAuthorityM[routeIndex]);
             ValidRoute[routeIndex] = newRouteR;
+            Simulator.SoundNotify = reqSignal.hasPermission == SignalObject.Permission.Granted ?
+                Event.PermissionGranted :
+                Event.PermissionDenied;
         }
 
         //================================================================================================//
@@ -5935,7 +7278,7 @@ namespace ORTS
             for (int iindex = 0; iindex < ValidRoute[routeDirectionIndex].Count && reqSwitch == null; iindex++)
             {
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[ValidRoute[routeDirectionIndex][iindex].TCSectionIndex];
-                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                 {
                     reqSwitch = thisSection;
                 }
@@ -5950,11 +7293,11 @@ namespace ORTS
                 int curDirection = thisElement.Direction;
                 int nextSectionIndex = thisElement.TCSectionIndex;
 
-                bool validRoute = lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.NORMAL;
+                bool validRoute = lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Normal;
 
                 while (reqSwitch == null && validRoute)
                 {
-                    if (lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                    if (lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                     {
                         int outPinIndex = curDirection == 0 ? 1 : 0;
                         if (lastSection.Pins[curDirection, 0].Link == nextSectionIndex)
@@ -5975,11 +7318,11 @@ namespace ORTS
                         lastSection = signalRef.TrackCircuitList[nextSectionIndex];
                     }
 
-                    if (lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                    if (lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                     {
                         reqSwitch = lastSection;
                     }
-                    else if (lastSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                    else if (lastSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
                     {
                         validRoute = false;
                     }
@@ -6010,7 +7353,7 @@ namespace ORTS
             else
             {
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Warning, "No switch found");
+                    Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("No switch found"));
             }
 
             return (switchSet);
@@ -6106,6 +7449,10 @@ namespace ORTS
                 // restore required position (is cleared by route breakdown)
                 switchSection.JunctionSetManual = reqSwitchPosition;
 
+                // set switch
+                switchSection.deAlignSwitchPins();
+                signalRef.setSwitch(switchSection.OriginalIndex, switchSection.JunctionSetManual, switchSection);
+
                 // build new route - use signal request
                 float remLength = minCheckDistanceM - coveredLength;
                 TCSubpathRoute newRoute = firstSignal.requestClearSignalExplorer(selectedRoute, remLength, thisRouted, false, 0);
@@ -6129,14 +7476,6 @@ namespace ORTS
         public void UpdateOutOfControl()
         {
 
-            // if train not yet at a stand, keep applying emergency break
-
-            if (SpeedMpS > Math.Abs(0.1f))
-            {
-                if (LeadLocomotive != null)
-                    ((MSTSLocomotive)LeadLocomotive).SetEmergency();
-            }
-
             // train is at a stand : 
             // clear all occupied blocks
             // clear signal/speedpost list 
@@ -6144,10 +7483,7 @@ namespace ORTS
             // clear all previous occupied sections 
             // set sections occupied on which train stands
 
-            else
-            {
-                // all the above is still TODO
-            }
+            // all the above is still TODO
         }
 
         //================================================================================================//
@@ -6170,6 +7506,24 @@ namespace ORTS
 
         public virtual void SwitchToNodeControl(int thisSectionIndex)
         {
+            // reset enabled signal if required
+            if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL && NextSignalObject[0] != null && NextSignalObject[0].enabledTrain == routedForward)
+            {
+                // reset any claims
+                foreach (TCRouteElement thisElement in NextSignalObject[0].signalRoute)
+                {
+                    TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                    if (thisSection.CircuitState.TrainClaimed.ContainsTrain(routedForward))
+                    {
+                        thisSection.UnclaimTrain(routedForward);
+                    }
+                }
+
+                // reset signal
+                NextSignalObject[0].enabledTrain = null;
+                NextSignalObject[0].ResetSignal(true);
+            }
+
             // use direction forward only
             float maxDistance = Math.Max(AllowedMaxSpeedMpS * maxTimeS, minCheckDistanceM);
             float clearedDistanceM = 0.0f;
@@ -6230,7 +7584,12 @@ namespace ORTS
 
         public void RequestToggleManualMode()
         {
-            if (ControlMode == TRAIN_CONTROL.MANUAL)
+            if (TrainType == TRAINTYPE.AI_PLAYERHOSTING)
+            {
+                if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
+                    Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("You cannot enter manual mode when autopiloted"));
+            }
+            else if (ControlMode == TRAIN_CONTROL.MANUAL)
             {
                 // check if train is back on path
 
@@ -6240,7 +7599,7 @@ namespace ORTS
                 if (routeIndex < 0)
                 {
                     if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                        Simulator.Confirmer.Message(ConfirmLevel.Warning, "Train is not back on original route");
+                        Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("Train is not back on original route"));
                 }
                 else
                 {
@@ -6249,11 +7608,12 @@ namespace ORTS
                     if (lastDirection != presentDirection && Math.Abs(SpeedMpS) > 0.1f)
                     {
                         if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                            Simulator.Confirmer.Message(ConfirmLevel.Warning, "Original route is reverse from present direction, stop train before switching");
+                            Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("Original route is reverse from present direction, stop train before switching"));
                     }
                     else
                     {
                         ToggleFromManualMode(routeIndex);
+                        Simulator.Confirmer.Confirm(CabControl.SignalMode, CabSetting.On);
                     }
                 }
 
@@ -6261,18 +7621,19 @@ namespace ORTS
             else if (ControlMode == TRAIN_CONTROL.EXPLORER)
             {
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Warning, "Cannot change to Manual Mode while in Explorer Mode");
+                    Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("Cannot change to Manual Mode while in Explorer Mode"));
             }
             else
             {
                 if (Math.Abs(SpeedMpS) > 0.1f)
                 {
                     if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                        Simulator.Confirmer.Message(ConfirmLevel.Warning, "Train must be at standstill before switching Mode");
+                        Simulator.Confirmer.Confirm(CabControl.SignalMode, CabSetting.Warn1);
                 }
                 else
                 {
                     ToggleToManualMode();
+                    Simulator.Confirmer.Confirm(CabControl.SignalMode, CabSetting.Off);
                 }
             }
         }
@@ -6284,6 +7645,8 @@ namespace ORTS
 
         public void ToggleToManualMode()
         {
+            if (ControlMode == TRAIN_CONTROL.OUT_OF_CONTROL && LeadLocomotive != null)
+                ((MSTSLocomotive)LeadLocomotive).SetEmergency(false);
 
             // set track occupation (using present route)
             UpdateSectionStateManual();
@@ -6294,7 +7657,9 @@ namespace ORTS
             {
                 int listIndex = PresentPosition[0].RouteListIndex;
                 signalRef.BreakDownRouteList(ValidRoute[0], listIndex, routedForward);
+                ClearDeadlocks();
             }
+
             ValidRoute[0] = null;
             LastReservedSection[0] = -1;
 
@@ -6351,25 +7716,34 @@ namespace ORTS
             if (!CheckReversal(oldRoute, ref reversal))
             {
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                    Simulator.Confirmer.Message(ConfirmLevel.Warning, "Reversal required and rear of train not on required route");
+                    Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("Reversal required and rear of train not on required route"));
                 return;
             }
 
             // breakdown present routes, forward and backward
-
             signalRef.BreakDownRouteList(ValidRoute[0], 0, routedForward);
             signalRef.BreakDownRouteList(ValidRoute[1], 0, routedBackward);
 
-            // remove any actions build up during manual mode
+            
+            // clear occupied sections
 
+            for (int iSection = OccupiedTrack.Count - 1; iSection >= 0; iSection--)
+            {
+                TrackCircuitSection thisSection = OccupiedTrack[iSection];
+                thisSection.ResetOccupied(this);
+            }
+
+            // remove any actions build up during manual mode
             requiredActions.RemovePendingAIActionItems(true);
 
             // restore train placement
-
             RestoreTrainPlacement(ref newRoute, oldRoute, routeIndex, reversal);
 
-            // restore signal information
+            // set track occupation (using present route)
+            // This procedure is also needed for clearing track occupation.
+            UpdateSectionStateManual();
 
+            // restore signal information
             PassedSignalSpeeds.Clear();
             InitializeSignals(true);
 
@@ -6434,6 +7808,8 @@ namespace ORTS
             if (reversal)
             {
                 ReverseFormation(true);
+                // active subpath must be incremented in parallel in incorporated train if present
+                if (IncorporatedTrainNo >= 0) IncrementSubpath(Simulator.TrainDictionary[IncorporatedTrainNo]);
             }
 
             // reset distance travelled
@@ -6457,7 +7833,7 @@ namespace ORTS
             {
 
                 TCSubpathRoute tempRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                            PresentPosition[1].TCDirection, Length, false, true, true);
+                            PresentPosition[1].TCDirection, Length, true, true, false);
 
                 for (int iindex = tempRoute.Count - 1; iindex >= 0; iindex--)
                 {
@@ -6472,6 +7848,14 @@ namespace ORTS
             // set route as valid route
 
             ValidRoute[0] = newRoute;
+
+            // Reindexes ReversalInfo items
+            if (TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex >= 0)
+                TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex = ValidRoute[0].GetRouteIndex(TCRoute.ReversalInfo[TCRoute.activeSubpath].DivergeSectorIndex, 0);
+            if (TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex >= 0)
+                TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex = ValidRoute[0].GetRouteIndex(TCRoute.ReversalInfo[TCRoute.activeSubpath].SignalSectorIndex, 0);
+
+
 
             // get index of first section in route
 
@@ -6538,25 +7922,41 @@ namespace ORTS
                 if (direction != Direction.Forward)
                 {
                     if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
-                        Simulator.Confirmer.Message(ConfirmLevel.Warning, "Cannot clear signal behind train while in AUTO mode");
+                        Simulator.Confirmer.Message(ConfirmLevel.Warning, Viewer.Catalog.GetString("Cannot clear signal behind train while in AUTO mode"));
+                    Simulator.SoundNotify = Event.PermissionDenied;
                 }
 
                 else if (NextSignalObject[0] != null)
                 {
-                    NextSignalObject[0].hasPermission = SignalObject.PERMISSION.REQUESTED;
+                    NextSignalObject[0].hasPermission = SignalObject.Permission.Requested;
                 }
             }
         }
 
         //================================================================================================//
         //
-        // Request shunt lock on or release
+        // Request reset signal
         //
 
-        public void RequestShuntLock(int lockType, int OnOff)
+        public void RequestResetSignal(Direction direction)
         {
+            if (!MPManager.IsMultiPlayer())
+            {
+                if (ControlMode == TRAIN_CONTROL.MANUAL || ControlMode == TRAIN_CONTROL.EXPLORER)
+                {
+                    int reqRouteIndex = direction == Direction.Forward ? 0 : 1;
 
-            // TODO
+                    if (NextSignalObject[reqRouteIndex] != null &&
+                        NextSignalObject[reqRouteIndex].this_sig_lr(MstsSignalFunction.NORMAL) != MstsSignalAspect.STOP)
+                    {
+                        int routeIndex = ValidRoute[reqRouteIndex].GetRouteIndex(NextSignalObject[reqRouteIndex].TCNextTC, PresentPosition[reqRouteIndex].RouteListIndex);
+                        signalRef.BreakDownRouteList(ValidRoute[reqRouteIndex], routeIndex, routedForward);
+                        ValidRoute[reqRouteIndex].RemoveRange(routeIndex, ValidRoute[reqRouteIndex].Count - routeIndex);
+
+                        NextSignalObject[reqRouteIndex].ResetSignal(true);
+                    }
+                }
+            }
         }
 
         //================================================================================================//
@@ -6591,7 +7991,6 @@ namespace ORTS
 
         public float GetDistanceToTrain(int sectionIndex, float endOffset)
         {
-
             // use start of list to see if passed position
 
             int endListIndex = ValidRoute[0].GetRouteIndex(sectionIndex, PresentPosition[0].RouteListIndex);
@@ -6632,6 +8031,11 @@ namespace ORTS
         public void SetTrainOutOfControl(OUTOFCONTROL reason)
         {
 
+            if (ControlMode == TRAIN_CONTROL.OUT_OF_CONTROL) // allready out of control, so exit
+            {
+                return;
+            }
+
             // clear all reserved sections etc. - both directions
             if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL)
             {
@@ -6656,9 +8060,7 @@ namespace ORTS
             if (ControlMode != TRAIN_CONTROL.EXPLORER)
                 ControlMode = TRAIN_CONTROL.OUT_OF_CONTROL;
 
-            String report = "Train ";
-            report = String.Concat(report, Number.ToString());
-            report = String.Concat(report, " is out of control and will be stopped. Reason : ");
+            var report = string.Format("Train {0} is out of control and will be stopped. Reason : ", Number.ToString());
 
             OutOfControlReason = reason;
 
@@ -6696,7 +8098,7 @@ namespace ORTS
             }
 
             if (LeadLocomotive != null)
-                ((MSTSLocomotive)LeadLocomotive).SetEmergency();
+                ((MSTSLocomotive)LeadLocomotive).SetEmergency(true);
         }
 
         //================================================================================================//
@@ -6715,6 +8117,11 @@ namespace ORTS
                 else if (thisAction is ActivateSpeedLimit)
                 {
                     SetPendingSpeedLimit(thisAction as ActivateSpeedLimit);
+                }
+                else if (thisAction is AuxActionItem)
+                {
+                    int presentTime = Convert.ToInt32(Math.Floor(Simulator.ClockTime));
+                    ((AuxActionItem)thisAction).ProcessAction(this, presentTime);
                 }
             }
         }
@@ -6743,25 +8150,28 @@ namespace ORTS
 
             if (speedInfo.MaxSpeedMpSSignal > 0)
             {
-                allowedMaxSpeedSignalMpS = speedInfo.MaxSpeedMpSSignal;
-                AllowedMaxSpeedMpS = speedInfo.MaxSpeedMpSSignal;
+                allowedMaxSpeedSignalMpS = Program.Simulator.TimetableMode? speedInfo.MaxSpeedMpSSignal : allowedAbsoluteMaxSpeedSignalMpS;
+                AllowedMaxSpeedMpS = Math.Min(speedInfo.MaxSpeedMpSSignal, allowedMaxSpeedLimitMpS);
             }
             if (speedInfo.MaxSpeedMpSLimit > 0)
             {
-                allowedMaxSpeedLimitMpS = speedInfo.MaxSpeedMpSLimit;
-                AllowedMaxSpeedMpS = speedInfo.MaxSpeedMpSLimit;
+                allowedMaxSpeedLimitMpS = Program.Simulator.TimetableMode ? speedInfo.MaxSpeedMpSLimit : allowedAbsoluteMaxSpeedLimitMpS;
+                if (Program.Simulator.TimetableMode)
+                    AllowedMaxSpeedMpS = speedInfo.MaxSpeedMpSLimit;
+                else
+                    AllowedMaxSpeedMpS = Math.Min(speedInfo.MaxSpeedMpSLimit, allowedMaxSpeedSignalMpS);
             }
 
 #if DEBUG_REPORTS
-                         File.AppendAllText(@"C:\temp\printproc.txt", "Validated speedlimit : " +
-                            "Limit : " + allowedMaxSpeedLimitMpS.ToString() + " ; " +
-                            "Signal : " + allowedMaxSpeedSignalMpS.ToString() + " ; " +
-                            "Overall : " + AllowedMaxSpeedMpS.ToString() + "\n");
+            File.AppendAllText(@"C:\temp\printproc.txt", "Validated speedlimit : " +
+               "Limit : " + allowedMaxSpeedLimitMpS.ToString() + " ; " +
+               "Signal : " + allowedMaxSpeedSignalMpS.ToString() + " ; " +
+               "Overall : " + AllowedMaxSpeedMpS.ToString() + "\n");
 
 #endif
-            if (TrainType == TRAINTYPE.PLAYER && AllowedMaxSpeedMpS > prevMaxSpeedMpS && !Simulator.Confirmer.Viewer.TrackMonitorWindow.Visible && Simulator.Confirmer != null)
+            if (IsActualPlayerTrain && AllowedMaxSpeedMpS > prevMaxSpeedMpS && !Simulator.Confirmer.Viewer.TrackMonitorWindow.Visible && Simulator.Confirmer != null)
             {
-                String message = "Allowed speed raised to " + FormatStrings.FormatSpeed(AllowedMaxSpeedMpS, Simulator.Confirmer.Viewer.MilepostUnitsMetric);
+                var message = Viewer.Catalog.GetStringFmt("Allowed speed raised to {0}", FormatStrings.FormatSpeedDisplay(AllowedMaxSpeedMpS, Simulator.Confirmer.Viewer.MilepostUnitsMetric));
                 Simulator.Confirmer.Message(ConfirmLevel.Information, message);
             }
         }
@@ -6803,9 +8213,7 @@ namespace ORTS
 
             if (Program.Simulator.PlayerLocomotive != null && Program.Simulator.PlayerLocomotive.Train == this)
             {
-                String report = "Train stopped due to problems with other train : train ";
-                report = String.Concat(report, otherTrainNumber.ToString());
-                report = String.Concat(report, " , reason : ", reason);
+                var report = Viewer.Catalog.GetStringFmt("Train stopped due to problems with other train: train {0} , reason: {1}", otherTrainNumber, reason);
 
                 if (Simulator.Confirmer != null) // As Confirmer may not be created until after a restore.
                     Simulator.Confirmer.Message(ConfirmLevel.Warning, report);
@@ -6821,7 +8229,7 @@ namespace ORTS
             }
 
             if (LeadLocomotive != null)
-                ((MSTSLocomotive)LeadLocomotive).SetEmergency();
+                ((MSTSLocomotive)LeadLocomotive).SetEmergency(true);
         }
 
         //================================================================================================//
@@ -6894,7 +8302,7 @@ namespace ORTS
             // remove train from track - clear all reservations etc.
 
             RemoveFromTrack();
-            DeadlockInfo.Clear();
+            ClearDeadlocks();
 
             // check if new train is freight or not
 
@@ -6922,14 +8330,14 @@ namespace ORTS
             float offset = FrontTDBTraveller.TrackNodeOffset;
             int direction = (int)FrontTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[0]);
+            PresentPosition[0].SetTCPosition(tn.TCCrossReference, offset, direction);
             PresentPosition[0].CopyTo(ref PreviousPosition[0]);
 
             tn = RearTDBTraveller.TN;
             offset = RearTDBTraveller.TrackNodeOffset;
             direction = (int)RearTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[1]);
+            PresentPosition[1].SetTCPosition(tn.TCCrossReference, offset, direction);
 
             PresentPosition[0].DistanceTravelledM = DistanceTravelledM;
             PresentPosition[1].DistanceTravelledM = oldRearPosition.DistanceTravelledM;
@@ -6991,7 +8399,7 @@ namespace ORTS
             OccupiedTrack.Clear();
             if (TrainRoute != null) TrainRoute.Clear();
             TrainRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                PresentPosition[1].TCDirection, Length, false, false, true);
+                PresentPosition[1].TCDirection, Length, false, true, false);
 
             foreach (TCRouteElement thisElement in TrainRoute)
             {
@@ -7004,8 +8412,8 @@ namespace ORTS
             foreach (TrackCircuitSection thisSection in OccupiedTrack)
             {
                 float distanceToClear = DistanceTravelledM + thisSection.Length + standardOverlapM;
-                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION ||
-                    thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction ||
+                    thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                 {
                     distanceToClear += Length + junctionOverlapM;
                 }
@@ -7054,6 +8462,98 @@ namespace ORTS
                 }
             }
 
+            // add present occupied sections to train route to avoid out-of-path detection
+            // check if first section in route
+
+            if (ValidRoute[0].GetRouteIndex(OccupiedTrack[0].Index, 0) > 0)
+            {
+                int lastSectionIndex = OccupiedTrack[0].Index;
+                int lastIndex = ValidRoute[0].GetRouteIndex(lastSectionIndex, 0);
+
+                for (int isection = 1; isection <= OccupiedTrack.Count - 1; isection++)
+                {
+                    int nextSectionIndex = OccupiedTrack[isection].Index;
+                    int nextIndex = ValidRoute[0].GetRouteIndex(nextSectionIndex, 0);
+
+                    if (nextIndex < 0) // this section is not in route - if last index = 0, add to start else add to rear
+                    {
+                        TrackCircuitSection thisSection = signalRef.TrackCircuitList[nextSectionIndex];
+                        int thisDirection = 0;
+
+                        for (int iLink = 0; iLink <= 1; iLink++)
+                        {
+                            for (int iDir = 0; iDir <= 1; iDir++)
+                            {
+                                if (thisSection.Pins[iDir, iLink].Link == lastSectionIndex)
+                                {
+                                    thisDirection = thisSection.Pins[iDir, iLink].Direction;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (lastIndex == 0)
+                        {
+                            ValidRoute[0].Insert(0, new TCRouteElement(OccupiedTrack[isection], thisDirection, signalRef, lastSectionIndex));
+                        }
+                        else
+                        {
+                            ValidRoute[0].Add(new TCRouteElement(OccupiedTrack[isection], thisDirection, signalRef, lastSectionIndex));
+                        }
+                    }
+                    else
+                    {
+                        lastIndex = nextIndex;
+                        lastSectionIndex = nextSectionIndex;
+                    }
+                }
+            }
+            // else start from last section
+            else
+            {
+                int otIndex = OccupiedTrack.Count - 1;
+                int lastSectionIndex = OccupiedTrack[otIndex].Index;
+                int lastIndex = ValidRoute[0].GetRouteIndex(lastSectionIndex, 0);
+
+                for (int isection = otIndex - 1; isection >= 0; isection--)
+                {
+                    int nextSectionIndex = OccupiedTrack[isection].Index;
+                    int nextIndex = ValidRoute[0].GetRouteIndex(nextSectionIndex, 0);
+
+                    if (nextIndex < 0) // this section is not in route - if last index = 0, add to start else add to rear
+                    {
+                        TrackCircuitSection thisSection = signalRef.TrackCircuitList[nextSectionIndex];
+                        int thisDirection = 0;
+
+                        for (int iLink = 0; iLink <= 1; iLink++)
+                        {
+                            for (int iDir = 0; iDir <= 1; iDir++)
+                            {
+                                if (thisSection.Pins[iDir, iLink].Link == lastSectionIndex)
+                                {
+                                    thisDirection = thisSection.Pins[iDir, iLink].Direction;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (lastIndex == 0)
+                        {
+                            ValidRoute[0].Insert(0, new TCRouteElement(OccupiedTrack[isection], thisDirection, signalRef, lastSectionIndex));
+                        }
+                        else
+                        {
+                            ValidRoute[0].Add(new TCRouteElement(OccupiedTrack[isection], thisDirection, signalRef, lastSectionIndex));
+                        }
+                    }
+                    else
+                    {
+                        lastIndex = nextIndex;
+                        lastSectionIndex = nextSectionIndex;
+                    }
+                }
+            }
+
             // reset signals etc.
 
             SignalObjectItems.Clear();
@@ -7087,6 +8587,20 @@ namespace ORTS
 
                 UpdateManualMode(-1);
             }
+            else if (ControlMode == TRAIN_CONTROL.EXPLORER)
+            {
+                // set track occupation
+
+                UpdateSectionStateExplorer();
+
+                // reset routes and check sections either end of train
+
+                PresentPosition[0].RouteListIndex = -1;
+                PresentPosition[1].RouteListIndex = -1;
+                PreviousPosition[0].RouteListIndex = -1;
+
+                UpdateExplorerMode(-1);
+            }
             else
             {
                 signalRef.requestClearNode(routedForward, ValidRoute[0]);
@@ -7110,8 +8624,9 @@ namespace ORTS
         // Update track details after uncoupling
         //
 
-        public void UpdateTrackActionsUncoupling(bool originalTrain)
+        public bool UpdateTrackActionsUncoupling(bool originalTrain)
         {
+            bool inPath = true;
 
 #if DEBUG_REPORTS
             File.AppendAllText(@"C:\temp\printproc.txt",
@@ -7130,7 +8645,7 @@ namespace ORTS
             if (originalTrain)
             {
                 RemoveFromTrack();
-                DeadlockInfo.Clear();
+                ClearDeadlocks();
 
                 ClearSectionItem dummyItem = new ClearSectionItem(0.0f, 0);
                 List<DistanceTravelledItem> activeActions = requiredActions.GetActions(99999999f, dummyItem.GetType());
@@ -7143,14 +8658,14 @@ namespace ORTS
             float offset = FrontTDBTraveller.TrackNodeOffset;
             int direction = (int)FrontTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[0]);
+            PresentPosition[0].SetTCPosition(tn.TCCrossReference, offset, direction);
             PresentPosition[0].CopyTo(ref PreviousPosition[0]);
 
             tn = RearTDBTraveller.TN;
             offset = RearTDBTraveller.TrackNodeOffset;
             direction = (int)RearTDBTraveller.Direction;
 
-            tn.TCCrossReference.GetTCPosition(offset, direction, ref PresentPosition[1]);
+            PresentPosition[1].SetTCPosition(tn.TCCrossReference, offset, direction);
 
             PresentPosition[0].DistanceTravelledM = DistanceTravelledM;
             PresentPosition[1].DistanceTravelledM = DistanceTravelledM - Length;
@@ -7163,7 +8678,7 @@ namespace ORTS
             OccupiedTrack.Clear();
             if (TrainRoute != null) TrainRoute.Clear();
             TrainRoute = signalRef.BuildTempRoute(this, PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset,
-                PresentPosition[1].TCDirection, Length, false, false, true);
+                PresentPosition[1].TCDirection, Length, false, true, false);
 
             foreach (TCRouteElement thisElement in TrainRoute)
             {
@@ -7205,15 +8720,40 @@ namespace ORTS
                 offset = PresentPosition[1].TCOffset;
 
                 ValidRoute[0] = signalRef.BuildTempRoute(this, thisSection.Index, PresentPosition[1].TCOffset,
-                            PresentPosition[1].TCDirection, Length, false, true, true);
+                            PresentPosition[1].TCDirection, Length, true, true, false);
 
             }
 
-            // player train
+            // player train or AI train
 
             else
             {
 
+                //<CSComment> InitializeSignals needs this info sometimes, so I repeat lines below here
+                if (Simulator.Settings.ExtendedAIShunting && !IsActualPlayerTrain && (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL || ControlMode == TRAIN_CONTROL.AUTO_NODE))
+                {
+                    while (TCRoute.activeSubpath <= TCRoute.TCRouteSubpaths.Count - 1)
+                    {
+                        PresentPosition[0].RouteListIndex = ValidRoute[0].GetRouteIndex(PresentPosition[0].TCSectionIndex, 0);
+                        PresentPosition[1].RouteListIndex = ValidRoute[0].GetRouteIndex(PresentPosition[1].TCSectionIndex, 0);
+                        if (PresentPosition[0].RouteListIndex < 0 || PresentPosition[1].RouteListIndex < 0)
+                        {
+                            // Try first to change valid route, if there are other subpaths.
+                            if (TCRoute.activeSubpath < TCRoute.TCRouteSubpaths.Count - 1)
+                            {
+                                ValidRoute[0] = null;
+                                TCRoute.activeSubpath++;
+                                ValidRoute[0] = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath];
+                            }
+                            else
+                            {
+                                inPath = false;
+                                return inPath;
+                            }
+                        }
+                        else break;
+                    }
+                }
                 // rebuild list of station stops
 
                 if (StationStops.Count > 0)
@@ -7229,7 +8769,7 @@ namespace ORTS
                     {
                         if (removeStations)
                         {
-                            if (StationStops[iStation].ExitSignal >= 0 && HoldingSignals.Contains(StationStops[iStation].ExitSignal))
+                            if (StationStops[iStation].ExitSignal >= 0 && StationStops[iStation].HoldSignal && HoldingSignals.Contains(StationStops[iStation].ExitSignal))
                             {
                                 HoldingSignals.Remove(StationStops[iStation].ExitSignal);
                             }
@@ -7250,6 +8790,7 @@ namespace ORTS
                 NextSignalObject[1] = null;
                 LastReservedSection[0] = PresentPosition[0].TCSectionIndex;
                 LastReservedSection[1] = PresentPosition[1].TCSectionIndex;
+
 
                 InitializeSignals(true);
 
@@ -7276,6 +8817,20 @@ namespace ORTS
 
                     UpdateManualMode(-1);
                 }
+                else if (ControlMode == TRAIN_CONTROL.EXPLORER)
+                {
+                    // set track occupation
+
+                    UpdateSectionStateExplorer();
+
+                    // reset routes and check sections either end of train
+
+                    PresentPosition[0].RouteListIndex = -1;
+                    PresentPosition[1].RouteListIndex = -1;
+                    PreviousPosition[0].RouteListIndex = -1;
+
+                    UpdateExplorerMode(-1);
+                }
                 else
                 {
                     CheckDeadlock(ValidRoute[0], Number);
@@ -7294,7 +8849,36 @@ namespace ORTS
                                 "Train " + Number.ToString() +
                                 " uncouple procedure completed \n");
             }
+            return inPath;
         }
+
+        //================================================================================================//
+        //
+        // Temporarily remove from track to allow decoupled train to set occupied sections
+        //
+
+        public void TemporarilyRemoveFromTrack()
+        {
+            RemoveFromTrack();
+            ClearDeadlocks();
+            ClearSectionItem dummyItem = new ClearSectionItem(0.0f, 0);
+            List<DistanceTravelledItem> activeActions = requiredActions.GetActions(99999999f, dummyItem.GetType());
+            activeActions.Clear();
+        }
+
+        //================================================================================================//
+        //
+        // Goes to next active subpath
+        //
+        public void IncrementSubpath(Train thisTrain)
+        {
+            if (thisTrain.TCRoute.activeSubpath < thisTrain.TCRoute.TCRouteSubpaths.Count - 1)
+            {
+                thisTrain.TCRoute.activeSubpath++;
+                thisTrain.ValidRoute[0] = thisTrain.TCRoute.TCRouteSubpaths[thisTrain.TCRoute.activeSubpath];
+            }
+        }
+
 
         //================================================================================================//
         //
@@ -7303,9 +8887,26 @@ namespace ORTS
 
         internal void CheckDeadlock(TCSubpathRoute thisRoute, int thisNumber)
         {
+            if (signalRef.UseLocationPassingPaths)
+            {
+                CheckDeadlock_locationBased(thisRoute, thisNumber);  // new location based logic
+            }
+            else
+            {
+                CheckDeadlock_pathBased(thisRoute, thisNumber);      // old path based logic
+            }
+        }
+
+        //================================================================================================//
+        //
+        // Check on deadlock - old style path based logic
+        //
+
+        internal void CheckDeadlock_pathBased(TCSubpathRoute thisRoute, int thisNumber)
+        {
             // clear existing deadlock info
 
-            DeadlockInfo.Clear();
+            ClearDeadlocks();
 
             // build new deadlock info
 
@@ -7323,14 +8924,14 @@ namespace ORTS
                         TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisSectionIndex];
                         int thisSectionDirection = thisElement.Direction;
 
-                        if (thisSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                        if (thisSection.CircuitType != TrackCircuitSection.TrackCircuitType.Crossover)
                         {
                             if (otherRouteDict.ContainsKey(thisSectionIndex))
                             {
                                 int otherTrainDirection = otherRouteDict[thisSectionIndex];
                                 if (otherTrainDirection != thisSectionDirection)
                                 {
-                                    int[] endDeadlock = SetDeadlock(iElement, thisRoute, otherRoute, otherTrain);
+                                    int[] endDeadlock = SetDeadlock_pathBased(iElement, thisRoute, otherRoute, otherTrain);
                                     // use end of alternative path if set - if so, compensate for iElement++
                                     iElement = endDeadlock[1] > 0 ? --endDeadlock[1] : endDeadlock[0];
                                 }
@@ -7344,7 +8945,8 @@ namespace ORTS
                 }
             }
 #if DEBUG_DEADLOCK
-            File.AppendAllText(@"C:\Temp\deadlock.txt", "\n=================\nTrain : " + Number.ToString() + "\n");
+            File.AppendAllText(@"C:\Temp\deadlock.txt", "\n================= Check Deadlock \nTrain : " + Number.ToString() + "\n");
+
             foreach (KeyValuePair<int, List<Dictionary<int, int>>> thisDeadlock in DeadlockInfo)
             {
                 File.AppendAllText(@"C:\Temp\deadlock.txt", "Section : " + thisDeadlock.Key.ToString() + "\n");
@@ -7363,10 +8965,10 @@ namespace ORTS
 
         //================================================================================================//
         //
-        // Obtain deadlock details
+        // Obtain deadlock details - old style path based logic
         //
 
-        private int[] SetDeadlock(int thisIndex, TCSubpathRoute thisRoute, TCSubpathRoute otherRoute, Train otherTrain)
+        private int[] SetDeadlock_pathBased(int thisIndex, TCSubpathRoute thisRoute, TCSubpathRoute otherRoute, Train otherTrain)
         {
             int[] returnValue = new int[2];
             returnValue[1] = -1;  // set to no alternative path used
@@ -7415,7 +9017,7 @@ namespace ORTS
 
                 TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisTrainSection];
 
-                if (thisSection.IsSet(otherTrain))
+                if (thisSection.IsSet(otherTrain, true))
                 {
                     allreadyActive = true;
                 }
@@ -7435,7 +9037,7 @@ namespace ORTS
 
             // if section is not a junction, check if either route not ended, if so continue up to next junction
             TrackCircuitSection lastSection = signalRef.TrackCircuitList[lastSectionIndex];
-            if (lastSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+            if (lastSection.CircuitType != TrackCircuitSection.TrackCircuitType.Junction)
             {
                 bool endSectionFound = false;
                 if (thisTrainIndex < (thisRoute.Count - 1))
@@ -7443,7 +9045,7 @@ namespace ORTS
                     for (int iIndex = thisTrainIndex + 1; iIndex < thisRoute.Count - 1 && !endSectionFound; iIndex++)
                     {
                         lastSection = signalRef.TrackCircuitList[thisRoute[iIndex].TCSectionIndex];
-                        endSectionFound = lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION;
+                        endSectionFound = lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction;
                     }
                 }
 
@@ -7452,8 +9054,8 @@ namespace ORTS
                     for (int iIndex = otherTrainIndex - 1; iIndex >= 0 && !endSectionFound; iIndex--)
                     {
                         lastSection = signalRef.TrackCircuitList[otherRoute[iIndex].TCSectionIndex];
-                        endSectionFound = lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION;
-                        if (lastSection.IsSet(otherTrain))
+                        endSectionFound = lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction;
+                        if (lastSection.IsSet(otherTrain, true))
                         {
                             allreadyActive = true;
                         }
@@ -7477,6 +9079,727 @@ namespace ORTS
             if (returnValue[0] < 0)
                 returnValue[0] = thisTrainIndex;
             return (returnValue);
+        }
+
+        //================================================================================================//
+        //
+        // Check on deadlock - new style location based logic
+        //
+
+        internal void CheckDeadlock_locationBased(TCSubpathRoute thisRoute, int thisNumber)
+        {
+            // clear existing deadlock info
+
+            ClearDeadlocks();
+
+            // build new deadlock info
+
+            foreach (Train otherTrain in Simulator.Trains)
+            {
+                bool validTrain = true;
+
+                // check if not AI_Static
+
+                if (otherTrain.GetAIMovementState() == AITrain.AI_MOVEMENT_STATE.AI_STATIC)
+                {
+                    validTrain = false;
+                }
+
+                if (otherTrain.Number != thisNumber && otherTrain.TrainType != TRAINTYPE.STATIC && validTrain)
+                {
+                    TCSubpathRoute otherRoute = otherTrain.ValidRoute[0];
+                    Dictionary<int, int> otherRouteDict = otherRoute.ConvertRoute();
+
+                    for (int iElement = 0; iElement < thisRoute.Count; iElement++)
+                    {
+                        TCRouteElement thisElement = thisRoute[iElement];
+                        int thisSectionIndex = thisElement.TCSectionIndex;
+                        TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisSectionIndex];
+                        int thisSectionDirection = thisElement.Direction;
+
+                        if (thisSection.CircuitType != TrackCircuitSection.TrackCircuitType.Crossover)
+                        {
+                            if (otherRouteDict.ContainsKey(thisSectionIndex))
+                            {
+                                int otherTrainDirection = otherRouteDict[thisSectionIndex];
+                                if (otherTrainDirection != thisSectionDirection)
+                                {
+                                    if (CheckRealDeadlock_locationBased(thisRoute, otherRoute, ref iElement))
+                                    {
+                                        int[] endDeadlock = SetDeadlock_locationBased(iElement, thisRoute, otherRoute, otherTrain);
+                                        // use end of alternative path if set
+                                        iElement = endDeadlock[1] > 0 ? --endDeadlock[1] : endDeadlock[0];
+                                    }
+                                }
+                                else
+                                {
+                                    iElement = EndCommonSection(iElement, thisRoute, otherRoute);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        //================================================================================================//
+        //
+        // Obtain deadlock details - new style location based logic
+        //
+
+        private int[] SetDeadlock_locationBased(int thisIndex, TCSubpathRoute thisRoute, TCSubpathRoute otherRoute, Train otherTrain)
+        {
+            int[] returnValue = new int[2];
+            returnValue[1] = -1;  // set to no alternative path used
+
+            TCRouteElement firstElement = thisRoute[thisIndex];
+            int firstSectionIndex = firstElement.TCSectionIndex;
+            bool allreadyActive = false;
+
+            int thisTrainSectionIndex = firstSectionIndex;
+            int otherTrainSectionIndex = firstSectionIndex;
+
+            // double index variables required as last valid index must be known when exiting loop
+            int thisTrainIndex = thisIndex;
+            int thisTrainNextIndex = thisTrainIndex;
+            int otherTrainIndex = otherRoute.GetRouteIndex(firstSectionIndex, 0);
+            int otherTrainNextIndex = otherTrainIndex;
+
+            int thisFirstIndex = thisTrainIndex;
+            int otherFirstIndex = otherTrainIndex;
+
+            TCRouteElement thisTrainElement = thisRoute[thisTrainIndex];
+            TCRouteElement otherTrainElement = otherRoute[otherTrainIndex];
+
+            bool validPassLocation = false;
+            int endSectionRouteIndex = -1;
+
+            bool endOfLoop = false;
+
+            // loop while not at end of route for either train and sections are equal
+            // loop is also exited when alternative path is found for either train
+            while (!endOfLoop)
+            {
+                thisTrainIndex = thisTrainNextIndex;
+                thisTrainElement = thisRoute[thisTrainIndex];
+                otherTrainIndex = otherTrainNextIndex;
+                thisTrainSectionIndex = thisTrainElement.TCSectionIndex;
+
+                otherTrainElement = otherRoute[otherTrainIndex];
+                otherTrainSectionIndex = otherTrainElement.TCSectionIndex;
+
+                TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisTrainSectionIndex];
+
+                // if sections not equal : test length of next not-common section, if long enough then exit loop
+                if (thisTrainSectionIndex != otherTrainSectionIndex)
+                {
+                    int nextThisRouteIndex = thisTrainIndex;
+                    TrackCircuitSection passLoopSection = signalRef.TrackCircuitList[ValidRoute[0][nextThisRouteIndex].TCSectionIndex];
+                    int nextOtherRouteIndex = otherRoute.GetRouteIndex(passLoopSection.Index, otherTrainIndex);
+
+                    float passLength = passLoopSection.Length;
+                    bool endOfPassLoop = false;
+
+                    while (!endOfPassLoop)
+                    {
+                        // loop is longer as at least one of the trains so is valid
+                        if (passLength > Length || passLength > otherTrain.Length)
+                        {
+                            endOfPassLoop = true;
+                            endOfLoop = true;
+                        }
+
+                        // get next section
+                        else if (nextThisRouteIndex < ValidRoute[0].Count - 2)
+                        {
+                            nextThisRouteIndex++;
+                            passLoopSection = signalRef.TrackCircuitList[ValidRoute[0][nextThisRouteIndex].TCSectionIndex];
+                            nextOtherRouteIndex = otherRoute.GetRouteIndexBackward(passLoopSection.Index, otherTrainIndex);
+
+                            // new common section after too short loop - not a valid deadlock point
+                            if (nextOtherRouteIndex >= 0)
+                            {
+                                endOfPassLoop = true;
+                                thisTrainNextIndex = nextThisRouteIndex;
+                                otherTrainNextIndex = nextOtherRouteIndex;
+                            }
+                            else
+                            {
+                                passLength += passLoopSection.Length;
+                            }
+                        }
+
+                        // end of route
+                        else
+                        {
+                            endOfPassLoop = true;
+                            endOfLoop = true;
+                        }
+                    }
+                }
+
+               // if section is a deadlock boundary, check available paths for both trains
+
+                else
+                {
+
+                    List<int> thisTrainAllocatedPaths = new List<int>();
+                    List<int> otherTrainAllocatedPaths = new List<int>();
+
+                    bool gotoNextSection = true;
+
+                    if (thisSection.DeadlockReference >= 0 && thisTrainElement.FacingPoint) // test for facing points only
+                    {
+                        bool thisTrainFits = false;
+                        bool otherTrainFits = false;
+
+                        int endSectionIndex = -1;
+
+                        validPassLocation = true;
+
+                        // get allocated paths for this train
+                        DeadlockInfo thisDeadlockInfo = signalRef.DeadlockInfoList[thisSection.DeadlockReference];
+
+                        // get allocated paths for this train - if none yet set, create references
+                        int thisTrainReferenceIndex = thisDeadlockInfo.GetTrainAndSubpathIndex(Number, TCRoute.activeSubpath);
+                        if (!thisDeadlockInfo.TrainReferences.ContainsKey(thisTrainReferenceIndex))
+                        {
+                            thisDeadlockInfo.SetTrainDetails(Number, TCRoute.activeSubpath, Length, ValidRoute[0], thisTrainIndex);
+                        }
+
+                        // if valid path for this train
+                        if (thisDeadlockInfo.TrainReferences.ContainsKey(thisTrainReferenceIndex))
+                        {
+                            thisTrainAllocatedPaths = thisDeadlockInfo.TrainReferences[thisDeadlockInfo.GetTrainAndSubpathIndex(Number, TCRoute.activeSubpath)];
+
+                            // if paths available, get end section and check train against shortest path
+                            if (thisTrainAllocatedPaths.Count > 0)
+                            {
+                                endSectionIndex = thisDeadlockInfo.AvailablePathList[thisTrainAllocatedPaths[0]].EndSectionIndex;
+                                endSectionRouteIndex = thisRoute.GetRouteIndex(endSectionIndex, thisTrainIndex);
+                                Dictionary<int, bool> thisTrainFitList = thisDeadlockInfo.TrainLengthFit[thisDeadlockInfo.GetTrainAndSubpathIndex(Number, TCRoute.activeSubpath)];
+                                foreach (int iPath in thisTrainAllocatedPaths)
+                                {
+                                    if (thisTrainFitList[iPath])
+                                    {
+                                        thisTrainFits = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            validPassLocation = false;
+                        }
+
+                        // get allocated paths for other train - if none yet set, create references
+                        int otherTrainReferenceIndex = thisDeadlockInfo.GetTrainAndSubpathIndex(otherTrain.Number, otherTrain.TCRoute.activeSubpath);
+                        if (!thisDeadlockInfo.TrainReferences.ContainsKey(otherTrainReferenceIndex))
+                        {
+                            int otherTrainElementIndex = otherTrain.ValidRoute[0].GetRouteIndexBackward(endSectionIndex, otherFirstIndex);
+                            if (otherTrainElementIndex < 0) // train joins deadlock area on different node
+                            {
+                                validPassLocation = false;
+                                thisDeadlockInfo.RemoveTrainAndSubpathIndex(otherTrain.Number, otherTrain.TCRoute.activeSubpath); // remove index as train has no valid path
+                            }
+                            else
+                            {
+                                thisDeadlockInfo.SetTrainDetails(otherTrain.Number, otherTrain.TCRoute.activeSubpath, otherTrain.Length,
+                                    otherTrain.ValidRoute[0], otherTrainElementIndex);
+                            }
+                        }
+
+                        // if valid path for other train
+                        if (validPassLocation && thisDeadlockInfo.TrainReferences.ContainsKey(otherTrainReferenceIndex))
+                        {
+                            otherTrainAllocatedPaths =
+                                thisDeadlockInfo.TrainReferences[thisDeadlockInfo.GetTrainAndSubpathIndex(otherTrain.Number, otherTrain.TCRoute.activeSubpath)];
+
+                            // if paths available, get end section (if not yet set) and check train against shortest path
+                            if (otherTrainAllocatedPaths.Count > 0)
+                            {
+                                if (endSectionRouteIndex < 0)
+                                {
+                                    endSectionIndex = thisDeadlockInfo.AvailablePathList[otherTrainAllocatedPaths[0]].EndSectionIndex;
+                                    endSectionRouteIndex = thisRoute.GetRouteIndex(endSectionIndex, thisTrainIndex);
+                                }
+
+                                Dictionary<int, bool> otherTrainFitList =
+                                    thisDeadlockInfo.TrainLengthFit[thisDeadlockInfo.GetTrainAndSubpathIndex(otherTrain.Number, otherTrain.TCRoute.activeSubpath)];
+                                foreach (int iPath in otherTrainAllocatedPaths)
+                                {
+                                    if (otherTrainFitList[iPath])
+                                    {
+                                        otherTrainFits = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        // other train has no valid path relating to the passing path, so passing not possible
+                        {
+                            validPassLocation = false;
+                        }
+
+                        // if both trains have only one route, make sure it's not the same (inverse) route
+
+                        if (thisTrainAllocatedPaths.Count == 1 && otherTrainAllocatedPaths.Count == 1)
+                        {
+                            if (thisDeadlockInfo.InverseInfo.ContainsKey(thisTrainAllocatedPaths[0]) && thisDeadlockInfo.InverseInfo[thisTrainAllocatedPaths[0]] == otherTrainAllocatedPaths[0])
+                            {
+                                validPassLocation = false;
+                            }
+                        }
+
+                        // if there are passing paths and at least one train fits in shortest path, it is a valid location so break loop
+                        if (validPassLocation)
+                        {
+                            gotoNextSection = false;
+                            if (thisTrainFits || otherTrainFits)
+                            {
+                                if (thisSection.IsSet(otherTrain, true))
+                                {
+                                    allreadyActive = true;
+                                }
+                                endOfLoop = true;
+                            }
+                            else
+                            {
+                                thisTrainNextIndex = endSectionRouteIndex;
+                                otherTrainNextIndex = otherRoute.GetRouteIndexBackward(endSectionIndex, otherTrainIndex);
+                                if (otherTrainNextIndex < 0) endOfLoop = true;
+                            }
+                        }
+                    }
+
+                    // if loop not yet ended - not a valid pass location, move to next section (if available)
+
+                    if (gotoNextSection)
+                    {
+                        // if this section is occupied by other train, break loop - further checks are of no use
+                        if (thisSection.IsSet(otherTrain, true))
+                        {
+                            allreadyActive = true;
+                            endOfLoop = true;
+                        }
+                        else
+                        {
+                            thisTrainNextIndex++;
+                            otherTrainNextIndex--;
+
+                            if (thisTrainNextIndex > thisRoute.Count - 1 || otherTrainNextIndex < 0)
+                            {
+                                endOfLoop = true; // end of path reached for either train
+                            }
+                        }
+                    }
+                }
+            }
+
+            // if valid pass location : set return index
+
+            if (validPassLocation && endSectionRouteIndex >= 0)
+            {
+                returnValue[1] = endSectionRouteIndex;
+            }
+
+            // get sections on which loop ended
+            thisTrainElement = thisRoute[thisTrainIndex];
+            thisTrainSectionIndex = thisTrainElement.TCSectionIndex;
+
+            otherTrainElement = otherRoute[otherTrainIndex];
+            otherTrainSectionIndex = otherTrainElement.TCSectionIndex;
+
+            // if last sections are still equal - end of route reached for one of the trains
+            // otherwise, last common sections was previous sections for this train
+            int lastSectionIndex = (thisTrainSectionIndex == otherTrainSectionIndex) ? thisTrainSectionIndex :
+                thisRoute[thisTrainIndex - 1].TCSectionIndex;
+            TrackCircuitSection lastSection = signalRef.TrackCircuitList[lastSectionIndex];
+
+            // TODO : if section is not a junction but deadlock is allready active, wind back to last junction
+            // if section is not a junction, check if either route not ended, if so continue up to next junction
+            if (lastSection.CircuitType != TrackCircuitSection.TrackCircuitType.Junction)
+            {
+                bool endSectionFound = false;
+                if (thisTrainIndex < (thisRoute.Count - 1))
+                {
+                    for (int iIndex = thisTrainIndex; iIndex < thisRoute.Count - 1 && !endSectionFound; iIndex++)
+                    {
+                        lastSection = signalRef.TrackCircuitList[thisRoute[iIndex].TCSectionIndex];
+                        endSectionFound = lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction;
+                    }
+                }
+
+                else if (otherTrainIndex > 0)
+                {
+                    for (int iIndex = otherTrainIndex; iIndex >= 0 && !endSectionFound; iIndex--)
+                    {
+                        lastSection = signalRef.TrackCircuitList[otherRoute[iIndex].TCSectionIndex];
+                        endSectionFound = lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction;
+                        if (lastSection.IsSet(otherTrain, true))
+                        {
+                            allreadyActive = true;
+                        }
+                    }
+                }
+                lastSectionIndex = lastSection.Index;
+            }
+
+            // set deadlock info for both trains
+
+            SetDeadlockInfo(firstSectionIndex, lastSectionIndex, otherTrain.Number);
+            otherTrain.SetDeadlockInfo(lastSectionIndex, firstSectionIndex, Number);
+
+            if (allreadyActive)
+            {
+                lastSection.SetDeadlockTrap(otherTrain, otherTrain.DeadlockInfo[lastSectionIndex]);
+                returnValue[1] = thisRoute.Count;  // set beyond end of route - no further checks required
+            }
+
+            // if any section occupied by own train, reverse deadlock is active
+
+            TrackCircuitSection firstSection = signalRef.TrackCircuitList[firstSectionIndex];
+
+            int firstRouteIndex = ValidRoute[0].GetRouteIndex(firstSectionIndex, 0);
+            int lastRouteIndex = ValidRoute[0].GetRouteIndex(lastSectionIndex, 0);
+
+            for (int iRouteIndex = firstRouteIndex; iRouteIndex < lastRouteIndex; iRouteIndex++)
+            {
+                TrackCircuitSection partSection = signalRef.TrackCircuitList[ValidRoute[0][iRouteIndex].TCSectionIndex];
+                if (partSection.IsSet(this, true))
+                {
+                    firstSection.SetDeadlockTrap(this, DeadlockInfo[firstSectionIndex]);
+                }
+            }
+
+            returnValue[0] = thisRoute.GetRouteIndex(lastSectionIndex, thisIndex);
+            if (returnValue[0] < 0)
+                returnValue[0] = thisTrainIndex;
+            return (returnValue);
+        }
+
+        /// <summary>
+        /// Find start of common section of two trains
+        /// May check through all subpaths for other train but only through start subpath for this train
+        /// 
+        /// Return value indices :
+        ///   [0, 0] = own train subpath index
+        ///   [0, 1] = own train route index
+        ///   [1, 0] = other train subpath index
+        ///   [1, 1] = other train route index
+        /// </summary>
+        /// <param name="thisTrainStartSubpathIndex"></param>
+        /// <param name="thisTrainStartRouteIndex"></param>
+        /// <param name="otherTrainRoute"></param>
+        /// <param name="startSubpath"></param>
+        /// <param name="startIndex"></param>
+        /// <param name="endSubpath"></param>
+        /// <param name="endIndex"></param>
+        /// <param name="increment"></param>
+        /// <param name="sameDirection"></param>
+        /// <param name="oppositeDirection"></param>
+        /// <param name="foundSameDirection"></param>
+        /// <returns></returns>
+
+        public int[,] FindCommonSectionStart(int thisTrainStartSubpathIndex, int thisTrainStartRouteIndex, TCRoutePath otherTrainRoute,
+                int startSubpath, int startIndex, int endSubpath, int endIndex, int increment)
+        {
+            // preset all loop data
+            int thisSubpathIndex = thisTrainStartSubpathIndex;
+            int thisRouteIndex = thisTrainStartRouteIndex;
+            TCSubpathRoute thisRoute = TCRoute.TCRouteSubpaths[thisSubpathIndex];
+            int thisRouteEndIndex = thisRoute.Count - 1;
+
+            int otherSubpathIndex = startSubpath;
+            int otherRouteIndex = startIndex;
+            TCSubpathRoute otherRoute = otherTrainRoute.TCRouteSubpaths[otherSubpathIndex];
+            int otherSubpathEndIndex = endSubpath;
+            int otherRouteEndIndex = endIndex;
+
+            bool thisEndOfRoute = false;
+            bool otherEndOfRoute = false;
+            bool commonSectionFound = false;
+
+            // preset result
+            int[,] sectionFound = new int[2, 2] { { -1, -1 }, { -1, -1 } };
+
+            // derive sections
+            int thisSectionIndex = thisRoute[thisRouteIndex].TCSectionIndex;
+            int otherSectionIndex = otherRoute[otherRouteIndex].TCSectionIndex;
+
+            // convert other subpath to dictionary for quick reference
+            TCSubpathRoute partRoute;
+            if (otherRouteIndex < otherRouteEndIndex)
+            {
+                partRoute = new TCSubpathRoute(otherRoute, otherRouteIndex, otherRouteEndIndex);
+            }
+            else
+            {
+                partRoute = new TCSubpathRoute(otherRoute, otherRouteEndIndex, otherRouteIndex);
+            }
+            Dictionary<int, int> dictRoute = partRoute.ConvertRoute();
+
+            // loop until common section is found or route is ended
+            while (!commonSectionFound && !otherEndOfRoute)
+            {
+                while (!thisEndOfRoute)
+                {
+                    // get section indices
+                    thisSectionIndex = TCRoute.TCRouteSubpaths[thisSubpathIndex][thisRouteIndex].TCSectionIndex;
+                    if (dictRoute.ContainsKey(thisSectionIndex))
+                    {
+                        int thisDirection = TCRoute.TCRouteSubpaths[thisSubpathIndex][thisRouteIndex].Direction;
+                        int otherDirection = dictRoute[thisSectionIndex];
+
+                        commonSectionFound = true;
+                        sectionFound[0, 0] = thisSubpathIndex;
+                        sectionFound[0, 1] = thisRouteIndex;
+                        sectionFound[1, 0] = otherSubpathIndex;
+                        sectionFound[1, 1] = otherRoute.GetRouteIndex(thisSectionIndex, 0);
+                        break;
+                    }
+
+                    // move to next section for this train
+                    thisRouteIndex++;
+                    if (thisRouteIndex > thisRouteEndIndex)
+                    {
+                        thisEndOfRoute = true;
+                    }
+                }
+
+                // move to next subpath for other train
+                // move to next subpath if end of subpath reached
+                if (increment > 0)
+                {
+                    otherSubpathIndex++;
+                    if (otherSubpathIndex > otherSubpathEndIndex)
+                    {
+                        otherEndOfRoute = true;
+                    }
+                    else
+                    {
+                        dictRoute = otherTrainRoute.TCRouteSubpaths[otherSubpathIndex].ConvertRoute();
+                    }
+                }
+                else
+                {
+                    otherSubpathIndex--;
+                    if (otherSubpathIndex < otherSubpathEndIndex)
+                    {
+                        otherEndOfRoute = true;
+                    }
+                    else
+                    {
+                        dictRoute = otherTrainRoute.TCRouteSubpaths[otherSubpathIndex].ConvertRoute();
+                    }
+                }
+
+                // reset to start for this train
+                thisRouteIndex = thisTrainStartRouteIndex;
+            }
+
+            return (sectionFound);
+        }
+
+        /// <summary>
+        /// Find end of common section searching through both routes in forward direction
+        /// </summary>
+        /// <param name="thisRoute"></param>
+        /// <param name="thisRouteIndex"></param>
+        /// <param name="otherRoute"></param>
+        /// <param name="otherRouteIndex"></param>
+        /// <returns></returns>
+        public int FindCommonSectionEnd(TCSubpathRoute thisRoute, int thisRouteIndex, TCSubpathRoute otherRoute, int otherRouteIndex)
+        {
+            int lastIndex = otherRouteIndex;
+            int thisIndex = thisRouteIndex;
+            int otherIndex = otherRouteIndex;
+            int thisSectionIndex = thisRoute[thisIndex].TCSectionIndex;
+            int otherSectionIndex = otherRoute[otherIndex].TCSectionIndex;
+
+            while (thisSectionIndex == otherSectionIndex)
+            {
+                lastIndex = otherIndex;
+                thisIndex++;
+                otherIndex++;
+
+                if (thisIndex >= thisRoute.Count || otherIndex >= otherRoute.Count)
+                {
+                    break;
+                }
+                else
+                {
+                    thisSectionIndex = thisRoute[thisIndex].TCSectionIndex;
+                    otherSectionIndex = otherRoute[otherIndex].TCSectionIndex;
+                }
+            }
+
+            return (lastIndex);
+        }
+
+        /// <summary>
+        /// Find end of common section searching through own train forward but through other train backward
+        /// </summary>
+        /// <param name="thisRoute"></param>
+        /// <param name="thisRouteIndex"></param>
+        /// <param name="otherRoute"></param>
+        /// <param name="otherRouteIndex"></param>
+        /// <returns></returns>
+        public int FindCommonSectionEndReverse(TCSubpathRoute thisRoute, int thisRouteIndex, TCSubpathRoute otherRoute, int otherRouteIndex)
+        {
+            int lastIndex = otherRouteIndex;
+            int thisIndex = thisRouteIndex;
+            int otherIndex = otherRouteIndex;
+            int thisSectionIndex = thisRoute[thisIndex].TCSectionIndex;
+            int otherSectionIndex = otherRoute[otherIndex].TCSectionIndex;
+
+            while (thisSectionIndex == otherSectionIndex)
+            {
+                lastIndex = otherIndex;
+                thisIndex++;
+                otherIndex--;
+                if (thisIndex >= thisRoute.Count || otherIndex < 0)
+                {
+                    break;
+                }
+                else
+                {
+                    thisSectionIndex = thisRoute[thisIndex].TCSectionIndex;
+                    otherSectionIndex = otherRoute[otherIndex].TCSectionIndex;
+                }
+            }
+
+            return (lastIndex);
+        }
+
+        //================================================================================================//
+        //
+        // Check if conflict is real deadlock situation
+        // Conditions :
+        //   if section is part of deadlock definition, it is a deadlock
+        //   if section has intermediate signals, it is a deadlock
+        //   if section has no intermediate signals but there are signals on both approaches to the deadlock, it is not a deadlock
+        // Return value : boolean to indicate it is a deadlock or not
+        // If not a deadlock, the REF int elementIndex is set to index of the last common section (will be increased in the loop)
+        //
+
+        internal bool CheckRealDeadlock_locationBased(TCSubpathRoute thisRoute, TCSubpathRoute otherRoute, ref int elementIndex)
+        {
+            bool isValidDeadlock = false;
+
+            TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisRoute[elementIndex].TCSectionIndex];
+
+            // check if section is start or part of deadlock definition
+            if (thisSection.DeadlockReference >= 0 || (thisSection.DeadlockBoundaries != null && thisSection.DeadlockBoundaries.Count > 0))
+            {
+                return (true);
+            }
+
+            // loop through common section - if signal is found, it is a deadlock 
+
+            bool validLoop = true;
+            int otherRouteIndex = otherRoute.GetRouteIndex(thisSection.Index, 0);
+
+            for (int iIndex = 0; validLoop; iIndex++)
+            {
+                int thisElementIndex = elementIndex + iIndex;
+                int otherElementIndex = otherRouteIndex - iIndex;
+
+                if (thisElementIndex > thisRoute.Count - 1) validLoop = false;
+                if (otherElementIndex < 0) validLoop = false;
+
+                if (validLoop)
+                {
+                    TrackCircuitSection thisRouteSection = signalRef.TrackCircuitList[thisRoute[thisElementIndex].TCSectionIndex];
+                    TrackCircuitSection otherRouteSection = signalRef.TrackCircuitList[otherRoute[otherElementIndex].TCSectionIndex];
+
+                    if (thisRouteSection.Index != otherRouteSection.Index)
+                    {
+                        validLoop = false;
+                    }
+                    else if (thisRouteSection.EndSignals[0] != null || thisRouteSection.EndSignals[1] != null)
+                    {
+                        isValidDeadlock = true;
+                        validLoop = false;
+                    }
+                }
+            }
+
+            // if no signals along section, check if section is protected by signals - if so, it is not a deadlock
+            // check only as far as maximum signal check distance
+
+            if (!isValidDeadlock)
+            {
+                // this route backward first
+                float totalDistance = 0.0f;
+                bool thisSignalFound = false;
+                validLoop = true;
+
+                for (int iIndex = 0; validLoop; iIndex--)
+                {
+                    int thisElementIndex = elementIndex + iIndex; // going backward as iIndex is negative!
+                    if (thisElementIndex < 0)
+                    {
+                        validLoop = false;
+                    }
+                    else
+                    {
+                        TCRouteElement thisElement = thisRoute[thisElementIndex];
+                        TrackCircuitSection thisRouteSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                        totalDistance += thisRouteSection.Length;
+
+                        if (thisRouteSection.EndSignals[thisElement.Direction] != null)
+                        {
+                            validLoop = false;
+                            thisSignalFound = true;
+                        }
+
+                        if (totalDistance > minCheckDistanceM) validLoop = false;
+                    }
+                }
+
+                // other route backward next
+                totalDistance = 0.0f;
+                bool otherSignalFound = false;
+                validLoop = true;
+
+                for (int iIndex = 0; validLoop; iIndex--)
+                {
+                    int thisElementIndex = otherRouteIndex + iIndex; // going backward as iIndex is negative!
+                    if (thisElementIndex < 0)
+                    {
+                        validLoop = false;
+                    }
+                    else
+                    {
+                        TCRouteElement thisElement = otherRoute[thisElementIndex];
+                        TrackCircuitSection thisRouteSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                        totalDistance += thisRouteSection.Length;
+
+                        if (thisRouteSection.EndSignals[thisElement.Direction] != null)
+                        {
+                            validLoop = false;
+                            otherSignalFound = true;
+                        }
+
+                        if (totalDistance > minCheckDistanceM) validLoop = false;
+                    }
+                }
+
+                if (!thisSignalFound || !otherSignalFound) isValidDeadlock = true;
+            }
+
+            // if not a valid deadlock, find end of common section
+
+            if (!isValidDeadlock)
+            {
+                int newElementIndex = EndCommonSection(elementIndex, thisRoute, otherRoute);
+                elementIndex = newElementIndex;
+            }
+
+            return (isValidDeadlock);
         }
 
         //================================================================================================//
@@ -7507,7 +9830,7 @@ namespace ORTS
         // Get end of common section
         //
 
-        private int EndCommonSection(int thisIndex, TCSubpathRoute thisRoute, TCSubpathRoute otherRoute)
+        static int EndCommonSection(int thisIndex, TCSubpathRoute thisRoute, TCSubpathRoute otherRoute)
         {
             int firstSection = thisRoute[thisIndex].TCSectionIndex;
 
@@ -7549,7 +9872,7 @@ namespace ORTS
 
                     List<int> deadlockTrains = thisSection.DeadlockTraps[Number];
 
-                    if (DeadlockInfo.ContainsKey(thisSection.Index))        // reverse deadlocks
+                    if (DeadlockInfo.ContainsKey(thisSection.Index) && !CheckWaitCondition(thisSection.Index)) // reverse deadlocks and not waiting
                     {
                         foreach (Dictionary<int, int> thisDeadlockList in DeadlockInfo[thisSection.Index])
                         {
@@ -7578,308 +9901,384 @@ namespace ORTS
             if (TrafficService == null)
                 return;   // no traffic definition
 
-            int activeSubroute = 0;
-            int lastRouteIndex = 0;
-
-            TCSubpathRoute thisRoute = TCRoute.TCRouteSubpaths[activeSubroute];
-
             // loop through traffic points
+
+            int beginActiveSubroute = 0;
+            int activeSubrouteNodeIndex = 0;
 
             foreach (Traffic_Traffic_Item thisItem in TrafficService.TrafficDetails)
             {
-                int platformIndex;
-
-                // get platform details
-
-                if (signalRef.PlatformXRefList.TryGetValue(thisItem.PlatformStartID, out platformIndex))
+                if (Simulator.TimetableMode)
                 {
-                    PlatformDetails thisPlatform = signalRef.PlatformDetailsList[platformIndex];
-                    int sectionIndex = thisPlatform.TCSectionIndex[0];
-                    int routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
+                    beginActiveSubroute = 0;
+                    activeSubrouteNodeIndex = 0;
+                }
+                bool validStop =
+                    CreateStationStop(thisItem.PlatformStartID, thisItem.ArrivalTime, thisItem.DepartTime, new DateTime(0), new DateTime(0), clearingDistanceM,
+                    ref beginActiveSubroute, ref activeSubrouteNodeIndex);
+                if (!validStop)
+                {
+                    Trace.TraceInformation("Train {0} : cannot find platform {1}",
+                        Number.ToString(), thisItem.PlatformStartID.ToString());
+                }
+            }
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Create station stop list
+        /// <\summary>
+
+        public bool CreateStationStop(int platformStartID, int arrivalTime, int departTime, DateTime arrivalDT, DateTime departureDT, float clearingDistanceM,
+            ref int beginActiveSubroute, ref int activeSubrouteNodeIndex)
+        {
+            int platformIndex;
+            int lastRouteIndex = 0;
+            int activeSubroute = beginActiveSubroute;
+
+            TCSubpathRoute thisRoute = TCRoute.TCRouteSubpaths[activeSubroute];
+
+            // get platform details
+
+            if (signalRef.PlatformXRefList.TryGetValue(platformStartID, out platformIndex))
+            {
+                PlatformDetails thisPlatform = signalRef.PlatformDetailsList[platformIndex];
+                int sectionIndex = thisPlatform.TCSectionIndex[0];
+                int routeIndex = thisRoute.GetRouteIndex(sectionIndex, activeSubrouteNodeIndex);
+
+                // if first section not found in route, try last
+
+                if (routeIndex < 0)
+                {
+                    sectionIndex = thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+                    routeIndex = thisRoute.GetRouteIndex(sectionIndex, activeSubrouteNodeIndex);
+                }
+
+                // if neither section found - try next subroute - keep trying till found or out of subroutes
+
+                while (routeIndex < 0 && activeSubroute < (TCRoute.TCRouteSubpaths.Count - 1))
+                {
+                    activeSubroute++;
+                    activeSubrouteNodeIndex = 0;
+                    thisRoute = TCRoute.TCRouteSubpaths[activeSubroute];
+                    routeIndex = thisRoute.GetRouteIndex(sectionIndex, activeSubrouteNodeIndex);
 
                     // if first section not found in route, try last
 
                     if (routeIndex < 0)
                     {
                         sectionIndex = thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
-                        routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
+                        routeIndex = thisRoute.GetRouteIndex(sectionIndex, activeSubrouteNodeIndex);
                     }
+                }
 
-                    // if neither section found - try next subroute - keep trying till found or out of subroutes
+                // if neither section found - platform is not on route - skip
 
-                    while (routeIndex < 0 && activeSubroute < (TCRoute.TCRouteSubpaths.Count - 1))
-                    {
-                        activeSubroute++;
-                        thisRoute = TCRoute.TCRouteSubpaths[activeSubroute];
-                        routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
-
-                        // if first section not found in route, try last
-
-                        if (routeIndex < 0)
-                        {
-                            sectionIndex = thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
-                            routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
-                        }
-                    }
-
-                    // if neither section found - platform is not on route - skip
-
-                    if (routeIndex < 0)
-                    {
-                        Trace.TraceWarning("Train {0} : platform {1} is not on route",
-                                Number.ToString(), thisItem.PlatformStartID.ToString());
-                        break;
-                    }
-
-                    // determine end stop position depending on direction
-
-                    TCRouteElement thisElement = thisRoute[routeIndex];
-
-                    int endSectionIndex = thisElement.Direction == 0 ?
-                        thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1] :
-                        thisPlatform.TCSectionIndex[0];
-                    int beginSectionIndex = thisElement.Direction == 0 ?
-                        thisPlatform.TCSectionIndex[0] :
-                        thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
-
-                    float endOffset = thisPlatform.TCOffset[1, thisElement.Direction];
-                    float beginOffset = thisPlatform.TCOffset[0, thisElement.Direction];
-
-                    float deltaLength = thisPlatform.Length - Length; // platform length - train length
-
-                    TrackCircuitSection endSection = signalRef.TrackCircuitList[endSectionIndex];
-
-
-                    int firstRouteIndex = thisRoute.GetRouteIndex(beginSectionIndex, 0);
-                    if (firstRouteIndex < 0)
-                        firstRouteIndex = routeIndex;
-                    lastRouteIndex = thisRoute.GetRouteIndex(endSectionIndex, 0);
-                    if (lastRouteIndex < 0)
-                        lastRouteIndex = routeIndex;
-
-                    // if train too long : search back for platform with same name
-
-                    float fullLength = thisPlatform.Length;
-
-                    if (deltaLength < 0)
-                    {
-                        float actualBegin = beginOffset;
-
-                        TrackCircuitSection thisSection = signalRef.TrackCircuitList[beginSectionIndex];
-
-                        // Other platforms in same section
-
-                        if (thisSection.PlatformIndex.Count > 1)
-                        {
-                            foreach (int nextIndex in thisSection.PlatformIndex)
-                            {
-                                if (nextIndex != platformIndex)
-                                {
-                                    PlatformDetails otherPlatform = signalRef.PlatformDetailsList[nextIndex];
-                                    if (String.Compare(otherPlatform.Name, thisPlatform.Name) == 0)
-                                    {
-                                        int otherSectionIndex = thisElement.Direction == 0 ?
-                                            otherPlatform.TCSectionIndex[0] :
-                                            otherPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
-                                        if (otherSectionIndex == beginSectionIndex)
-                                        {
-                                            if (otherPlatform.TCOffset[0, thisElement.Direction] < actualBegin)
-                                            {
-                                                actualBegin = otherPlatform.TCOffset[0, thisElement.Direction];
-                                                fullLength = endOffset - actualBegin;
-                                            }
-                                        }
-                                        else
-                                        {
-                                            int addRouteIndex = thisRoute.GetRouteIndex(otherSectionIndex, 0);
-                                            float addOffset = otherPlatform.TCOffset[1, thisElement.Direction == 0 ? 1 : 0];
-                                            // offset of begin in other direction is length of available track
-
-                                            if (lastRouteIndex > 0)
-                                            {
-                                                float thisLength =
-                                                    thisRoute.GetDistanceAlongRoute(addRouteIndex, addOffset,
-                                                            lastRouteIndex, endOffset, true, signalRef);
-                                                if (thisLength > fullLength)
-                                                    fullLength = thisLength;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        deltaLength = fullLength - Length;
-                    }
-
-                    // search back along route
-
-                    if (deltaLength < 0)
-                    {
-                        float distance = fullLength + beginOffset;
-                        bool platformFound = false;
-
-                        for (int iIndex = firstRouteIndex - 1;
-                                    iIndex >= 0 && distance < 500f && platformFound;
-                                    iIndex--)
-                        {
-                            int nextSectionIndex = thisRoute[iIndex].TCSectionIndex;
-                            TrackCircuitSection nextSection = signalRef.TrackCircuitList[nextSectionIndex];
-
-                            foreach (int otherPlatformIndex in nextSection.PlatformIndex)
-                            {
-                                PlatformDetails otherPlatform = signalRef.PlatformDetailsList[otherPlatformIndex];
-                                if (String.Compare(otherPlatform.Name, thisPlatform.Name) == 0)
-                                {
-                                    fullLength = otherPlatform.Length + distance;
-                                    // we miss a little bit (offset) - that's because we don't know direction of other platform
-                                    platformFound = true; // only check for one more
-                                }
-                            }
-                            distance += nextSection.Length;
-                        }
-
-                        deltaLength = fullLength - Length;
-                    }
-
-
-                    // determine stop position
-
-                    float stopOffset = endOffset - (0.5f * deltaLength);
-
-                    // beyond section : check for route validity (may not exceed route)
-
-                    if (stopOffset > endSection.Length)
-                    {
-                        float addOffset = stopOffset - endSection.Length;
-                        float overlap = 0f;
-
-                        for (int iIndex = lastRouteIndex; iIndex < thisRoute.Count && overlap < addOffset; iIndex++)
-                        {
-                            TrackCircuitSection nextSection = signalRef.TrackCircuitList[thisRoute[iIndex].TCSectionIndex];
-                            overlap += nextSection.Length;
-                        }
-
-                        if (overlap < stopOffset)
-                            stopOffset = overlap;
-                    }
-
-                    // check if stop offset beyond end signal - do not hold at signal
-
-                    int EndSignal = -1;
-                    bool HoldSignal = false;
-
-                    // check if train is to reverse in platform
-                    // if so, set signal at other end as hold signal
-
-                    int useDirection = thisElement.Direction;
-                    bool inDirection = true;
-
-                    if (TCRoute.ReversalInfo[activeSubroute].Valid)
-                    {
-                        TCReversalInfo thisReversal = TCRoute.ReversalInfo[activeSubroute];
-                        int reversalIndex = thisReversal.SignalUsed ? thisReversal.LastSignalIndex : thisReversal.LastDivergeIndex;
-                        if (reversalIndex >= 0 && reversalIndex <= lastRouteIndex) // reversal point is this section or earlier
-                        {
-                            useDirection = useDirection == 0 ? 1 : 0;
-                            inDirection = false;
-                        }
-                    }
-
-                    // check for end signal
-
-                    if (thisPlatform.EndSignals[useDirection] >= 0)
-                    {
-                        EndSignal = thisPlatform.EndSignals[useDirection];
-                        // stop location is in front of signal
-                        if (inDirection)
-                        {
-                            if (thisPlatform.DistanceToSignals[useDirection] > (stopOffset - endOffset))
-                            {
-                                HoldSignal = true;
-
-                                if ((thisPlatform.DistanceToSignals[useDirection] + (endOffset - stopOffset)) < clearingDistanceM)
-                                {
-                                    stopOffset = endOffset + thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM - 1.0f;
-                                }
-                            }
-                            // if most of train fits in platform then stop at signal
-                            else if ((thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM + thisPlatform.Length) >
-                                          (0.6 * Length))
-                            {
-                                HoldSignal = true;
-                                stopOffset = endOffset + thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM - 1.0f;
-                                // set 1m earlier to give priority to station stop over signal
-                            }
-                        }
-                        else
-                        // end of train is beyond signal
-                        {
-                            if ((beginOffset - thisPlatform.DistanceToSignals[useDirection]) < (stopOffset - Length))
-                            {
-                                HoldSignal = true;
-
-                                if ((stopOffset - Length - beginOffset + thisPlatform.DistanceToSignals[useDirection]) < clearingDistanceM)
-                                {
-                                    stopOffset = beginOffset - thisPlatform.DistanceToSignals[useDirection] + Length + clearingDistanceM + 1.0f;
-                                }
-                            }
-                            // if most of train fits in platform then stop at signal
-                            else if ((thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM + thisPlatform.Length) >
-                                          (0.6 * Length))
-                            {
-                                // set 1m earlier to give priority to station stop over signal
-                                stopOffset = beginOffset - thisPlatform.DistanceToSignals[useDirection] + Length + clearingDistanceM + 1.0f;
-
-                                // check if stop is clear of end signal (if any)
-                                if (thisPlatform.EndSignals[thisElement.Direction] != -1)
-                                {
-                                    if (stopOffset < (endOffset + thisPlatform.DistanceToSignals[thisElement.Direction]))
-                                    {
-                                        HoldSignal = true; // if train fits between signals
-                                    }
-                                    else
-                                    {
-                                        stopOffset = endOffset + thisPlatform.DistanceToSignals[thisElement.Direction] - 1.0f; // stop at end signal
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // build and add station stop
-
-                    TCRouteElement lastElement = thisRoute[lastRouteIndex];
-
-                    StationStop thisStation = new StationStop(
-                            thisItem.PlatformStartID,
-                            thisPlatform,
-                            activeSubroute,
-                            lastRouteIndex,
-                            lastElement.TCSectionIndex,
-                            thisElement.Direction,
-                            EndSignal,
-                            HoldSignal,
-                            stopOffset,
-                            thisItem.ArrivalTime,
-                            thisItem.DepartTime,
-                            StationStop.STOPTYPE.STATION_STOP);
-                    StationStops.Add(thisStation);
-
-                    // add signal to list of hold signals
-
-                    if (HoldSignal)
-                    {
-                        HoldingSignals.Add(EndSignal);
-                    }
+                if (routeIndex < 0)
+                {
+                    Trace.TraceWarning("Train {0} : platform {1} is not on route",
+                            Number.ToString(), platformStartID.ToString());
+                    return (false);
                 }
                 else
                 {
-                    Trace.TraceInformation("Train {0} : cannot find platform {1}",
-                            Number.ToString(), thisItem.PlatformStartID.ToString());
+                    activeSubrouteNodeIndex = routeIndex;
+                    beginActiveSubroute = activeSubroute;
                 }
 
+                // determine end stop position depending on direction
+
+                TCRouteElement thisElement = thisRoute[routeIndex];
+
+                int endSectionIndex = thisElement.Direction == 0 ?
+                    thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1] :
+                    thisPlatform.TCSectionIndex[0];
+                int beginSectionIndex = thisElement.Direction == 0 ?
+                    thisPlatform.TCSectionIndex[0] :
+                    thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+
+                float endOffset = thisPlatform.TCOffset[1, thisElement.Direction];
+                float beginOffset = thisPlatform.TCOffset[0, thisElement.Direction];
+
+                float deltaLength = thisPlatform.Length - Length; // platform length - train length
+
+                TrackCircuitSection endSection = signalRef.TrackCircuitList[endSectionIndex];
+
+
+                int firstRouteIndex = thisRoute.GetRouteIndex(beginSectionIndex, 0);
+                if (firstRouteIndex < 0)
+                    firstRouteIndex = routeIndex;
+                lastRouteIndex = thisRoute.GetRouteIndex(endSectionIndex, 0);
+                if (lastRouteIndex < 0)
+                    lastRouteIndex = routeIndex;
+
+                // if train too long : search back for platform with same name
+
+                float fullLength = thisPlatform.Length;
+
+                if (deltaLength < 0)
+                {
+                    float actualBegin = beginOffset;
+
+                    TrackCircuitSection thisSection = signalRef.TrackCircuitList[beginSectionIndex];
+
+                    // Other platforms in same section
+
+                    if (thisSection.PlatformIndex.Count > 1)
+                    {
+                        foreach (int nextIndex in thisSection.PlatformIndex)
+                        {
+                            if (nextIndex != platformIndex)
+                            {
+                                PlatformDetails otherPlatform = signalRef.PlatformDetailsList[nextIndex];
+                                if (String.Compare(otherPlatform.Name, thisPlatform.Name) == 0)
+                                {
+                                    int otherSectionIndex = thisElement.Direction == 0 ?
+                                        otherPlatform.TCSectionIndex[0] :
+                                        otherPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+                                    if (otherSectionIndex == beginSectionIndex)
+                                    {
+                                        if (otherPlatform.TCOffset[0, thisElement.Direction] < actualBegin)
+                                        {
+                                            actualBegin = otherPlatform.TCOffset[0, thisElement.Direction];
+                                            fullLength = endOffset - actualBegin;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        int addRouteIndex = thisRoute.GetRouteIndex(otherSectionIndex, 0);
+                                        float addOffset = otherPlatform.TCOffset[1, thisElement.Direction == 0 ? 1 : 0];
+                                        // offset of begin in other direction is length of available track
+
+                                        if (lastRouteIndex > 0)
+                                        {
+                                            float thisLength =
+                                                thisRoute.GetDistanceAlongRoute(addRouteIndex, addOffset,
+                                                        lastRouteIndex, endOffset, true, signalRef);
+                                            if (thisLength > fullLength)
+                                                fullLength = thisLength;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    deltaLength = fullLength - Length;
+                }
+
+                // search back along route
+
+                if (deltaLength < 0)
+                {
+                    float distance = fullLength + beginOffset;
+                    bool platformFound = false;
+
+                    for (int iIndex = firstRouteIndex - 1;
+                                iIndex >= 0 && distance < 500f && platformFound;
+                                iIndex--)
+                    {
+                        int nextSectionIndex = thisRoute[iIndex].TCSectionIndex;
+                        TrackCircuitSection nextSection = signalRef.TrackCircuitList[nextSectionIndex];
+
+                        foreach (int otherPlatformIndex in nextSection.PlatformIndex)
+                        {
+                            PlatformDetails otherPlatform = signalRef.PlatformDetailsList[otherPlatformIndex];
+                            if (String.Compare(otherPlatform.Name, thisPlatform.Name) == 0)
+                            {
+                                fullLength = otherPlatform.Length + distance;
+                                // we miss a little bit (offset) - that's because we don't know direction of other platform
+                                platformFound = true; // only check for one more
+                            }
+                        }
+                        distance += nextSection.Length;
+                    }
+
+                    deltaLength = fullLength - Length;
+                }
+
+
+                // determine stop position
+
+                float stopOffset = endOffset - (0.5f * deltaLength);
+
+                // beyond section : check for route validity (may not exceed route)
+
+                if (stopOffset > endSection.Length)
+                {
+                    float addOffset = stopOffset - endSection.Length;
+                    float overlap = 0f;
+
+                    for (int iIndex = lastRouteIndex; iIndex < thisRoute.Count && overlap < addOffset; iIndex++)
+                    {
+                        TrackCircuitSection nextSection = signalRef.TrackCircuitList[thisRoute[iIndex].TCSectionIndex];
+                        overlap += nextSection.Length;
+                    }
+
+                    if (overlap < stopOffset)
+                        stopOffset = overlap;
+                }
+
+                // check if stop offset beyond end signal - do not hold at signal
+
+                int EndSignal = -1;
+                bool HoldSignal = false;
+                bool NoWaitSignal = false;
+                bool NoClaimAllowed = false;
+
+                // check if train is to reverse in platform
+                // if so, set signal at other end as hold signal
+
+                int useDirection = thisElement.Direction;
+                bool inDirection = true;
+
+                if (TCRoute.ReversalInfo[activeSubroute].Valid)
+                {
+                    TCReversalInfo thisReversal = TCRoute.ReversalInfo[activeSubroute];
+                    int reversalIndex = thisReversal.SignalUsed ? thisReversal.LastSignalIndex : thisReversal.LastDivergeIndex;
+                    if (reversalIndex >= 0 && reversalIndex <= lastRouteIndex) // reversal point is this section or earlier
+                    {
+                        useDirection = useDirection == 0 ? 1 : 0;
+                        inDirection = false;
+                    }
+                }
+
+                // check for end signal
+
+                if (thisPlatform.EndSignals[useDirection] >= 0)
+                {
+                    EndSignal = thisPlatform.EndSignals[useDirection];
+
+                    // stop location is in front of signal
+                    if (inDirection)
+                    {
+                        if (thisPlatform.DistanceToSignals[useDirection] > (stopOffset - endOffset))
+                        {
+                            HoldSignal = true;
+
+                            if ((thisPlatform.DistanceToSignals[useDirection] + (endOffset - stopOffset)) < clearingDistanceM)
+                            {
+                                stopOffset = endOffset + thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM - 1.0f;
+                            }
+                        }
+                        // if most of train fits in platform then stop at signal
+                        else if ((thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM + thisPlatform.Length) >
+                                      (0.6 * Length))
+                        {
+                            HoldSignal = true;
+                            stopOffset = endOffset + thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM - 1.0f;
+                            // set 1m earlier to give priority to station stop over signal
+                        }
+                        // train does not fit in platform - reset exit signal
+                        else
+                        {
+                            EndSignal = -1;
+                        }
+                    }
+                    else
+                    // end of train is beyond signal
+                    {
+                        if ((beginOffset - thisPlatform.DistanceToSignals[useDirection]) < (stopOffset - Length))
+                        {
+                            HoldSignal = true;
+
+                            if ((stopOffset - Length - beginOffset + thisPlatform.DistanceToSignals[useDirection]) < clearingDistanceM)
+                            {
+                                stopOffset = beginOffset - thisPlatform.DistanceToSignals[useDirection] + Length + clearingDistanceM + 1.0f;
+                            }
+                        }
+                        // if most of train fits in platform then stop at signal
+                        else if ((thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM + thisPlatform.Length) >
+                                      (0.6 * Length))
+                        {
+                            // set 1m earlier to give priority to station stop over signal
+                            stopOffset = beginOffset - thisPlatform.DistanceToSignals[useDirection] + Length + clearingDistanceM + 1.0f;
+
+                            // check if stop is clear of end signal (if any)
+                            if (thisPlatform.EndSignals[thisElement.Direction] != -1)
+                            {
+                                if (stopOffset < (endOffset + thisPlatform.DistanceToSignals[thisElement.Direction]))
+                                {
+                                    HoldSignal = true; // if train fits between signals
+                                }
+                                else
+                                {
+                                    stopOffset = endOffset + thisPlatform.DistanceToSignals[thisElement.Direction] - 1.0f; // stop at end signal
+                                }
+                            }
+                        }
+                        // train does not fit in platform - reset exit signal
+                        else
+                        {
+                            EndSignal = -1;
+                        }
+                    }
+                }
+
+                if (Simulator.Settings.NoForcedRedAtStationStops)
+                {
+                    // We don't want reds at exit signal in this case
+                    HoldSignal = false;
+                }
+
+                // build and add station stop
+
+                TCRouteElement lastElement = thisRoute[lastRouteIndex];
+
+                StationStop thisStation = new StationStop(
+                        platformStartID,
+                        thisPlatform,
+                        activeSubroute,
+                        lastRouteIndex,
+                        lastElement.TCSectionIndex,
+                        thisElement.Direction,
+                        EndSignal,
+                        HoldSignal,
+                        NoWaitSignal,
+                        NoClaimAllowed,
+                        stopOffset,
+                        arrivalTime,
+                        departTime,
+                        StationStop.STOPTYPE.STATION_STOP);
+
+                thisStation.arrivalDT = arrivalDT;
+                thisStation.departureDT = departureDT;
+
+                //<CSComment> is this really necessary?
+
+                MergeWPAndInsert(activeSubroute, thisStation, thisElement, beginOffset, endOffset);
+                //<CSComment> should this be reused?
+
+                //                    StationStops.Add(thisStation);
+                //
+                //                    // if station has hold signal and this signal is the same as the exit signal for previous station, remove the exit signal from the previous station
+                //
+                //                    if (HoldSignal && StationStops.Count > 1)
+                //                    {
+                //                        if (EndSignal == StationStops[StationStops.Count - 2].ExitSignal && StationStops[StationStops.Count - 2].HoldSignal)
+                //                        {
+                //                            StationStops[StationStops.Count - 2].HoldSignal = false;
+                //                            StationStops[StationStops.Count - 2].ExitSignal = -1;
+                //                            if (HoldingSignals.Contains(EndSignal))
+                //                            {
+                //                                HoldingSignals.Remove(EndSignal);
+                //                            }
+                //                        }
+                //                    }
+
+
+                // add signal to list of hold signals
+
+                if (HoldSignal)
+                {
+                    HoldingSignals.Add(EndSignal);
+                }
             }
+            else
+            {
+                return (false);
+            }
+
 #if DEBUG_TEST
             File.AppendAllText(@"C:\temp\TCSections.txt", "\nSTATION STOPS\n\n");
 
@@ -7915,6 +10314,22 @@ namespace ORTS
                 }
             }
 #endif
+
+            return (true);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Add the station stop after removing all WP between Begin and end offset
+        /// <\summary>
+
+        public void MergeWPAndInsert(int activeSubroute, StationStop thisStation, TCRouteElement thisElement, float beginOffset, float endOffset)
+        {
+            for (int idxElt = 0; idxElt < TCRoute.WaitingPoints.Count; idxElt++)
+            {
+                var element = TCRoute.WaitingPoints[idxElt];
+            }
+            StationStops.Add(thisStation);
         }
 
         //================================================================================================//
@@ -7927,14 +10342,14 @@ namespace ORTS
 
             // loop through all waiting points - back to front as the processing affects the actual routepaths
 
-            int prevSection = -1;
-
-            for (int iWait = TCRoute.WaitingPoints.Count - 1; iWait >= 0; iWait--)
+            for (int iWait = 0; iWait <= TCRoute.WaitingPoints.Count - 1; iWait++)
             {
                 int[] waitingPoint = TCRoute.WaitingPoints[iWait];
 
                 TCSubpathRoute thisRoute = TCRoute.TCRouteSubpaths[waitingPoint[0]];
                 int routeIndex = thisRoute.GetRouteIndex(waitingPoint[1], 0);
+                if (iWait < TCRoute.WaitingPoints.Count - 1 && TCRoute.WaitingPoints[iWait + 1][1] == waitingPoint[1])
+                    continue;
                 int lastIndex = routeIndex;
 
                 // check if waiting point is in route - else give warning and skip
@@ -7944,20 +10359,7 @@ namespace ORTS
                     continue;
                 }
 
-                // waiting point is in same section as previous - add time to previous point, remove this point
-                if (waitingPoint[1] == prevSection)
-                {
-                    int[] prevWP = TCRoute.WaitingPoints[iWait + 1];
-                    prevWP[2] += waitingPoint[2];
-                    TCRoute.WaitingPoints.RemoveAt(iWait);
-                    Trace.TraceInformation("Waiting points for train " + Number.ToString() + " combined, total time set to " + prevWP[2].ToString());
-                    continue;
-                }
-
-                // check if section has signal
-
-                prevSection = waitingPoint[1];  // save
-
+                int direction = thisRoute[routeIndex].Direction;
                 bool endSectionFound = false;
                 int endSignalIndex = -1;
 
@@ -7965,7 +10367,6 @@ namespace ORTS
                 TrackCircuitSection nextSection =
                     routeIndex < thisRoute.Count - 2 ? signalRef.TrackCircuitList[thisRoute[routeIndex + 1].TCSectionIndex] : null;
 
-                int direction = thisRoute[routeIndex].Direction;
                 if (thisSection.EndSignals[direction] != null)
                 {
                     endSectionFound = true;
@@ -7974,7 +10375,7 @@ namespace ORTS
 
                 // check if next section is junction
 
-                else if (nextSection == null || nextSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                else if (nextSection == null || nextSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
                 {
                     endSectionFound = true;
                 }
@@ -7993,7 +10394,7 @@ namespace ORTS
                         lastIndex = nextIndex;
                         endSignalIndex = nextSection.EndSignals[direction].thisRef;
                     }
-                    else if (nextSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                    else if (nextSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
                     {
                         endSectionFound = true;
                         lastIndex = nextIndex - 1;
@@ -8001,37 +10402,14 @@ namespace ORTS
                     nextIndex++;
                 }
 
-                // move sections beyond waiting point to next subroute
-
-                TCSubpathRoute nextRoute = null;
-                if ((waitingPoint[0] + 1) > (TCRoute.TCRouteSubpaths.Count - 1))
+                if (endSignalIndex > -1)
                 {
-                    nextRoute = new TCSubpathRoute();
-                    TCRoute.TCRouteSubpaths.Add(nextRoute);
-                    TCReversalInfo nextReversalPoint = new TCReversalInfo(); // also add dummy reversal info to match total number
-                    TCRoute.ReversalInfo.Add(nextReversalPoint);
-                }
-                else
-                {
-                    nextRoute = TCRoute.TCRouteSubpaths[waitingPoint[0] + 1];
-                }
-
-                for (int iElement = thisRoute.Count - 1; iElement >= lastIndex + 1; iElement--)
-                {
-                    nextRoute.Insert(0, thisRoute[iElement]);
-                    thisRoute.RemoveAt(iElement);
-                }
-
-                // repeat actual waiting section in next subroute
-
-                nextRoute.Insert(0, thisRoute[thisRoute.Count - 1]);
-
-                // add end signal to hold list, set ref in waiting point
-
-                if (endSignalIndex >= 0)
-                {
-                    TCRoute.WaitingPoints[iWait][4] = endSignalIndex;
-                    HoldingSignals.Add(endSignalIndex);
+                    AIActSigDelegateRef action = new AIActSigDelegateRef(this, waitingPoint[5], 0f, waitingPoint[0], lastIndex, thisRoute[lastIndex].TCSectionIndex, direction);
+                    signalRef.SignalObjects[endSignalIndex].LockForTrain(this.Number, waitingPoint[0]);
+                    action.SetEndSignalIndex(endSignalIndex);
+                    action.SetSignalObject(signalRef.SignalObjects[endSignalIndex]);
+                    action.Delay = waitingPoint[2] <= 5 ? 5 : waitingPoint[2];
+                    AuxActionsContain.Add(action);
                 }
             }
         }
@@ -8050,7 +10428,6 @@ namespace ORTS
             }
 
             TrafficService = new Traffic_Service_Definition();
-            TrafficService.TrafficDetails = new List<Traffic_Traffic_Item>();
 
             foreach (Player_Traffic_Item thisItem in playerList)
             {
@@ -8069,7 +10446,7 @@ namespace ORTS
         /// Clear station from list, clear exit signal if required
         /// <\summary>
 
-        public void ClearStation(uint id1, uint id2)
+        public virtual void ClearStation(uint id1, uint id2, bool removeStation)
         {
             int foundStation = -1;
             StationStop thisStation = null;
@@ -8077,6 +10454,7 @@ namespace ORTS
             for (int iStation = 0; iStation < StationStops.Count && foundStation < 0; iStation++)
             {
                 thisStation = StationStops[iStation];
+                if (thisStation.SubrouteIndex > TCRoute.activeSubpath) break;
                 if (thisStation.PlatformReference == id1 ||
                     thisStation.PlatformReference == id2)
                 {
@@ -8100,18 +10478,153 @@ namespace ORTS
                     }
                 }
             }
-
-            for (int iStation = foundStation; iStation >= 0; iStation--)
+            if (removeStation)
             {
-                StationStops.RemoveAt(iStation);
+                for (int iStation = foundStation; iStation >= 0; iStation--)
+                {
+                    StationStops.RemoveAt(iStation);
+                }
             }
         }
 
         //================================================================================================//
+
         /// <summary>
         /// Create status line
         /// <\summary>
-
+        /// <remarks>
+        ///  "Train", "Travelled", "Speed", "Max", "AI mode", "AI data", "Mode", "Auth", "Distance", "Signal", "Distance", "Consist", "Path"
+        ///  0   Train: Number with trailing type (F freight, P Passenger)
+        ///  1   Travelled: travelled distance so far
+        ///  2   Speed: Current speed
+        ///  3   Max: Maximum allowed speed
+        ///  4   AIMode :
+        ///      INI     : AI is in INIT mode
+        ///      STC     : AI is static
+        ///      STP     : AI is Stopped
+        ///      BRK     : AI Brakes
+        ///      ACC     : AI do acceleration
+        ///      FOL     : AI follows
+        ///      RUN     : AI is running
+        ///      EOP     : AI approch and of path
+        ///      STA     : AI is on Station Stop
+        ///      WTP     : AI is on Waiting Point
+        ///  5   AI Data :
+        ///      000&000     : Throttel & Brake in %
+        ///                  : for mode INI, BRK, ACC, FOL, RUN or EOP
+        ///      HH:mm:ss    : for mode STA or WTP with actualDepart or DepartTime
+        ///                  : for mode STC with Start Time Value
+        ///      ..:..:..    : For other case
+        ///  6   Mode:
+        ///          SIGN or Sdelay: Train in AUTO_SIGNAL, with delay if train delayed
+        ///          NODE or Ndelay: Train in AUTO_NODE, with delay if train delayed
+        ///          MAN: Train in AUTO_MANUAL
+        ///          OOC: Train in OUT_OF_CONTROL
+        ///          EXP: Train in EXPLORER
+        ///  7   Auth + Distance:    For Player Train
+        ///          case OOC:   Distance set to blank
+        ///              SPAD:   Signal Passed At Danger
+        ///              RSPD:   Rear SPAD
+        ///              OOAU:   Out Of Authority
+        ///              OOPA:   Out Of Path
+        ///              SLPP:   Slipped out Path
+        ///              SLPT:   Slipped to End of Track
+        ///              OOTR:   To End Of Track
+        ///              MASW:   Misaligned Switch
+        ///              ....:   Undefined
+        ///          case Waiting Point: WAIT, Distance set to Train Number to Wait ????
+        ///          case NODE:                      Distance: Blank or
+        ///              EOT:    End Of Track
+        ///              EOP:    End Of Path
+        ///              RSW:    Reserved Switch
+        ///              LP:     Loop
+        ///              TAH:    Train Ahead
+        ///              MXD:    Max Distance        Distance: To End Of Authority
+        ///              NOP:    No Path Reserved    Distance: To End Of Authority
+        ///              ...:    Undefined
+        ///          Other:
+        ///              Blank + Blank
+        ///  7   Next Action :   For AI Train
+        ///              SPDL    :   Speed limit
+        ///              SIGL    :   Speed signal
+        ///              STOP    :   Signal STOP
+        ///              REST    :   Signal RESTRICTED
+        ///              EOA     :   End Of Authority
+        ///              STAT    :   Station Stop
+        ///              TRAH    :   Train Ahead
+        ///              EOR     :   End Of Route
+        ///              NONE    :   None
+        ///  9   Signal + Distance
+        ///          Manual or Explorer: Distance set to blank
+        ///              First:  Reverse direction
+        ///                  G:  Signal at STOP but Permission Granted
+        ///                  S:  Signal At STOP
+        ///                  P:  Signal at STOP & PROCEED
+        ///                  R:  Signal at RESTRICTING
+        ///                  A:  Signal at APPROACH 1, 2 or 3
+        ///                  C:  Signal at CLEAR 1 or 2
+        ///                  -:  Not Defined
+        ///              <>
+        ///              Second: Forward direction
+        ///                  G:  Signal at STOP but Permission Granted
+        ///                  S:  Signal At STOP
+        ///                  P:  Signal at STOP & PROCEED
+        ///                  R:  Signal at RESTRICTING
+        ///                  A:  Signal at APPROACH 1, 2 or 3
+        ///                  C:  Signal at CLEAR 1 or 2
+        ///                  -:  Not Defined
+        ///          Other:  Distance is Distance to next Signal
+        ///              STOP:   Signal at STOP
+        ///              SPRC:   Signal at STOP & PROCEED
+        ///              REST:   Signal at RESTRICTING
+        ///              APP1:   Signal at APPROACH 1
+        ///              APP2:   Signal at APPROACH 2
+        ///              APP3:   Signal at APPROACH 3
+        ///              CLR1:   Signal at CLEAR 1
+        ///              CLR2:   Signal at CLEAR 2
+        ///  10  Consist:
+        ///          PLAYER:
+        ///          REMOTE:
+        ///  11  Path:
+        ///          not Manual nor Explorer:
+        ///              number or ?     :   Id of subpath in valid TCRoute or ? if no valid TCRoute
+        ///              ={              :   Starting String
+        ///              CircuitString   :   List of Circuit (see next)
+        ///              }               :   Ending String
+        ///              x or blank      :   x if already on TCRoute
+        ///          Manual or Explorer:
+        ///              CircuitString   :   Backward
+        ///              ={  Dir }=      :   Dir is '<' or '>'
+        ///              CircuitString   :   Forward
+        ///          For AI  :
+        ///              Train Name
+        ///  
+        ///      CircuitString analyse:
+        ///          Build string for section information
+        ///      returnString +
+        ///      CircuitType:
+        ///          >   : Junction
+        ///          +   : CrossOver
+        ///          [   : End of Track direction 1
+        ///          ]   : End of Track direction 0
+        ///          -   : Default (Track Section)
+        ///      Deadlock traps:
+        ///          Yes : Ended with *
+        ///              Await number    : ^
+        ///              Await more      : ~
+        ///      Train Occupancy:    + '&' If more than one
+        ///          N° of train     : If one train
+        ///      If train reservation :
+        ///          (
+        ///          Train Number
+        ///          )
+        ///      If signal reserved :
+        ///          (S
+        ///          Signal Number
+        ///          )
+        ///      If one or more train claim
+        ///          #
+        /// <\remarks>
         public String[] GetStatus(bool metric)
         {
 
@@ -8119,6 +10632,7 @@ namespace ORTS
 
             string[] statusString = new string[13];
 
+            //  0, "Train"
             statusString[iColumn] = Number.ToString();
 
             if (IsFreight)
@@ -8131,25 +10645,45 @@ namespace ORTS
             }
             iColumn++;
 
-            statusString[iColumn] = FormatStrings.FormatDistance(DistanceTravelledM, metric);
+            //  1, "Travelled"
+            statusString[iColumn] = FormatStrings.FormatDistanceDisplay(DistanceTravelledM, metric);
             iColumn++;
+            //  2, "Speed"
             statusString[iColumn] = FormatStrings.FormatSpeed(SpeedMpS, metric);
             iColumn++;
-            statusString[iColumn] = FormatStrings.FormatSpeed(AllowedMaxSpeedMpS, metric);
+            //  3, "Max"
+            statusString[iColumn] = FormatStrings.FormatSpeedLimit(AllowedMaxSpeedMpS, metric);
             iColumn++;
 
+            //  4, "AI mode"
             statusString[iColumn] = " ";  // for AI trains
             iColumn++;
+            //  5, "AI data"
             statusString[iColumn] = " ";  // for AI trains
             iColumn++;
 
+            //  6, "Mode"
             switch (ControlMode)
             {
                 case TRAIN_CONTROL.AUTO_SIGNAL:
-                    statusString[iColumn] = "SIGN";
+                    if (Delay.HasValue)
+                    {
+                        statusString[iColumn] = String.Concat("S +", Delay.Value.TotalMinutes.ToString("00"));
+                    }
+                    else
+                    {
+                        statusString[iColumn] = "SIGN";
+                    }
                     break;
                 case TRAIN_CONTROL.AUTO_NODE:
-                    statusString[iColumn] = "NODE";
+                    if (Delay.HasValue)
+                    {
+                        statusString[iColumn] = String.Concat("N +", Delay.Value.TotalMinutes.ToString("00"));
+                    }
+                    else
+                    {
+                        statusString[iColumn] = "NODE";
+                    }
                     break;
                 case TRAIN_CONTROL.MANUAL:
                     statusString[iColumn] = "MAN";
@@ -8160,9 +10694,13 @@ namespace ORTS
                 case TRAIN_CONTROL.EXPLORER:
                     statusString[iColumn] = "EXPL";
                     break;
+                default:
+                    statusString[iColumn] = "----";
+                    break;
             }
 
             iColumn++;
+            //  7, "Auth"
             if (ControlMode == TRAIN_CONTROL.OUT_OF_CONTROL)
             {
                 switch (OutOfControlReason)
@@ -8197,6 +10735,7 @@ namespace ORTS
                 }
 
                 iColumn++;
+                //  8, "Distance"
                 statusString[iColumn] = " ";
             }
 
@@ -8231,6 +10770,7 @@ namespace ORTS
                 }
 
                 iColumn++;
+                //  8, "Distance"
                 if (EndAuthorityType[0] != END_AUTHORITY.MAX_DISTANCE && EndAuthorityType[0] != END_AUTHORITY.NO_PATH_RESERVED)
                 {
                     statusString[iColumn] = FormatStrings.FormatDistance(DistanceToEndNodeAuthorityM[0], metric);
@@ -8244,10 +10784,12 @@ namespace ORTS
             {
                 statusString[iColumn] = " ";
                 iColumn++;
+                //  8, "Distance"
                 statusString[iColumn] = " ";
             }
 
             iColumn++;
+            //  9, "Signal"
             if (ControlMode == TRAIN_CONTROL.MANUAL || ControlMode == TRAIN_CONTROL.EXPLORER)
             {
                 // reverse direction
@@ -8255,13 +10797,13 @@ namespace ORTS
 
                 if (NextSignalObject[1] != null)
                 {
-                    SignalHead.SIGASP nextAspect = GetNextSignalAspect(1);
-                    if (NextSignalObject[1].enabledTrain == null || NextSignalObject[1].enabledTrain.Train != this) nextAspect = SignalHead.SIGASP.STOP;  // aspect only valid if signal enabled for this train
+                    MstsSignalAspect nextAspect = GetNextSignalAspect(1);
+                    if (NextSignalObject[1].enabledTrain == null || NextSignalObject[1].enabledTrain.Train != this) nextAspect = MstsSignalAspect.STOP;  // aspect only valid if signal enabled for this train
 
                     switch (nextAspect)
                     {
-                        case SignalHead.SIGASP.STOP:
-                            if (NextSignalObject[1].hasPermission == SignalObject.PERMISSION.GRANTED)
+                        case MstsSignalAspect.STOP:
+                            if (NextSignalObject[1].hasPermission == SignalObject.Permission.Granted)
                             {
                                 firstchar = "G";
                             }
@@ -8270,25 +10812,25 @@ namespace ORTS
                                 firstchar = "S";
                             }
                             break;
-                        case SignalHead.SIGASP.STOP_AND_PROCEED:
+                        case MstsSignalAspect.STOP_AND_PROCEED:
                             firstchar = "P";
                             break;
-                        case SignalHead.SIGASP.RESTRICTING:
+                        case MstsSignalAspect.RESTRICTING:
                             firstchar = "R";
                             break;
-                        case SignalHead.SIGASP.APPROACH_1:
+                        case MstsSignalAspect.APPROACH_1:
                             firstchar = "A";
                             break;
-                        case SignalHead.SIGASP.APPROACH_2:
+                        case MstsSignalAspect.APPROACH_2:
                             firstchar = "A";
                             break;
-                        case SignalHead.SIGASP.APPROACH_3:
+                        case MstsSignalAspect.APPROACH_3:
                             firstchar = "A";
                             break;
-                        case SignalHead.SIGASP.CLEAR_1:
+                        case MstsSignalAspect.CLEAR_1:
                             firstchar = "C";
                             break;
-                        case SignalHead.SIGASP.CLEAR_2:
+                        case MstsSignalAspect.CLEAR_2:
                             firstchar = "C";
                             break;
                     }
@@ -8299,13 +10841,13 @@ namespace ORTS
 
                 if (NextSignalObject[0] != null)
                 {
-                    SignalHead.SIGASP nextAspect = GetNextSignalAspect(0);
-                    if (NextSignalObject[0].enabledTrain == null || NextSignalObject[0].enabledTrain.Train != this) nextAspect = SignalHead.SIGASP.STOP;  // aspect only valid if signal enabled for this train
+                    MstsSignalAspect nextAspect = GetNextSignalAspect(0);
+                    if (NextSignalObject[0].enabledTrain == null || NextSignalObject[0].enabledTrain.Train != this) nextAspect = MstsSignalAspect.STOP;  // aspect only valid if signal enabled for this train
 
                     switch (nextAspect)
                     {
-                        case SignalHead.SIGASP.STOP:
-                            if (NextSignalObject[0].hasPermission == SignalObject.PERMISSION.GRANTED)
+                        case MstsSignalAspect.STOP:
+                            if (NextSignalObject[0].hasPermission == SignalObject.Permission.Granted)
                             {
                                 lastchar = "G";
                             }
@@ -8314,25 +10856,25 @@ namespace ORTS
                                 lastchar = "S";
                             }
                             break;
-                        case SignalHead.SIGASP.STOP_AND_PROCEED:
+                        case MstsSignalAspect.STOP_AND_PROCEED:
                             lastchar = "P";
                             break;
-                        case SignalHead.SIGASP.RESTRICTING:
+                        case MstsSignalAspect.RESTRICTING:
                             lastchar = "R";
                             break;
-                        case SignalHead.SIGASP.APPROACH_1:
+                        case MstsSignalAspect.APPROACH_1:
                             lastchar = "A";
                             break;
-                        case SignalHead.SIGASP.APPROACH_2:
+                        case MstsSignalAspect.APPROACH_2:
                             lastchar = "A";
                             break;
-                        case SignalHead.SIGASP.APPROACH_3:
+                        case MstsSignalAspect.APPROACH_3:
                             lastchar = "A";
                             break;
-                        case SignalHead.SIGASP.CLEAR_1:
+                        case MstsSignalAspect.CLEAR_1:
                             lastchar = "C";
                             break;
-                        case SignalHead.SIGASP.CLEAR_2:
+                        case MstsSignalAspect.CLEAR_2:
                             lastchar = "C";
                             break;
                     }
@@ -8340,62 +10882,76 @@ namespace ORTS
 
                 statusString[iColumn] = String.Concat(firstchar, "<>", lastchar);
                 iColumn++;
+                //  9, "Distance"
                 statusString[iColumn] = " ";
             }
             else
             {
                 if (NextSignalObject[0] != null)
                 {
-                    SignalHead.SIGASP nextAspect = GetNextSignalAspect(0);
+                    MstsSignalAspect nextAspect = GetNextSignalAspect(0);
 
                     switch (nextAspect)
                     {
-                        case SignalHead.SIGASP.STOP:
+                        case MstsSignalAspect.STOP:
                             statusString[iColumn] = "STOP";
                             break;
-                        case SignalHead.SIGASP.STOP_AND_PROCEED:
+                        case MstsSignalAspect.STOP_AND_PROCEED:
                             statusString[iColumn] = "SPRC";
                             break;
-                        case SignalHead.SIGASP.RESTRICTING:
+                        case MstsSignalAspect.RESTRICTING:
                             statusString[iColumn] = "REST";
                             break;
-                        case SignalHead.SIGASP.APPROACH_1:
+                        case MstsSignalAspect.APPROACH_1:
                             statusString[iColumn] = "APP1";
                             break;
-                        case SignalHead.SIGASP.APPROACH_2:
+                        case MstsSignalAspect.APPROACH_2:
                             statusString[iColumn] = "APP2";
                             break;
-                        case SignalHead.SIGASP.APPROACH_3:
+                        case MstsSignalAspect.APPROACH_3:
                             statusString[iColumn] = "APP3";
                             break;
-                        case SignalHead.SIGASP.CLEAR_1:
+                        case MstsSignalAspect.CLEAR_1:
                             statusString[iColumn] = "CLR1";
                             break;
-                        case SignalHead.SIGASP.CLEAR_2:
+                        case MstsSignalAspect.CLEAR_2:
                             statusString[iColumn] = "CLR2";
                             break;
                     }
 
                     iColumn++;
+                    //  9, "Distance"
                     statusString[iColumn] = FormatStrings.FormatDistance(distanceToSignal, metric);
                 }
                 else
                 {
                     statusString[iColumn] = " ";
                     iColumn++;
+                    //  9, "Distance"
                     statusString[iColumn] = " ";
                 }
             }
 
             iColumn++;
+            //  10, "Consist"
             statusString[iColumn] = "PLAYER";
+            if (TrainType == TRAINTYPE.REMOTE) statusString[iColumn] = "REMOTE";
 
+            iColumn++;
+            //  11, "Path"
             string circuitString = String.Empty;
 
-            if (ControlMode != TRAIN_CONTROL.MANUAL && ControlMode != TRAIN_CONTROL.EXPLORER)
+            if ((ControlMode != TRAIN_CONTROL.MANUAL && ControlMode != TRAIN_CONTROL.EXPLORER) || ValidRoute[1] == null)
             {
-                circuitString = String.Concat(circuitString, TCRoute.activeSubpath.ToString());
-                circuitString = String.Concat(circuitString, "={");
+                if (TCRoute == null)
+                {
+                    circuitString = string.Concat(circuitString, "?={");
+                }
+                else
+                {
+                    circuitString = String.Concat(circuitString, TCRoute.activeSubpath.ToString());
+                    circuitString = String.Concat(circuitString, "={");
+                }
 
                 int startIndex = PresentPosition[0].RouteListIndex;
                 if (startIndex < 0)
@@ -8415,7 +10971,8 @@ namespace ORTS
                 }
 
                 circuitString = String.Concat(circuitString, "}");
-                if (TCRoute.activeSubpath < TCRoute.TCRouteSubpaths.Count - 1)
+
+                if (TCRoute != null && TCRoute.activeSubpath < TCRoute.TCRouteSubpaths.Count - 1)
                 {
                     circuitString = String.Concat(circuitString, "x", (TCRoute.activeSubpath + 1).ToString());
                 }
@@ -8468,17 +11025,39 @@ namespace ORTS
                 circuitString = String.Concat(circuitString, forwardstring);
             }
 
-            iColumn++;
             statusString[iColumn] = String.Copy(circuitString);
 
             return (statusString);
         }
 
         //================================================================================================//
-        /// <summary>
-        /// Build string for section information
-        /// </summary>
 
+
+        /// <summary>
+        ///  Build string for section information
+        ///  <c>returnString +
+        ///     CircuitType:
+        ///         >   : Junction
+        ///         +   : CrossOver
+        ///         [   : End of Track direction 1
+        ///         ]   : End of Track direction 0
+        ///     Deadlock traps:
+        ///         Yes : Ended with *
+        ///             Await number    : ^
+        ///             Await more      : ~
+        ///     Train Occupancy:    + '&' If more than one
+        ///         N° of train     : If one train
+        ///     If train reservation :
+        ///         (
+        ///         Train Number
+        ///         )
+        ///     If signal reserved :
+        ///         (S
+        ///         Signal Number
+        ///         )
+        ///     If one or more train claim
+        ///         #</c>
+        /// </summary>
         public string BuildSectionString(string thisString, TrackCircuitSection thisSection, int direction)
         {
 
@@ -8486,13 +11065,13 @@ namespace ORTS
 
             switch (thisSection.CircuitType)
             {
-                case TrackCircuitSection.CIRCUITTYPE.JUNCTION:
+                case TrackCircuitSection.TrackCircuitType.Junction:
                     returnString = String.Concat(returnString, ">");
                     break;
-                case TrackCircuitSection.CIRCUITTYPE.CROSSOVER:
+                case TrackCircuitSection.TrackCircuitType.Crossover:
                     returnString = String.Concat(returnString, "+");
                     break;
-                case TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK:
+                case TrackCircuitSection.TrackCircuitType.EndOfTrack:
                     returnString = direction == 0 ? String.Concat(returnString, "]") : String.Concat(returnString, "[");
                     break;
                 default:
@@ -8543,6 +11122,39 @@ namespace ORTS
             return (returnString);
         }
 
+#if WITH_PATH_DEBUG
+        //================================================================================================//
+        /// <summary>
+        /// Create Path information line
+        /// "Train", "Path"
+        /// <\summary>
+
+        public String[] GetPathStatus(bool metric)
+        {
+            int iColumn = 0;
+
+            string[] statusString = new string[5];
+
+            //  "Train"
+            statusString[0] = Number.ToString();
+            iColumn++;
+
+            //  "Action"
+            statusString[1] = "----";
+            statusString[2] = "..";
+            iColumn = 3;
+
+            string circuitString = String.Empty;
+            circuitString = string.Concat(circuitString, "Path: ");
+
+
+            statusString[iColumn] = String.Copy(circuitString);
+            iColumn++;
+
+            return (statusString);
+
+        }
+#endif
         //================================================================================================//
         /// <summary>
         /// Create TrackInfoObject for information in TrackMonitor window
@@ -8589,7 +11201,7 @@ namespace ORTS
 
         public void GetTrainInfoAuto(ref TrainInfo thisInfo)
         {
-            // set control mode
+            // set control modes
             thisInfo.ControlMode = ControlMode;
 
             // set speed
@@ -8599,34 +11211,20 @@ namespace ORTS
             thisInfo.projectedSpeedMpS = ProjectedSpeedMpS;
 
             // set max speed
-            thisInfo.allowedSpeedMpS = AllowedMaxSpeedMpS;
+            thisInfo.allowedSpeedMpS = Math.Min(AllowedMaxSpeedMpS, TrainMaxSpeedMpS);
 
             // set direction
             thisInfo.direction = MUDirection == Direction.Forward ? 0 : (MUDirection == Direction.Reverse ? 1 : -1);
 
             // set orientation
-            thisInfo.cabOrientation = (LeadLocomotive.Flipped ^ LeadLocomotive.GetCabFlipped()) ? 1 : 0;
+            thisInfo.cabOrientation = (Simulator.PlayerLocomotive.Flipped ^ Simulator.PlayerLocomotive.GetCabFlipped()) ? 1 : 0;
 
             // set reversal point
 
             TCReversalInfo thisReversal = TCRoute.ReversalInfo[TCRoute.activeSubpath];
             if (thisReversal.Valid)
             {
-                int reversalSection = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath][(TCRoute.TCRouteSubpaths[TCRoute.activeSubpath].Count) - 1].TCSectionIndex;
-                if (thisReversal.LastDivergeIndex >= 0)
-                {
-                    reversalSection = thisReversal.SignalUsed ? thisReversal.SignalSectorIndex : thisReversal.DivergeSectorIndex;
-                }
-
-                TrackCircuitSection rearSection = signalRef.TrackCircuitList[PresentPosition[1].TCSectionIndex];
-                float reversalDistanceM =
-                    rearSection.GetDistanceBetweenObjects(PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset, PresentPosition[1].TCDirection,
-                    reversalSection, 0.0f);
-                if (reversalDistanceM > 0)
-                {
-                    TrainObjectItem nextItem = new TrainObjectItem(0, reversalDistanceM);
-                    thisInfo.ObjectInfoForward.Add(nextItem);
-                }
+                AddTrainReversalInfo(thisReversal, ref thisInfo);
             }
 
             bool maxAuthSet = false;
@@ -8641,10 +11239,10 @@ namespace ORTS
             bool signalProcessed = false;
             foreach (ObjectItemInfo thisItem in SignalObjectItems)
             {
-                if (thisItem.ObjectType == ObjectItemInfo.ObjectItemType.SIGNAL)
+                if (thisItem.ObjectType == ObjectItemInfo.ObjectItemType.Signal)
                 {
                     TrackMonitorSignalAspect signalAspect =
-                        thisItem.ObjectDetails.TranslateTMAspect(thisItem.ObjectDetails.this_sig_lr(SignalHead.SIGFN.NORMAL));
+                        thisItem.ObjectDetails.TranslateTMAspect(thisItem.ObjectDetails.this_sig_lr(MstsSignalFunction.NORMAL));
                     if (thisItem.ObjectDetails.enabledTrain == null || thisItem.ObjectDetails.enabledTrain.Train != this)
                     {
                         signalAspect = TrackMonitorSignalAspect.Stop;
@@ -8659,7 +11257,7 @@ namespace ORTS
                     thisInfo.ObjectInfoForward.Add(nextItem);
                     signalProcessed = true;
                 }
-                else if (thisItem.ObjectType == ObjectItemInfo.ObjectItemType.SPEEDLIMIT && thisItem.actual_speed > 0)
+                else if (thisItem.ObjectType == ObjectItemInfo.ObjectItemType.Speedlimit && thisItem.actual_speed > 0)
                 {
                     TrainObjectItem nextItem = new TrainObjectItem(thisItem.actual_speed, thisItem.distance_to_train);
                     thisInfo.ObjectInfoForward.Add(nextItem);
@@ -8669,8 +11267,8 @@ namespace ORTS
             if (!signalProcessed && NextSignalObject[0] != null && NextSignalObject[0].enabledTrain != null && NextSignalObject[0].enabledTrain.Train == this)
             {
                 TrackMonitorSignalAspect signalAspect =
-                    NextSignalObject[0].TranslateTMAspect(NextSignalObject[0].this_sig_lr(SignalHead.SIGFN.NORMAL));
-                ObjectSpeedInfo thisSpeedInfo = NextSignalObject[0].this_sig_speed(SignalHead.SIGFN.NORMAL);
+                    NextSignalObject[0].TranslateTMAspect(NextSignalObject[0].this_sig_lr(MstsSignalFunction.NORMAL));
+                ObjectSpeedInfo thisSpeedInfo = NextSignalObject[0].this_sig_speed(MstsSignalFunction.NORMAL);
                 float validSpeed = thisSpeedInfo == null ? -1 : (IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass);
 
                 TrainObjectItem nextItem = new TrainObjectItem(signalAspect, validSpeed, distanceToSignal);
@@ -8681,7 +11279,7 @@ namespace ORTS
                 (!maxAuthSet || StationStops[0].DistanceToTrainM < DistanceToEndNodeAuthorityM[0]) &&
                 StationStops[0].SubrouteIndex == TCRoute.activeSubpath)
             {
-                TrainObjectItem nextItem = new TrainObjectItem(StationStops[0].DistanceToTrainM);
+                TrainObjectItem nextItem = new TrainObjectItem(StationStops[0].DistanceToTrainM, (int)StationStops[0].PlatformItem.Length);
                 thisInfo.ObjectInfoForward.Add(nextItem);
             }
 
@@ -8696,7 +11294,7 @@ namespace ORTS
             {
                 if (RearSignalObject != null)
                 {
-                    TrackMonitorSignalAspect signalAspect = RearSignalObject.TranslateTMAspect(RearSignalObject.this_sig_lr(SignalHead.SIGFN.NORMAL));
+                    TrackMonitorSignalAspect signalAspect = RearSignalObject.TranslateTMAspect(RearSignalObject.this_sig_lr(MstsSignalFunction.NORMAL));
                     TrainObjectItem nextItem = new TrainObjectItem(signalAspect, -1.0f, ClearanceAtRearM);
                     thisInfo.ObjectInfoBackward.Add(nextItem);
                 }
@@ -8705,6 +11303,41 @@ namespace ORTS
                     TrainObjectItem nextItem = new TrainObjectItem(END_AUTHORITY.END_OF_AUTHORITY, ClearanceAtRearM);
                     thisInfo.ObjectInfoBackward.Add(nextItem);
                 }
+            }
+        }
+
+
+        //================================================================================================//
+        /// <summary>
+        /// Add reversal info to TrackMonitorInfo
+        /// </summary>
+
+        public virtual void AddTrainReversalInfo(TCReversalInfo thisReversal, ref TrainInfo thisInfo)
+        {
+            int reversalSection = thisReversal.ReversalSectionIndex;
+            if (thisReversal.LastDivergeIndex >= 0)
+            {
+                reversalSection = thisReversal.SignalUsed ? thisReversal.SignalSectorIndex : thisReversal.DivergeSectorIndex;
+            }
+
+            TrackCircuitSection rearSection = signalRef.TrackCircuitList[PresentPosition[1].TCSectionIndex];
+            float reversalDistanceM = rearSection.GetDistanceBetweenObjects(PresentPosition[1].TCSectionIndex, PresentPosition[1].TCOffset, PresentPosition[1].TCDirection,
+            reversalSection, 0.0f);
+
+            bool reversalEnabled = true;
+            TrackCircuitSection frontSection = signalRef.TrackCircuitList[PresentPosition[0].TCSectionIndex];
+            reversalDistanceM = Math.Max(reversalDistanceM, frontSection.GetDistanceBetweenObjects
+                (PresentPosition[0].TCSectionIndex, PresentPosition[0].TCOffset, PresentPosition[0].TCDirection,
+                thisReversal.ReversalSectionIndex, thisReversal.ReverseReversalOffset));
+            int reversalIndex = thisReversal.SignalUsed ? thisReversal.LastSignalIndex : thisReversal.LastDivergeIndex;
+            if (reversalDistanceM > 50f || (PresentPosition[1].RouteListIndex < reversalIndex))
+            {
+                reversalEnabled = false;
+            }
+            if (reversalDistanceM > 0)
+            {
+                TrainObjectItem nextItem = new TrainObjectItem(reversalEnabled, reversalDistanceM);
+                thisInfo.ObjectInfoForward.Add(nextItem);
             }
         }
 
@@ -8725,7 +11358,7 @@ namespace ORTS
             thisInfo.projectedSpeedMpS = ProjectedSpeedMpS;
 
             // set max speed
-            thisInfo.allowedSpeedMpS = AllowedMaxSpeedMpS;
+            thisInfo.allowedSpeedMpS = Math.Min(AllowedMaxSpeedMpS, TrainMaxSpeedMpS);
 
             // set direction
             thisInfo.direction = MUDirection == Direction.Forward ? 0 : (MUDirection == Direction.Reverse ? 1 : -1);
@@ -8764,11 +11397,11 @@ namespace ORTS
                     if (thisSection.EndSignals[sectionDirection] != null)
                     {
                         distanceToTrainM = sectionStart + thisSection.Length;
-                        SignalObject thisSignal = thisSection.EndSignals[sectionDirection];
-                        ObjectSpeedInfo thisSpeedInfo = thisSignal.this_sig_speed(SignalHead.SIGFN.NORMAL);
+                        var thisSignal = thisSection.EndSignals[sectionDirection];
+                        var thisSpeedInfo = thisSignal.this_sig_speed(MstsSignalFunction.NORMAL);
                         float validSpeed = thisSpeedInfo == null ? -1 : (IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass);
 
-                        TrackMonitorSignalAspect signalAspect = thisSignal.TranslateTMAspect(thisSignal.this_sig_lr(SignalHead.SIGFN.NORMAL));
+                        TrackMonitorSignalAspect signalAspect = thisSignal.TranslateTMAspect(thisSignal.this_sig_lr(MstsSignalFunction.NORMAL));
                         thisItem = new TrainObjectItem(signalAspect, validSpeed, distanceToTrainM);
                         thisInfo.ObjectInfoForward.Add(thisItem);
                     }
@@ -8777,8 +11410,8 @@ namespace ORTS
                     {
                         foreach (ORTS.TrackCircuitSignalItem thisSpeeditem in thisSection.CircuitItems.TrackCircuitSpeedPosts[sectionDirection].TrackCircuitItem)
                         {
-                            SignalObject thisSpeedpost = thisSpeeditem.SignalRef;
-                            ObjectSpeedInfo thisSpeedInfo = thisSpeedpost.this_sig_speed(SignalHead.SIGFN.SPEED);
+                            var thisSpeedpost = thisSpeeditem.SignalRef;
+                            var thisSpeedInfo = thisSpeedpost.this_sig_speed(MstsSignalFunction.SPEED);
                             float validSpeed = thisSpeedInfo == null ? -1 : (IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass);
 
                             distanceToTrainM = sectionStart + thisSpeeditem.SignalLocation;
@@ -8819,10 +11452,10 @@ namespace ORTS
                     {
                         distanceToTrainM = sectionStart + thisSection.Length;
                         SignalObject thisSignal = thisSection.EndSignals[sectionDirection];
-                        ObjectSpeedInfo thisSpeedInfo = thisSignal.this_sig_speed(SignalHead.SIGFN.NORMAL);
+                        ObjectSpeedInfo thisSpeedInfo = thisSignal.this_sig_speed(MstsSignalFunction.NORMAL);
                         float validSpeed = thisSpeedInfo == null ? -1 : (IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass);
 
-                        TrackMonitorSignalAspect signalAspect = thisSignal.TranslateTMAspect(thisSignal.this_sig_lr(SignalHead.SIGFN.NORMAL));
+                        TrackMonitorSignalAspect signalAspect = thisSignal.TranslateTMAspect(thisSignal.this_sig_lr(MstsSignalFunction.NORMAL));
                         thisItem = new TrainObjectItem(signalAspect, validSpeed, distanceToTrainM);
                         thisInfo.ObjectInfoBackward.Add(thisItem);
                     }
@@ -8832,9 +11465,8 @@ namespace ORTS
                         foreach (ORTS.TrackCircuitSignalItem thisSpeeditem in thisSection.CircuitItems.TrackCircuitSpeedPosts[sectionDirection].TrackCircuitItem)
                         {
                             SignalObject thisSpeedpost = thisSpeeditem.SignalRef;
-                            ObjectSpeedInfo thisSpeedInfo = thisSpeedpost.this_sig_speed(SignalHead.SIGFN.SPEED);
-                            float validSpeed = IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass;
-
+                            ObjectSpeedInfo thisSpeedInfo = thisSpeedpost.this_sig_speed(MstsSignalFunction.SPEED);
+                            float validSpeed = thisSpeedInfo == null ? -1 : (IsFreight ? thisSpeedInfo.speed_freight : thisSpeedInfo.speed_pass);
                             distanceToTrainM = sectionStart + thisSpeeditem.SignalLocation;
 
                             if (distanceToTrainM > 0 && validSpeed > 0)
@@ -8867,13 +11499,13 @@ namespace ORTS
             thisInfo.projectedSpeedMpS = ProjectedSpeedMpS;
 
             // set max speed
-            thisInfo.allowedSpeedMpS = AllowedMaxSpeedMpS;
+            thisInfo.allowedSpeedMpS = Math.Min(AllowedMaxSpeedMpS, TrainMaxSpeedMpS);
 
             // set direction
             thisInfo.direction = MUDirection == Direction.Forward ? 0 : 1;
 
             // set orientation
-            thisInfo.cabOrientation = (LeadLocomotive.Flipped ^ LeadLocomotive.GetCabFlipped()) ? 1 : 0;
+            thisInfo.cabOrientation = (Simulator.PlayerLocomotive.Flipped ^ Simulator.PlayerLocomotive.GetCabFlipped()) ? 1 : 0;
 
             // set out of control reason
             TrainObjectItem thisItem = new TrainObjectItem(OutOfControlReason);
@@ -8891,7 +11523,7 @@ namespace ORTS
             File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
             File.AppendAllText(@"C:\temp\TCSections.txt", "Train : " + Number.ToString() + "\n\n");
 #endif
-            TCRoute = new TCRoutePath(aiPath, (int)FrontTDBTraveller.Direction, Length, signalRef);
+            TCRoute = new TCRoutePath(aiPath, (int)FrontTDBTraveller.Direction, Length, signalRef, Number, Simulator.Settings);
             ValidRoute[0] = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath];
         }
 
@@ -8908,7 +11540,7 @@ namespace ORTS
             File.AppendAllText(@"C:\temp\TCSections.txt", "Train : " + Number.ToString() + "\n\n");
 #endif
             int orgDirection = (RearTDBTraveller != null) ? (int)RearTDBTraveller.Direction : -2;
-            TCRoute = new TCRoutePath(aiPath, orgDirection, 0, orgSignals);
+            TCRoute = new TCRoutePath(aiPath, orgDirection, Length, orgSignals, Number, Simulator.Settings);
             ValidRoute[0] = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath];
         }
 
@@ -8920,7 +11552,7 @@ namespace ORTS
         public void PresetExplorerPath(AIPath aiPath, Signals orgSignals)
         {
             int orgDirection = (RearTDBTraveller != null) ? (int)RearTDBTraveller.Direction : -2;
-            TCRoute = new TCRoutePath(aiPath, orgDirection, 0, orgSignals);
+            TCRoute = new TCRoutePath(aiPath, orgDirection, 0, orgSignals, Number, Simulator.Settings);
 
             // loop through all sections in first subroute except first and last (neither can be junction)
 
@@ -8932,7 +11564,7 @@ namespace ORTS
 
                 // process Junction
 
-                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                 {
                     if (thisSection.Pins[0, 0].Link == nextSectionIndex)
                     {
@@ -8947,11 +11579,63 @@ namespace ORTS
         }
 
         //================================================================================================//
+
+        /// <summary>
+        /// Get total length of reserved section ahead of train
+        /// </summary>
+        /// <returns></returns>
+        private float GetReservedLength()
+        {
+            float totalLength = 0f;
+            TCSubpathRoute usedRoute = null;
+            int routeListIndex = -1;
+            float presentOffset = 0f;
+            TrainRouted routedTrain = null;
+
+            if (MUDirection == Direction.Forward || MUDirection == Direction.N || ValidRoute[1] == null)
+            {
+                usedRoute = ValidRoute[0];
+                routeListIndex = PresentPosition[0].RouteListIndex;
+                presentOffset = PresentPosition[0].TCOffset;
+                routedTrain = routedForward;
+            }
+            else
+            {
+                usedRoute = ValidRoute[1];
+                routeListIndex = PresentPosition[1].RouteListIndex;
+                presentOffset = PresentPosition[1].TCOffset;
+                routedTrain = routedBackward;
+            }
+
+            if (routeListIndex >= 0 && usedRoute != null && routeListIndex <= (usedRoute.Count - 1))
+            {
+                TrackCircuitSection thisSection = signalRef.TrackCircuitList[usedRoute[routeListIndex].TCSectionIndex];
+                totalLength = thisSection.Length - presentOffset;
+
+                while (routeListIndex < usedRoute.Count - 1)
+                {
+                    routeListIndex++;
+                    thisSection = signalRef.TrackCircuitList[usedRoute[routeListIndex].TCSectionIndex];
+                    if (thisSection.IsSet(routedTrain, false))
+                    {
+                        totalLength += thisSection.Length;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return (totalLength);
+        }
+
+        //================================================================================================//
         //
         // Extract alternative route
         //
 
-        public TCSubpathRoute ExtractAlternativeRoute(int altRouteIndex)
+        public TCSubpathRoute ExtractAlternativeRoute_pathBased(int altRouteIndex)
         {
             TCSubpathRoute returnRoute = new TCSubpathRoute();
 
@@ -8972,10 +11656,34 @@ namespace ORTS
 
         //================================================================================================//
         //
-        // Set train route to alternative route
+        // Extract alternative route
         //
 
-        public virtual void SetAlternativeRoute(int startElementIndex, int altRouteIndex, SignalObject nextSignal)
+        public TCSubpathRoute ExtractAlternativeRoute_locationBased(TCSubpathRoute altRoute)
+        {
+            TCSubpathRoute returnRoute = new TCSubpathRoute();
+
+            // extract entries of alternative route upto first signal
+
+            foreach (TCRouteElement thisElement in altRoute)
+            {
+                returnRoute.Add(thisElement);
+                TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisElement.TCSectionIndex];
+                if (thisSection.EndSignals[thisElement.Direction] != null)
+                {
+                    break;
+                }
+            }
+
+            return (returnRoute);
+        }
+
+        //================================================================================================//
+        //
+        // Set train route to alternative route - path based deadlock processing
+        //
+
+        public virtual void SetAlternativeRoute_pathBased(int startElementIndex, int altRouteIndex, SignalObject nextSignal)
         {
 
 #if DEBUG_REPORTS
@@ -8995,7 +11703,7 @@ namespace ORTS
 
             // set new train route
 
-            TCSubpathRoute thisRoute = TCRoute.TCRouteSubpaths[TCRoute.activeSubpath];
+            TCSubpathRoute thisRoute = ValidRoute[0];
             TCSubpathRoute newRoute = new TCSubpathRoute();
 
             TCSubpathRoute altRoute = TCRoute.TCAlternativePaths[altRouteIndex];
@@ -9022,6 +11730,12 @@ namespace ORTS
             {
                 newRoute.Add(thisRoute[iElement]);
             }
+            // Reindexes ReversalInfo items
+            var countDifference = newRoute.Count - ValidRoute[0].Count;
+            if (TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex >= 0)
+                TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex = TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex + countDifference;
+            if (TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex >= 0)
+                TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex = TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex + countDifference;
 
             // set new route
 
@@ -9041,13 +11755,762 @@ namespace ORTS
 
             // extract new route upto next signal
 
-            TCSubpathRoute nextPart = ExtractAlternativeRoute(altRouteIndex);
+            TCSubpathRoute nextPart = ExtractAlternativeRoute_pathBased(altRouteIndex);
             foreach (TCRouteElement thisElement in nextPart)
             {
                 newSignalRoute.Add(thisElement);
             }
 
+            nextSignal.ResetSignal(true);
             nextSignal.signalRoute = newSignalRoute;
+
+            if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL)
+            {
+                // keep any items allready passed
+                List<ObjectItemInfo> keeplist = new List<ObjectItemInfo>();
+                foreach (ObjectItemInfo checkItem in SignalObjectItems)
+                {
+                    float actualDistance = GetObjectDistanceToTrain(checkItem);
+                    if (actualDistance < 0)
+                    {
+                        keeplist.Add(checkItem);
+                    }
+                }
+
+                // create new list
+                InitializeSignals(true);
+
+                // add any passed items (in reverse order at start of list)
+                if (keeplist.Count > 0)
+                {
+                    for (int iObject = keeplist.Count - 1; iObject >= 0; iObject--)
+                    {
+                        SignalObjectItems.Insert(0, keeplist[iObject]);
+                    }
+                }
+
+                // find new next signal
+                NextSignalObject[0] = null;
+                for (int iObject = 0; iObject <= SignalObjectItems.Count - 1 && NextSignalObject[0] == null; iObject++)
+                {
+                    if (SignalObjectItems[iObject].ObjectType == ObjectItemInfo.ObjectItemType.Signal)
+                    {
+                        NextSignalObject[0] = SignalObjectItems[iObject].ObjectDetails;
+                    }
+                }
+
+                if (NextSignalObject[0] != null)
+                {
+                    NextSignalObject[0].requestClearSignal(ValidRoute[0], routedForward, 0, false, null);
+                }
+            }
+        }
+
+        //================================================================================================//
+        //
+        // Set train route to alternative route - location based deadlock processing
+        //
+
+        public virtual void SetAlternativeRoute_locationBased(int startSectionIndex, DeadlockInfo sectionDeadlockInfo, int usedPath, SignalObject nextSignal)
+        {
+#if DEBUG_REPORTS
+            File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
+            " : set alternative route no. : " + usedPath.ToString() +
+            " from section " + startSectionIndex.ToString() +
+            " (request from signal " + nextSignal.thisRef.ToString() + " )\n");
+#endif
+
+            if (CheckTrain)
+            {
+                File.AppendAllText(@"C:\temp\checktrain.txt", "Train " + Number.ToString() +
+                " : set alternative route no. : " + usedPath.ToString() +
+                " from section " + startSectionIndex.ToString() +
+                " (request from signal " + nextSignal.thisRef.ToString() + " )\n");
+            }
+
+            // set new train route
+
+            TCSubpathRoute thisRoute = ValidRoute[0];
+            TCSubpathRoute newRoute = new TCSubpathRoute();
+
+            TCSubpathRoute altRoute = sectionDeadlockInfo.AvailablePathList[usedPath].Path;
+            int actSubpath = TCRoute.activeSubpath;
+
+            // part upto split
+
+            int startElementIndex = thisRoute.GetRouteIndex(startSectionIndex, PresentPosition[0].RouteListIndex);
+            for (int iElement = 0; iElement < startElementIndex; iElement++)
+            {
+                newRoute.Add(thisRoute[iElement]);
+            }
+
+            // alternative path
+
+            for (int iElement = 0; iElement < altRoute.Count; iElement++)
+            {
+                newRoute.Add(altRoute[iElement]);
+            }
+
+            // check for any deadlocks on abandoned path - but only if not on new path
+
+            int lastAlternativeSectionIndex = thisRoute.GetRouteIndex(altRoute[altRoute.Count - 1].TCSectionIndex, startElementIndex);
+            for (int iElement = startElementIndex; iElement <= lastAlternativeSectionIndex; iElement++)
+            {
+                TrackCircuitSection abdSection = signalRef.TrackCircuitList[thisRoute[iElement].TCSectionIndex];
+
+#if DEBUG_DEADLOCK
+                File.AppendAllText(@"C:\temp\deadlock.txt","Abandoning section " + abdSection.Index + " for Train " + Number + "\n");
+#endif
+
+                if (newRoute.GetRouteIndex(abdSection.Index, 0) < 0)
+                {
+
+#if DEBUG_DEADLOCK
+                File.AppendAllText(@"C:\temp\deadlock.txt","Removing deadlocks for section " + abdSection.Index + " for Train " + Number + "\n");
+#endif
+
+                    abdSection.ClearDeadlockTrap(Number);
+                }
+
+#if DEBUG_DEADLOCK
+                else
+                {
+                    File.AppendAllText(@"C:\temp\deadlock.txt","Section " + abdSection.Index + " for Train " + Number + " in new route, not removing deadlocks\n");
+                }
+                File.AppendAllText(@"C:\temp\deadlock.txt", "\n");
+#endif
+
+            }
+
+#if DEBUG_DEADLOCK
+            File.AppendAllText(@"C:\temp\deadlock.txt", "\n");
+#endif
+            // check for any stations in abandoned path
+            Dictionary<int, StationStop> abdStations = new Dictionary<int, StationStop>();
+            int nextStationIndex = 0;
+
+
+            if (StationStops != null && StationStops.Count > 0)
+            {
+                int stationRouteIndex = StationStops[nextStationIndex].RouteIndex;
+                int stationSubpath = StationStops[nextStationIndex].SubrouteIndex;
+
+                while (stationRouteIndex < lastAlternativeSectionIndex)
+                {
+                    if (stationSubpath == actSubpath && stationRouteIndex > startElementIndex)
+                    {
+                        abdStations.Add(nextStationIndex, StationStops[nextStationIndex]);
+                    }
+
+                    nextStationIndex++;
+                    if (nextStationIndex > StationStops.Count - 1)
+                    {
+                        stationRouteIndex = lastAlternativeSectionIndex + 1;  // no more stations - set index beyond end
+                    }
+                    else
+                    {
+                        stationRouteIndex = StationStops[nextStationIndex].RouteIndex;
+                        stationSubpath = StationStops[nextStationIndex].SubrouteIndex;
+                        if (stationSubpath > actSubpath)
+                        {
+                            stationRouteIndex = lastAlternativeSectionIndex + 1; // no more stations in this subpath
+                        }
+                    }
+                }
+            }
+
+            // continued path
+
+            for (int iElement = lastAlternativeSectionIndex + 1; iElement < thisRoute.Count; iElement++)
+            {
+                newRoute.Add(thisRoute[iElement]);
+            }
+
+            // Reindexes ReversalInfo items
+            var countDifference = newRoute.Count - ValidRoute[0].Count;
+            if (TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex >= 0)
+                TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex = TCRoute.ReversalInfo[TCRoute.activeSubpath].LastDivergeIndex + countDifference;
+            if (TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex >= 0)
+                TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex = TCRoute.ReversalInfo[TCRoute.activeSubpath].LastSignalIndex + countDifference;
+
+            // set new route
+
+            ValidRoute[0] = newRoute;
+            TCRoute.TCRouteSubpaths[TCRoute.activeSubpath] = newRoute;
+
+            // check for abandoned stations - try to find alternative on passing path
+            if (StationStops != null)
+            {
+                List<StationStop> newStops = new List<StationStop>();
+                int firstIndex = -1;
+
+                foreach (KeyValuePair<int, StationStop> abdStop in abdStations)
+                {
+                    if (firstIndex < 0) firstIndex = abdStop.Key;
+                    StationStop newStop = SetAlternativeStationStop(abdStop.Value, altRoute);
+                    StationStops.RemoveAt(abdStop.Key);
+                    if (newStop != null)
+                    {
+                        newStops.Add(newStop);
+                    }
+                }
+
+                for (int iStop = newStops.Count - 1; iStop == 0; iStop--)
+                {
+                    StationStops.Insert(firstIndex, newStops[iStop]);
+                }
+
+                // recalculate indices of all stops
+                int prevIndex = 0;
+                foreach (StationStop statStop in StationStops)
+                {
+                    statStop.RouteIndex = newRoute.GetRouteIndex(statStop.TCSectionIndex, prevIndex);
+                    prevIndex = statStop.RouteIndex;
+                }
+            }
+
+            // set signal route
+            // part upto split
+
+            if (nextSignal != null)
+            {
+                TCSubpathRoute newSignalRoute = new TCSubpathRoute();
+
+                int splitSignalIndex = nextSignal.signalRoute.GetRouteIndex(thisRoute[startElementIndex].TCSectionIndex, 0);
+                for (int iElement = 0; iElement < splitSignalIndex; iElement++)
+                {
+                    newSignalRoute.Add(nextSignal.signalRoute[iElement]);
+                }
+
+                // extract new route upto next signal
+
+                TCSubpathRoute nextPart = ExtractAlternativeRoute_locationBased(altRoute);
+                foreach (TCRouteElement thisElement in nextPart)
+                {
+                    newSignalRoute.Add(thisElement);
+                }
+
+                // set new signal route
+                // reset signal
+                // if train in signal mode, request clear signal
+
+                nextSignal.ResetSignal(true);
+                nextSignal.signalRoute = newSignalRoute;
+
+                if (ControlMode == TRAIN_CONTROL.AUTO_SIGNAL)
+                {
+                    // keep any items allready passed
+                    List<ObjectItemInfo> keeplist = new List<ObjectItemInfo>();
+                    foreach (ObjectItemInfo checkItem in SignalObjectItems)
+                    {
+                        float actualDistance = GetObjectDistanceToTrain(checkItem);
+                        if (actualDistance < 0)
+                        {
+                            keeplist.Add(checkItem);
+                        }
+                    }
+
+                    // create new list
+                    InitializeSignals(true);
+
+                    // add any passed items (in reverse order at start of list)
+                    if (keeplist.Count > 0)
+                    {
+                        for (int iObject = keeplist.Count - 1; iObject >= 0; iObject--)
+                        {
+                            SignalObjectItems.Insert(0, keeplist[iObject]);
+                        }
+                    }
+
+                    // find new next signal
+                    NextSignalObject[0] = null;
+                    for (int iObject = 0; iObject <= SignalObjectItems.Count - 1 && NextSignalObject[0] == null; iObject++)
+                    {
+                        if (SignalObjectItems[iObject].ObjectType == ObjectItemInfo.ObjectItemType.Signal)
+                        {
+                            NextSignalObject[0] = SignalObjectItems[iObject].ObjectDetails;
+                        }
+                    }
+
+                    if (NextSignalObject[0] != null)
+                    {
+                        NextSignalObject[0].requestClearSignal(ValidRoute[0], routedForward, 0, false, null);
+                    }
+                }
+            }
+        }
+
+        //================================================================================================//
+        //
+        // Find station on alternative route
+        //
+        //
+
+        public virtual StationStop SetAlternativeStationStop(StationStop orgStop, TCSubpathRoute newRoute)
+        {
+            int altPlatformIndex = -1;
+
+            // get station platform list
+            if (signalRef.StationXRefList.ContainsKey(orgStop.PlatformItem.Name))
+            {
+                List<int> XRefKeys = signalRef.StationXRefList[orgStop.PlatformItem.Name];
+
+                // search through all available platforms
+                for (int platformIndex = 0; platformIndex <= XRefKeys.Count - 1 && altPlatformIndex < 0; platformIndex++)
+                {
+                    int platformXRefIndex = XRefKeys[platformIndex];
+                    PlatformDetails altPlatform = signalRef.PlatformDetailsList[platformXRefIndex];
+
+                    // check if section is in new route
+                    for (int iSectionIndex = 0; iSectionIndex <= altPlatform.TCSectionIndex.Count - 1 && altPlatformIndex < 0; iSectionIndex++)
+                    {
+                        if (newRoute.GetRouteIndex(altPlatform.TCSectionIndex[iSectionIndex], 0) > 0)
+                        {
+                            altPlatformIndex = platformXRefIndex;
+                        }
+                    }
+                }
+
+                // section found in new route - set new station details using old details
+                if (altPlatformIndex > 0)
+                {
+                    StationStop newStop = CalculateStationStop(signalRef.PlatformDetailsList[altPlatformIndex].PlatformReference[0],
+                        orgStop.ArrivalTime, orgStop.DepartTime, orgStop.arrivalDT, orgStop.departureDT, 15.0f);
+
+#if DEBUG_REPORTS
+                    if (newStop != null)
+                    {
+                        File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
+                        " : alternative stop required for " + orgStop.PlatformItem.Name +
+                        " ; found : " + newStop.PlatformReference + "\n");
+                    }
+                    else
+                    {
+                        File.AppendAllText(@"C:\temp\printproc.txt", "Train " + Number.ToString() +
+                        " : alternative stop required for " + orgStop.PlatformItem.Name +
+                        " ; not found \n");
+                    }
+#endif
+
+                    if (CheckTrain)
+                    {
+                        if (newStop != null)
+                        {
+                            File.AppendAllText(@"C:\temp\checktrain.txt", "Train " + Number.ToString() +
+                            " : alternative stop required for " + orgStop.PlatformItem.Name +
+                            " ; found : " + newStop.PlatformReference + "\n");
+                        }
+                        else
+                        {
+                            File.AppendAllText(@"C:\temp\checktrain.txt", "Train " + Number.ToString() +
+                            " : alternative stop required for " + orgStop.PlatformItem.Name +
+                            " ; not found \n");
+                        }
+                    }
+
+                    return (newStop);
+                }
+            }
+
+            return (null);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Create station stop
+        /// <\summary>
+
+        public StationStop CalculateStationStop(int platformStartID, int arrivalTime, int departTime, DateTime arrivalDT, DateTime departureDT, float clearingDistanceM)
+        {
+            int platformIndex;
+            int lastRouteIndex = 0;
+            int activeSubroute = 0;
+
+            TCSubpathRoute thisRoute = TCRoute.TCRouteSubpaths[activeSubroute];
+
+            // get platform details
+
+            if (!signalRef.PlatformXRefList.TryGetValue(platformStartID, out platformIndex))
+            {
+                return (null); // station not found
+            }
+            else
+            {
+                PlatformDetails thisPlatform = signalRef.PlatformDetailsList[platformIndex];
+                int sectionIndex = thisPlatform.TCSectionIndex[0];
+                int routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
+
+                // if first section not found in route, try last
+
+                if (routeIndex < 0)
+                {
+                    sectionIndex = thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+                    routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
+                }
+
+                // if neither section found - try next subroute - keep trying till found or out of subroutes
+
+                while (routeIndex < 0 && activeSubroute < (TCRoute.TCRouteSubpaths.Count - 1))
+                {
+                    activeSubroute++;
+                    thisRoute = TCRoute.TCRouteSubpaths[activeSubroute];
+                    routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
+
+                    // if first section not found in route, try last
+
+                    if (routeIndex < 0)
+                    {
+                        sectionIndex = thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+                        routeIndex = thisRoute.GetRouteIndex(sectionIndex, 0);
+                    }
+                }
+
+                // if neither section found - platform is not on route - skip
+
+                if (routeIndex < 0)
+                {
+                    Trace.TraceWarning("Train {0} : platform {1} is not on route",
+                            Number.ToString(), platformStartID.ToString());
+                    return (null);
+                }
+
+                // determine end stop position depending on direction
+
+                TCRouteElement thisElement = thisRoute[routeIndex];
+
+                int endSectionIndex = thisElement.Direction == 0 ?
+                    thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1] :
+                    thisPlatform.TCSectionIndex[0];
+                int beginSectionIndex = thisElement.Direction == 0 ?
+                    thisPlatform.TCSectionIndex[0] :
+                    thisPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+
+                float endOffset = thisPlatform.TCOffset[1, thisElement.Direction];
+                float beginOffset = thisPlatform.TCOffset[0, thisElement.Direction];
+
+                float deltaLength = thisPlatform.Length - Length; // platform length - train length
+
+                TrackCircuitSection endSection = signalRef.TrackCircuitList[endSectionIndex];
+
+
+                int firstRouteIndex = thisRoute.GetRouteIndex(beginSectionIndex, 0);
+                if (firstRouteIndex < 0)
+                    firstRouteIndex = routeIndex;
+                lastRouteIndex = thisRoute.GetRouteIndex(endSectionIndex, 0);
+                if (lastRouteIndex < 0)
+                    lastRouteIndex = routeIndex;
+
+                float stopOffset = 0;
+                float fullLength = thisPlatform.Length;
+
+
+                // if train too long : search back for platform with same name
+                if (deltaLength < 0)
+                {
+                    float actualBegin = beginOffset;
+
+                    TrackCircuitSection thisSection = signalRef.TrackCircuitList[beginSectionIndex];
+
+                    // Other platforms in same section
+
+                    if (thisSection.PlatformIndex.Count > 1)
+                    {
+                        foreach (int nextIndex in thisSection.PlatformIndex)
+                        {
+                            if (nextIndex != platformIndex)
+                            {
+                                PlatformDetails otherPlatform = signalRef.PlatformDetailsList[nextIndex];
+                                if (String.Compare(otherPlatform.Name, thisPlatform.Name) == 0)
+                                {
+                                    int otherSectionIndex = thisElement.Direction == 0 ?
+                                        otherPlatform.TCSectionIndex[0] :
+                                        otherPlatform.TCSectionIndex[thisPlatform.TCSectionIndex.Count - 1];
+                                    if (otherSectionIndex == beginSectionIndex)
+                                    {
+                                        if (otherPlatform.TCOffset[0, thisElement.Direction] < actualBegin)
+                                        {
+                                            actualBegin = otherPlatform.TCOffset[0, thisElement.Direction];
+                                            fullLength = endOffset - actualBegin;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        int addRouteIndex = thisRoute.GetRouteIndex(otherSectionIndex, 0);
+                                        float addOffset = otherPlatform.TCOffset[1, thisElement.Direction == 0 ? 1 : 0];
+                                        // offset of begin in other direction is length of available track
+
+                                        if (lastRouteIndex > 0)
+                                        {
+                                            float thisLength =
+                                                thisRoute.GetDistanceAlongRoute(addRouteIndex, addOffset,
+                                                        lastRouteIndex, endOffset, true, signalRef);
+                                            if (thisLength > fullLength)
+                                                fullLength = thisLength;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    deltaLength = fullLength - Length;
+                }
+
+                // search back along route
+
+                if (deltaLength < 0)
+                {
+                    float distance = fullLength + beginOffset;
+                    bool platformFound = false;
+
+                    for (int iIndex = firstRouteIndex - 1;
+                                iIndex >= 0 && distance < 500f && platformFound;
+                                iIndex--)
+                    {
+                        int nextSectionIndex = thisRoute[iIndex].TCSectionIndex;
+                        TrackCircuitSection nextSection = signalRef.TrackCircuitList[nextSectionIndex];
+
+                        foreach (int otherPlatformIndex in nextSection.PlatformIndex)
+                        {
+                            PlatformDetails otherPlatform = signalRef.PlatformDetailsList[otherPlatformIndex];
+                            if (String.Compare(otherPlatform.Name, thisPlatform.Name) == 0)
+                            {
+                                fullLength = otherPlatform.Length + distance;
+                                // we miss a little bit (offset) - that's because we don't know direction of other platform
+                                platformFound = true; // only check for one more
+                            }
+                        }
+                        distance += nextSection.Length;
+                    }
+
+                    deltaLength = fullLength - Length;
+                }
+
+
+                // determine stop position
+
+                stopOffset = endOffset - (0.5f * deltaLength);
+
+                // beyond section : check for route validity (may not exceed route)
+
+                if (stopOffset > endSection.Length)
+                {
+                    float addOffset = stopOffset - endSection.Length;
+                    float overlap = 0f;
+
+                    for (int iIndex = lastRouteIndex; iIndex < thisRoute.Count && overlap < addOffset; iIndex++)
+                    {
+                        TrackCircuitSection nextSection = signalRef.TrackCircuitList[thisRoute[iIndex].TCSectionIndex];
+                        overlap += nextSection.Length;
+                    }
+
+                    if (overlap < stopOffset)
+                        stopOffset = overlap;
+                }
+
+                // check if stop offset beyond end signal - do not hold at signal
+
+                int EndSignal = -1;
+                bool HoldSignal = false;
+                bool NoWaitSignal = false;
+                bool NoClaimAllowed = false;
+
+                // check if train is to reverse in platform
+                // if so, set signal at other end as hold signal
+
+                int useDirection = thisElement.Direction;
+                bool inDirection = true;
+
+                if (TCRoute.ReversalInfo[activeSubroute].Valid)
+                {
+                    TCReversalInfo thisReversal = TCRoute.ReversalInfo[activeSubroute];
+                    int reversalIndex = thisReversal.SignalUsed ? thisReversal.LastSignalIndex : thisReversal.LastDivergeIndex;
+                    if (reversalIndex >= 0 && reversalIndex <= lastRouteIndex) // reversal point is this section or earlier
+                    {
+                        useDirection = useDirection == 0 ? 1 : 0;
+                        inDirection = false;
+                    }
+                }
+
+                // check for end signal
+
+                if (thisPlatform.EndSignals[useDirection] >= 0)
+                {
+                    EndSignal = thisPlatform.EndSignals[useDirection];
+
+                    // stop location is in front of signal
+                    if (inDirection)
+                    {
+                        if (thisPlatform.DistanceToSignals[useDirection] > (stopOffset - endOffset))
+                        {
+                            HoldSignal = true;
+
+                            if ((thisPlatform.DistanceToSignals[useDirection] + (endOffset - stopOffset)) < clearingDistanceM)
+                            {
+                                stopOffset = endOffset + thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM - 1.0f;
+                            }
+                        }
+                        // if most of train fits in platform then stop at signal
+                        else if ((thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM + thisPlatform.Length) >
+                                      (0.6 * Length))
+                        {
+                            HoldSignal = true;
+                            stopOffset = endOffset + thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM - 1.0f;
+                            // set 1m earlier to give priority to station stop over signal
+                        }
+                        // train does not fit in platform - reset exit signal
+                        else
+                        {
+                            EndSignal = -1;
+                        }
+                    }
+                    else
+                    // end of train is beyond signal
+                    {
+                        if ((beginOffset - thisPlatform.DistanceToSignals[useDirection]) < (stopOffset - Length))
+                        {
+                            HoldSignal = true;
+
+                            if ((stopOffset - Length - beginOffset + thisPlatform.DistanceToSignals[useDirection]) < clearingDistanceM)
+                            {
+                                stopOffset = beginOffset - thisPlatform.DistanceToSignals[useDirection] + Length + clearingDistanceM + 1.0f;
+                            }
+                        }
+                        // if most of train fits in platform then stop at signal
+                        else if ((thisPlatform.DistanceToSignals[useDirection] - clearingDistanceM + thisPlatform.Length) >
+                                      (0.6 * Length))
+                        {
+                            // set 1m earlier to give priority to station stop over signal
+                            stopOffset = beginOffset - thisPlatform.DistanceToSignals[useDirection] + Length + clearingDistanceM + 1.0f;
+
+                            // check if stop is clear of end signal (if any)
+                            if (thisPlatform.EndSignals[thisElement.Direction] != -1)
+                            {
+                                if (stopOffset < (endOffset + thisPlatform.DistanceToSignals[thisElement.Direction]))
+                                {
+                                    HoldSignal = true; // if train fits between signals
+                                }
+                                else
+                                {
+                                    stopOffset = endOffset + thisPlatform.DistanceToSignals[thisElement.Direction] - 1.0f; // stop at end signal
+                                }
+                            }
+                        }
+                        // train does not fit in platform - reset exit signal
+                        else
+                        {
+                            EndSignal = -1;
+                        }
+                    }
+                }
+
+                if (Simulator.Settings.NoForcedRedAtStationStops)
+                {
+                    // We don't want reds at exit signal in this case
+                    HoldSignal = false;
+                }
+
+                // build and add station stop
+
+                TCRouteElement lastElement = thisRoute[lastRouteIndex];
+
+                StationStop thisStation = new StationStop(
+                        platformStartID,
+                        thisPlatform,
+                        activeSubroute,
+                        lastRouteIndex,
+                        lastElement.TCSectionIndex,
+                        thisElement.Direction,
+                        EndSignal,
+                        HoldSignal,
+                        NoWaitSignal,
+                        NoClaimAllowed,
+                        stopOffset,
+                        arrivalTime,
+                        departTime,
+                        StationStop.STOPTYPE.STATION_STOP);
+
+                thisStation.arrivalDT = arrivalDT;
+                thisStation.departureDT = departureDT;
+
+                return (thisStation);
+            }
+        }
+
+        //================================================================================================//
+        //
+        // Set train route to alternative route - location based deadlock processing
+        //
+
+        public void ClearDeadlocks()
+        {
+            // clear deadlocks
+            foreach (KeyValuePair<int, List<Dictionary<int, int>>> thisDeadlock in DeadlockInfo)
+            {
+#if DEBUG_DEADLOCK
+                File.AppendAllText(@"C:\Temp\deadlock.txt", "\n === Removed Train : " + Number.ToString() + "\n");
+                File.AppendAllText(@"C:\Temp\deadlock.txt", "Deadlock at section : " + thisDeadlock.Key.ToString() + "\n");
+#endif
+                TrackCircuitSection thisSection = signalRef.TrackCircuitList[thisDeadlock.Key];
+                foreach (Dictionary<int, int> deadlockTrapInfo in thisDeadlock.Value)
+                {
+                    foreach (KeyValuePair<int, int> deadlockedTrain in deadlockTrapInfo)
+                    {
+                        Train otherTrain = GetOtherTrainByNumber(deadlockedTrain.Key);
+
+#if DEBUG_DEADLOCK
+                        File.AppendAllText(@"C:\Temp\deadlock.txt", "Other train index : " + deadlockedTrain.Key.ToString() + "\n");
+                        if (otherTrain == null)
+                        {
+                            File.AppendAllText(@"C:\Temp\deadlock.txt", "Other train not found!" + "\n");
+                        }
+                        else
+                        {
+                            File.AppendAllText(@"C:\Temp\deadlock.txt", "CrossRef train info : " + "\n");
+                            foreach (KeyValuePair<int, List<Dictionary<int, int>>> reverseDeadlock in otherTrain.DeadlockInfo)
+                            {
+                                File.AppendAllText(@"C:\Temp\deadlock.txt", "   " + reverseDeadlock.Key.ToString() + "\n");
+                            }
+
+                            foreach (KeyValuePair<int, List<Dictionary<int, int>>> reverseDeadlock in otherTrain.DeadlockInfo)
+                            {
+                                if (reverseDeadlock.Key == deadlockedTrain.Value)
+                                {
+                                    File.AppendAllText(@"C:\Temp\deadlock.txt", "Reverse Info : " + "\n");
+                                    foreach (Dictionary<int, int> sectorList in reverseDeadlock.Value)
+                                    {
+                                        foreach (KeyValuePair<int, int> reverseInfo in sectorList)
+                                        {
+                                            File.AppendAllText(@"C:\Temp\deadlock.txt", "   " + reverseInfo.Key.ToString() + " + " + reverseInfo.Value.ToString() + "\n");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+#endif
+                        if (otherTrain != null && otherTrain.DeadlockInfo.ContainsKey(deadlockedTrain.Value))
+                        {
+                            List<Dictionary<int, int>> otherDeadlock = otherTrain.DeadlockInfo[deadlockedTrain.Value];
+                            for (int iDeadlock = otherDeadlock.Count - 1; iDeadlock >= 0; iDeadlock--)
+                            {
+                                Dictionary<int, int> otherDeadlockInfo = otherDeadlock[iDeadlock];
+                                if (otherDeadlockInfo.ContainsKey(Number)) otherDeadlockInfo.Remove(Number);
+                                if (otherDeadlockInfo.Count <= 0) otherDeadlock.RemoveAt(iDeadlock);
+                            }
+
+                            if (otherDeadlock.Count <= 0)
+                                otherTrain.DeadlockInfo.Remove(deadlockedTrain.Value);
+
+                            if (otherTrain.DeadlockInfo.Count <= 0)
+                                thisSection.ClearDeadlockTrap(otherTrain.Number);
+                        }
+                        TrackCircuitSection otherSection = signalRef.TrackCircuitList[deadlockedTrain.Value];
+                        otherSection.ClearDeadlockTrap(Number);
+                    }
+                }
+            }
+
+            DeadlockInfo.Clear();
         }
 
         //================================================================================================//
@@ -9059,6 +12522,115 @@ namespace ORTS
         public Train GetOtherTrainByNumber(int reqNumber)
         {
             return Simulator.Trains.GetTrainByNumber(reqNumber);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Get other train from number
+        /// Use Simulator.Trains to get other train
+        /// </summary>
+
+        public Train GetOtherTrainByName(string reqName)
+        {
+            return Simulator.Trains.GetTrainByName(reqName);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Update AI Static state - dummy method to allow virtualization by child classes
+        /// </summary>
+
+        public virtual void UpdateAIStaticState(int presentTime)
+        {
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Get AI Movement State - dummy method to allow virtualization by child classes
+        /// </summary>
+
+        public virtual AITrain.AI_MOVEMENT_STATE GetAIMovementState()
+        {
+            return (AITrain.AI_MOVEMENT_STATE.UNKNOWN);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Check on station tasks, required when in timetable mode when there is no activity - dummy method to allow virtualization by child classes
+        /// </summary>
+        public virtual void CheckStationTask()
+        {
+        }
+
+        //================================================================================================//
+        //
+        // Check if train is in wait mode - dummy method to allow virtualization by child classes
+        //
+
+        public virtual bool isInWaitState()
+        {
+            return (false);
+        }
+
+        //================================================================================================//
+        //
+        // Check if train has AnyWait valid for this section - dummy method to allow virtualization by child classes
+        //
+
+        public virtual bool CheckAnyWaitCondition(int index)
+        {
+            return (false);
+        }
+
+        //================================================================================================//
+        //
+        // Check if train has Wait valid for this section - dummy method to allow virtualization by child classes
+        //
+
+        public virtual bool HasActiveWait(int startSectionIndex, int endSectionIndex)
+        {
+            return (false);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Update Section State - additional
+        /// dummy method to allow virtualisation for Timetable trains
+        /// </summary>
+
+        public virtual void UpdateSectionState_Additional(int sectionIndex)
+        {
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// Check wait condition
+        /// Dummy method to allow virtualization by child classes
+        /// <\summary>
+
+        public virtual bool CheckWaitCondition(int sectionIndex)
+        {
+            return (false);
+        }
+
+        //================================================================================================//
+        /// <summary>
+        /// TestAbsDelay
+        /// Tests if Waiting point delay >=30000 and <4000; under certain conditions this means that
+        /// delay represents an absolute time of day, with format 3HHMM
+        /// </summary>
+        /// 
+        public void TestAbsDelay(ref int delay, int correctedTime)
+        {
+            if (Program.Simulator.TimetableMode || !Program.Simulator.Settings.ExtendedAIShunting) return;
+            if (delay < 30000 || delay >= 40000) return;
+            int hour = (delay / 100) % 100;
+            int minute = delay % 100;
+            int waitUntil = 60 * (minute + 60 * hour);
+            int latest = CompareTimes.LatestTime(waitUntil, correctedTime);
+            if (latest == waitUntil && waitUntil >= correctedTime) delay = waitUntil - correctedTime;
+            else if (latest == correctedTime) delay = 1; // put 1 second delay if waitUntil is already over
+            else delay = waitUntil - correctedTime + 3600 * 24; // we are over midnight here
         }
 
         //================================================================================================//
@@ -9095,33 +12667,37 @@ namespace ORTS
             public List<TCSubpathRoute> TCAlternativePaths = new List<TCSubpathRoute>();
             public int activeSubpath;
             public int activeAltpath;
-            public List<int[]> WaitingPoints = new List<int[]>(); //[0] = sublist in which WP is placed; 
-                                                                  // [1] = WP section; [2] = WP wait time (delta); [3] = WP depart time;
-                                                                  // [4] = hold signal
+            public List<int[]> WaitingPoints = new List<int[]>(); // [0] = sublist in which WP is placed; 
+            // [1] = WP section; [2] = WP wait time (delta); [3] = WP depart time;
+            // [4] = hold signal
             public List<TCReversalInfo> ReversalInfo = new List<TCReversalInfo>();
+            public List<RoughReversalInfo> RoughReversalInfos = new List<RoughReversalInfo>();
+            public List<int> LoopEnd = new List<int>();
+            public Dictionary<string, int[]> StationXRef = new Dictionary<string, int[]>();
+            // int[0] = subpath index, int[1] = element index, int[3] = platform ID
 
             //================================================================================================//
             /// <summary>
             /// Constructor (from AIPath)
             /// </summary>
 
-            public TCRoutePath(AIPath aiPath, int orgDir, float thisTrainLength, ORTS.Signals orgSignals)
+            public TCRoutePath(AIPath aiPath, int orgDir, float thisTrainLength, ORTS.Signals orgSignals, int trainNumber, UserSettings settings)
             {
-
                 activeSubpath = 0;
                 activeAltpath = -1;
+                float offset = 0;
 
                 //
                 // collect all TC Elements
                 //
                 // get tracknode from first path node
                 //
-
                 int sublist = 0;
 
                 Dictionary<int, int[]> AlternativeRoutes = new Dictionary<int, int[]>();
                 Queue<int> ActiveAlternativeRoutes = new Queue<int>();
 
+                //  Create the first TCSubpath into the TCRoute
                 TCSubpathRoute thisSubpath = new TCSubpathRoute();
                 TCRouteSubpaths.Add(thisSubpath);
 
@@ -9179,7 +12755,6 @@ namespace ORTS
 
                 thisPathNode = thisPathNode.NextMainNode;
                 int reversal = 0;
-                bool breakpoint = false;
 
                 while (thisPathNode != null)
                 {
@@ -9190,7 +12765,7 @@ namespace ORTS
                     if (thisPathNode.Type == AIPathNodeType.SidingStart)
                     {
                         TrackNode sidingNode = aiPath.TrackDB.TrackNodes[thisPathNode.JunctionIndex];
-                        int startTCSectionIndex = sidingNode.TCCrossReference[0].CrossRefIndex;
+                        int startTCSectionIndex = sidingNode.TCCrossReference[0].Index;
                         int[] altRouteReference = new int[3];
                         altRouteReference[0] = sublist;
                         altRouteReference[1] = thisPathNode.Index;
@@ -9203,7 +12778,7 @@ namespace ORTS
                     else if (thisPathNode.Type == AIPathNodeType.SidingEnd)
                     {
                         TrackNode sidingNode = aiPath.TrackDB.TrackNodes[thisPathNode.JunctionIndex];
-                        int endTCSectionIndex = sidingNode.TCCrossReference[0].CrossRefIndex;
+                        int endTCSectionIndex = sidingNode.TCCrossReference[0].Index;
 
                         int refStartIndex = ActiveAlternativeRoutes.Dequeue();
                         int[] altRouteReference = AlternativeRoutes[refStartIndex];
@@ -9220,6 +12795,7 @@ namespace ORTS
                     {
                         thisNode = aiPath.TrackDB.TrackNodes[trackNodeIndex];
 
+                        //  SPA:    Subpath:    Add TCRouteElement for each TrackCircuitsection in node
                         if (currentDir == 0)
                         {
                             for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
@@ -9227,6 +12803,7 @@ namespace ORTS
                                 TCRouteElement thisElement =
                                     new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
                                 thisSubpath.Add(thisElement);
+                                SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
                             }
                             newDir = thisNode.TrPins[currentDir].Direction;
 
@@ -9238,6 +12815,7 @@ namespace ORTS
                                 TCRouteElement thisElement =
                                     new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
                                 thisSubpath.Add(thisElement);
+                                SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
                             }
                             newDir = thisNode.TrPins[currentDir].Direction;
                         }
@@ -9246,6 +12824,47 @@ namespace ORTS
                         {
                             while (reversal > 0)
                             {
+                                //<CSComment> following block can be uncommented if it is preferred to leave in the path the double reverse points
+                                //                                if (!Program.Simulator.TimetableMode && Program.Simulator.Settings.EnhancedActCompatibility && sublist > 0 &&
+                                //                                    TCRouteSubpaths[sublist].Count <= 0)
+                                //                                {
+                                //                                    // check if preceding subpath has no sections, and in such case insert the one it should have,
+                                //                                    // taking the last section from the preceding subpath
+                                //                                    thisNode = aiPath.TrackDB.TrackNodes[trackNodeIndex];
+                                //                                    if (currentDir == 0)
+                                //                                    {
+                                //                                        for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
+                                //                                        {
+                                //                                            if (thisNode.TCCrossReference[iTC].Index == RoughReversalInfos[sublist].ReversalSectionIndex)
+                                //                                            {
+                                //                                                TCRouteElement thisElement =
+                                //                                                     new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                //                                                thisSubpath.Add(thisElement);
+                                //                                                //  SPA:    Station:    A adapter, 
+                                //                                                SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
+                                //                                                break;
+                                //                                            }
+                                //                                        }
+                                //                                        newDir = thisNode.TrPins[currentDir].Direction;
+                                //
+                                //                                    }
+                                //                                    else
+                                //                                    {
+                                //                                        for (int iTC = thisNode.TCCrossReference.Count - 1; iTC >= 0; iTC--)
+                                //                                        {
+                                //                                            if (thisNode.TCCrossReference[iTC].Index == RoughReversalInfos[sublist].ReversalSectionIndex)
+                                //                                            {
+                                //                                                TCRouteElement thisElement =
+                                //                                                   new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                //                                                thisSubpath.Add(thisElement);
+                                //                                                SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
+                                //                                                break;
+                                //                                            }
+                                //                                        }
+                                //                                        newDir = thisNode.TrPins[currentDir].Direction;
+                                //                                    }
+                                //                                }
+
                                 sublist++;
                                 thisSubpath = new TCSubpathRoute();
                                 TCRouteSubpaths.Add(thisSubpath);
@@ -9254,14 +12873,7 @@ namespace ORTS
                             }
                             continue;          // process this node again in reverse direction
                         }
-                        else if (breakpoint)
-                        {
-                            sublist++;
-                            thisSubpath = new TCSubpathRoute();
-                            TCRouteSubpaths.Add(thisSubpath);
-
-                            breakpoint = false;
-                        }
+                        //  SPA:    WP: New forms 
 
                         //
                         // process junction section
@@ -9322,28 +12934,57 @@ namespace ORTS
                             Traveller TDBTrav = new Traveller(aiPath.TSectionDat, aiPath.TrackDB.TrackNodes, reversalNode,
                                             firstSection.TileX, firstSection.TileZ,
                                             firstSection.X, firstSection.Z, (Traveller.TravellerDirection)1);
-                            float offset = TDBTrav.DistanceTo(reversalNode,
+                            offset = TDBTrav.DistanceTo(reversalNode,
                                 nextPathNode.Location.TileX, nextPathNode.Location.TileZ,
                                 nextPathNode.Location.Location.X,
                                 nextPathNode.Location.Location.Y,
                                 nextPathNode.Location.Location.Z);
+                            float reverseOffset = 0;
+                            int sectionIndex = -1;
+                            int validDir = currentDir;
+                            if (reversal % 2 == 1) validDir = validDir == 1 ? 0 : 1;
+                            if (validDir == 0)
+                            {
+                                reverseOffset = -offset;
+                                for (int i = reversalNode.TCCrossReference.Count - 1; i >= 0 && reverseOffset <= 0; i--)
+                                {
+                                    reverseOffset += reversalNode.TCCrossReference[i].Length;
+                                    sectionIndex = reversalNode.TCCrossReference[i].Index;
 
+                                }
+                            }
+                            else
+                            {
+                                int exti = 0;
+                                reverseOffset = offset;
+                                for (int i = reversalNode.TCCrossReference.Count - 1; i >= 0 && reverseOffset >= 0; i--)
+                                {
+                                    reverseOffset -= reversalNode.TCCrossReference[i].Length;
+                                    sectionIndex = reversalNode.TCCrossReference[i].Index;
+                                    exti = i;
+                                }
+                                reverseOffset += reversalNode.TCCrossReference[exti].Length;
+                            }
+                            RoughReversalInfo roughReversalInfo = new RoughReversalInfo(sublist + reversal, reverseOffset, sectionIndex);
+                            RoughReversalInfos.Add(roughReversalInfo);
                             reversalOffset.Add(offset);
                             reversalIndex.Add(sublist);
                             reversal++;
                         }
                         else if (nextPathNode.Type == AIPathNodeType.Stop)
                         {
-                            int[] waitingPoint = new int[5];
-                            waitingPoint[0] = sublist;
+                            int validDir = currentDir;
+                            if (reversal % 2 == 1) validDir = validDir == 1 ? 0 : 1;
+                            offset = GetOffsetToPathNode(aiPath, validDir, nextPathNode);
+                            int[] waitingPoint = new int[6];
+                            waitingPoint[0] = sublist + reversal;
                             waitingPoint[1] = ConvertWaitingPoint(nextPathNode, aiPath.TrackDB, aiPath.TSectionDat, currentDir);
 
                             waitingPoint[2] = nextPathNode.WaitTimeS;
                             waitingPoint[3] = nextPathNode.WaitUntil;
                             waitingPoint[4] = -1; // hold signal set later
-
+                            waitingPoint[5] = (int)offset;
                             WaitingPoints.Add(waitingPoint);
-                            breakpoint = true;
                         }
 
                         // other type of path need not be processed
@@ -9351,10 +12992,54 @@ namespace ORTS
                         // go to next node
                         nextPathNode = nextPathNode.NextMainNode;
                     }
-
                     thisPathNode = nextPathNode;
                 }
 
+                if (!Program.Simulator.TimetableMode)
+                {
+                    // insert reversals when they are in last section
+                    while (reversal > 0)
+                    {
+                        thisNode = aiPath.TrackDB.TrackNodes[trackNodeIndex];
+                        if (currentDir == 0)
+                        {
+                            for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
+                            {
+                                if (thisNode.TCCrossReference[iTC].Index == RoughReversalInfos[sublist].ReversalSectionIndex)
+                                {
+                                    TCRouteElement thisElement =
+                                         new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                    thisSubpath.Add(thisElement);
+                                    //  SPA:    Station:    A adapter, 
+                                    SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
+                                    break;
+                                }
+                            }
+                            newDir = thisNode.TrPins[currentDir].Direction;
+
+                        }
+                        else
+                        {
+                            for (int iTC = thisNode.TCCrossReference.Count - 1; iTC >= 0; iTC--)
+                            {
+                                if (thisNode.TCCrossReference[iTC].Index == RoughReversalInfos[sublist].ReversalSectionIndex)
+                                {
+                                    TCRouteElement thisElement =
+                                       new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                    thisSubpath.Add(thisElement);
+                                    SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
+                                    break;
+                                }
+                            }
+                            newDir = thisNode.TrPins[currentDir].Direction;
+                        }
+                        sublist++;
+                        thisSubpath = new TCSubpathRoute();
+                        TCRouteSubpaths.Add(thisSubpath);
+                        currentDir = currentDir == 1 ? 0 : 1;
+                        reversal--;        // reset reverse point
+                    }
+                }
                 //
                 // add last section
                 //
@@ -9370,28 +13055,69 @@ namespace ORTS
                     lastPathNode.Location.Location.Y,
                     lastPathNode.Location.Location.Z);
 
+                // Prepare info about route end point
+                float reverseEndOffset = 0;
+                int endNodeSectionIndex = -1;
                 if (currentDir == 0)
                 {
-                    for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
+                    reverseEndOffset = -endOffset;
+                    for (int i = thisNode.TCCrossReference.Count - 1; i >= 0 && reverseEndOffset <= 0; i--)
                     {
-                        if ((thisNode.TCCrossReference[iTC].Position[1] + thisNode.TCCrossReference[iTC].Length) > endOffset)
-                        //                      if (thisNode.TCCrossReference[iTC].Position[0] < endOffset)
-                        {
-                            TCRouteElement thisElement =
-                                new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
-                            if (thisSubpath.Count <= 0 || thisSubpath[thisSubpath.Count-1].TCSectionIndex != thisElement.TCSectionIndex) thisSubpath.Add(thisElement); // only add if not yet set
-                        }
+                        reverseEndOffset += thisNode.TCCrossReference[i].Length;
+                        endNodeSectionIndex = thisNode.TCCrossReference[i].Index;
+
                     }
                 }
                 else
                 {
-                    for (int iTC = thisNode.TCCrossReference.Count - 1; iTC >= 0; iTC--)
+                    int exti = 0;
+                    reverseEndOffset = endOffset;
+                    for (int i = thisNode.TCCrossReference.Count - 1; i >= 0 && reverseEndOffset >= 0; i--)
                     {
-                        if (thisNode.TCCrossReference[iTC].Position[1] < endOffset)
+                        reverseEndOffset -= thisNode.TCCrossReference[i].Length;
+                        endNodeSectionIndex = thisNode.TCCrossReference[i].Index;
+                        exti = i;
+                    }
+                    reverseEndOffset += thisNode.TCCrossReference[exti].Length;
+                }
+                RoughReversalInfo lastReversalInfo = new RoughReversalInfo(sublist, reverseEndOffset, endNodeSectionIndex);
+                RoughReversalInfos.Add(lastReversalInfo);
+
+                // only add last section if end point is in different tracknode as last added item
+                if (thisSubpath.Count <= 0 ||
+                    thisNode.Index != orgSignals.TrackCircuitList[thisSubpath[thisSubpath.Count - 1].TCSectionIndex].OriginalIndex)
+                {
+                    if (currentDir == 0)
+                    {
+                        for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
                         {
-                            TCRouteElement thisElement =
-                            new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
-                            if (thisSubpath.Count <= 0 || thisSubpath[thisSubpath.Count - 1].TCSectionIndex != thisElement.TCSectionIndex) thisSubpath.Add(thisElement); // only add if not yet set
+                            if ((thisNode.TCCrossReference[iTC].OffsetLength[1] + thisNode.TCCrossReference[iTC].Length) > endOffset)
+                            //                      if (thisNode.TCCrossReference[iTC].Position[0] < endOffset)
+                            {
+                                TCRouteElement thisElement =
+                                    new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                if (thisSubpath.Count <= 0 || thisSubpath[thisSubpath.Count - 1].TCSectionIndex != thisElement.TCSectionIndex)
+                                {
+                                    thisSubpath.Add(thisElement); // only add if not yet set
+                                    SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (int iTC = thisNode.TCCrossReference.Count - 1; iTC >= 0; iTC--)
+                        {
+                            if (thisNode.TCCrossReference[iTC].OffsetLength[1] < endOffset)
+                            {
+                                TCRouteElement thisElement =
+                                new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                if (thisSubpath.Count <= 0 || thisSubpath[thisSubpath.Count - 1].TCSectionIndex != thisElement.TCSectionIndex)
+                                {
+                                    thisSubpath.Add(thisElement); // only add if not yet set
+                                    SetStationReference(TCRouteSubpaths, thisElement.TCSectionIndex, orgSignals);
+                                }
+                            }
                         }
                     }
                 }
@@ -9403,13 +13129,13 @@ namespace ORTS
                 int lastDirection = lastElement.Direction;
 
                 List<TCRouteElement> addedElements = new List<TCRouteElement>();
-                if (lastEndSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                if (lastEndSection.CircuitType != TrackCircuitSection.TrackCircuitType.EndOfTrack)
                 {
                     int thisDirection = lastDirection;
                     lastDirection = lastEndSection.Pins[thisDirection, 0].Direction;
                     lastEndSection = orgSignals.TrackCircuitList[lastEndSection.Pins[thisDirection, 0].Link];
 
-                    while (lastEndSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                    while (lastEndSection.CircuitType == TrackCircuitSection.TrackCircuitType.Normal)
                     {
                         addedElements.Add(new TCRouteElement(lastEndSection.Index, lastDirection));
                         thisDirection = lastDirection;
@@ -9417,23 +13143,23 @@ namespace ORTS
                         lastEndSection = orgSignals.TrackCircuitList[lastEndSection.Pins[thisDirection, 0].Link];
                     }
 
-                    if (lastEndSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                    if (lastEndSection.CircuitType == TrackCircuitSection.TrackCircuitType.EndOfTrack)
                     {
                         foreach (TCRouteElement addedElement in addedElements)
                         {
                             thisSubpath.Add(addedElement);
+                            SetStationReference(TCRouteSubpaths, addedElement.TCSectionIndex, orgSignals);
                         }
                         thisSubpath.Add(new TCRouteElement(lastEndSection.Index, lastDirection));
                     }
                 }
-
 
                 // remove sections beyond reversal points
 
                 for (int iSub = 0; iSub < reversalOffset.Count; iSub++)  // no reversal for final path
                 {
                     TCSubpathRoute revSubPath = TCRouteSubpaths[reversalIndex[iSub]];
-                    float offset = reversalOffset[iSub];
+                    offset = reversalOffset[iSub];
                     if (revSubPath.Count <= 0)
                         continue;
 
@@ -9450,11 +13176,11 @@ namespace ORTS
                         for (int iSection = revSubPath.Count - 1; iSection > 0 && withinOffset; iSection--)
                         {
                             TrackCircuitSection thisSection = orgSignals.TrackCircuitList[revSubPath[iSection].TCSectionIndex];
-                            if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                            if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                             {
                                 withinOffset = false;    // always end on junction (next node)
                             }
-                            else if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                            else if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                             {
                                 removeSections.Add(iSection);        // always remove crossover if last section was removed
                                 lastSectionIndex = iSection - 1;
@@ -9475,11 +13201,11 @@ namespace ORTS
                         for (int iSection = revSubPath.Count - 1; iSection > 0 && withinOffset; iSection--)
                         {
                             TrackCircuitSection thisSection = orgSignals.TrackCircuitList[revSubPath[iSection].TCSectionIndex];
-                            if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.JUNCTION)
+                            if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
                             {
                                 withinOffset = false;     // always end on junction (next node)
                             }
-                            else if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                            else if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                             {
                                 removeSections.Add(iSection);        // always remove crossover if last section was removed
                                 lastSectionIndex = iSection - 1;
@@ -9531,22 +13257,27 @@ namespace ORTS
                     {
                         TCRouteSubpaths.RemoveAt(iSub);
                         subRemoved.Add(iSub);
+                        var itemToRemove = RoughReversalInfos.FindIndex(r => r.SubPathIndex >= iSub);
+                        if (itemToRemove != -1)
+                        {
+                            if (RoughReversalInfos[itemToRemove].SubPathIndex == iSub) RoughReversalInfos.RemoveAt(itemToRemove);
+                            for (int i = itemToRemove; i < RoughReversalInfos.Count; i++)
+                            {
+                                RoughReversalInfos[i].SubPathIndex--;
+                            }
+                        }
                     }
                 }
 
                 // calculate new indices
-                for (int iSub = 0; iSub <= orgCount - 1; iSub++)
+                for (int iSub = 0; iSub <= orgCount - 1; iSub++) //<CSComment> maybe comparison only with less than?
                 {
+                    newIndices.Add(iSub, iSub - removed);
                     if (subRemoved.Contains(iSub))
                     {
                         removed++;
                     }
-                    else
-                    {
-                        newIndices.Add(iSub, iSub - removed);
-                    }
                 }
-
 
                 // if removed, update indices of waiting points
                 if (removed > 0)
@@ -9557,16 +13288,25 @@ namespace ORTS
                     }
 
                     // if remove, update indices of alternative paths
-                    foreach (KeyValuePair<int, int[]> thisAltPath in AlternativeRoutes)
+                    Dictionary<int, int[]> copyAltRoutes = AlternativeRoutes;
+                    AlternativeRoutes.Clear();
+                    foreach (KeyValuePair<int, int[]> thisAltPath in copyAltRoutes)
                     {
-                        TCSubpathRoute thisAltpath = new TCSubpathRoute();
-
-                        int startSection = thisAltPath.Key;
                         int[] pathDetails = thisAltPath.Value;
-                        int sublistRef = pathDetails[0];
+                        pathDetails[0] = newIndices[pathDetails[0]];
+                        AlternativeRoutes.Add(thisAltPath.Key, pathDetails);
+                    }
 
-                        int newSublistRef = newIndices[sublistRef];
-                        pathDetails[0] = newSublistRef;
+                    // if remove, update indices in station xref
+
+                    Dictionary<string, int[]> copyXRef = StationXRef;
+                    StationXRef.Clear();
+
+                    foreach (KeyValuePair<string, int[]> actXRef in copyXRef)
+                    {
+                        int[] oldValue = actXRef.Value;
+                        int[] newValue = new int[3] { newIndices[oldValue[0]], oldValue[1], oldValue[2] };
+                        StationXRef.Add(actXRef.Key, newValue);
                     }
                 }
 
@@ -9601,7 +13341,7 @@ namespace ORTS
                         }
                     }
 
-                    if (lastSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.END_OF_TRACK)
+                    if (lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.EndOfTrack)
                     {
 
                         // first length of added sections
@@ -9613,7 +13353,7 @@ namespace ORTS
                         {
                             TrackCircuitSection thisSection = orgSignals.TrackCircuitList[Math.Abs(addSections[iSection])];
                             totalLength += thisSection.Length;
-                            if (thisSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                            if (thisSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
                             {
                                 juncfound = true;
                             }
@@ -9635,7 +13375,7 @@ namespace ORTS
                             {
                                 sigIndex = iSection;
                             }
-                            else if (thisSection.CircuitType != TrackCircuitSection.CIRCUITTYPE.NORMAL)
+                            else if (thisSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
                             {
                                 juncfound = true;
                             }
@@ -9651,6 +13391,13 @@ namespace ORTS
                         {
                             for (int iSection = endSubPath.Count - 1; iSection > sigIndex; iSection--)
                             {
+                                if (endSubPath == TCRouteSubpaths[TCRouteSubpaths.Count - 1] &&
+                                    endSubPath[iSection].TCSectionIndex == RoughReversalInfos[RoughReversalInfos.Count - 1].ReversalSectionIndex)
+                                {
+                                    RoughReversalInfos[RoughReversalInfos.Count - 1].ReversalSectionIndex = endSubPath[sigIndex].TCSectionIndex;
+                                    RoughReversalInfos[RoughReversalInfos.Count - 1].ReverseReversalOffset = endSubPath[sigIndex].Direction == 0 ?
+                                        orgSignals.TrackCircuitList[endSubPath[sigIndex].TCSectionIndex].Length : 0;
+                                }
                                 endSubPath.RemoveAt(iSection);
                             }
                         }
@@ -9660,17 +13407,281 @@ namespace ORTS
                 // for reversals, find actual diverging section
 
                 int prevDivergeSectorIndex = -1;
+                int iReversalLists = 0;
+                TCReversalInfo reversalInfo;
                 for (int iSubpath = 1; iSubpath < TCRouteSubpaths.Count; iSubpath++)
                 {
-                    TCReversalInfo reversalInfo = new TCReversalInfo(TCRouteSubpaths[iSubpath - 1], prevDivergeSectorIndex,
-                        TCRouteSubpaths[iSubpath], orgSignals);
+                    while (RoughReversalInfos.Count > 0 && RoughReversalInfos[iReversalLists].SubPathIndex < iSubpath - 1 && iReversalLists < RoughReversalInfos.Count - 2)
+                    {
+                        iReversalLists++;
+                    }
+
+                    if (RoughReversalInfos.Count > 0 && RoughReversalInfos[iReversalLists].SubPathIndex == iSubpath - 1)
+                    {
+                        reversalInfo = new TCReversalInfo(TCRouteSubpaths[iSubpath - 1], prevDivergeSectorIndex,
+                            TCRouteSubpaths[iSubpath], orgSignals,
+                            RoughReversalInfos[iReversalLists].ReverseReversalOffset, RoughReversalInfos[iReversalLists].SubPathIndex, RoughReversalInfos[iReversalLists].ReversalSectionIndex);
+                    }
+                    else
+                    {
+                        reversalInfo = new TCReversalInfo(TCRouteSubpaths[iSubpath - 1], prevDivergeSectorIndex,
+                            TCRouteSubpaths[iSubpath], orgSignals, -1, -1, -1);
+                    }
+
                     ReversalInfo.Add(reversalInfo);
                     prevDivergeSectorIndex = reversalInfo.Valid ? reversalInfo.FirstDivergeIndex : -1;
                 }
                 ReversalInfo.Add(new TCReversalInfo());  // add invalid item to make up the numbers (equals no. subpaths)
+                // Insert data for end route offset
+                ReversalInfo[ReversalInfo.Count - 1].ReverseReversalOffset = RoughReversalInfos[RoughReversalInfos.Count - 1].ReverseReversalOffset;
+                ReversalInfo[ReversalInfo.Count - 1].ReversalIndex = RoughReversalInfos[RoughReversalInfos.Count - 1].SubPathIndex;
+                ReversalInfo[ReversalInfo.Count - 1].ReversalSectionIndex = RoughReversalInfos[RoughReversalInfos.Count - 1].ReversalSectionIndex;
 
-                // process alternative paths
+                RoughReversalInfos.Clear(); // no more used
 
+
+                // process alternative paths - MSTS style
+
+                if (orgSignals.UseLocationPassingPaths)
+                {
+                    ProcessAlternativePath_LocationDef(AlternativeRoutes, aiPath, orgSignals, trainNumber);
+                    if (trainNumber >= 0) SearchPassingPaths(trainNumber, thisTrainLength, orgSignals);
+                }
+                else
+                {
+                    ProcessAlternativePath_PathDef(AlternativeRoutes, aiPath, orgSignals);
+                }
+
+                // search for loops
+
+                LoopSearch();
+
+#if DEBUG_TEST
+                for (int iSub = 0; iSub < TCRouteSubpaths.Count; iSub++)
+                {
+                    TCSubpathRoute printSubpath = TCRouteSubpaths[iSub];
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Subpath : " + iSub.ToString() + " --\n\n");
+
+                    foreach (TCRouteElement printElement in printSubpath)
+                    {
+                        File.AppendAllText(@"C:\temp\TCSections.txt", " TC Index   : " + printElement.TCSectionIndex.ToString() + "\n");
+                        File.AppendAllText(@"C:\temp\TCSections.txt", " direction  : " + printElement.Direction.ToString() + "\n");
+                        File.AppendAllText(@"C:\temp\TCSections.txt",
+                            " outpins    : " + printElement.OutPin[0].ToString() + " - " + printElement.OutPin[1].ToString() + "\n");
+                        if (printElement.StartAlternativePath != null)
+                        {
+                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n Start Alternative Path : " +
+                        printElement.StartAlternativePath[0].ToString() +
+                        " upto section " + printElement.StartAlternativePath[1].ToString() + "\n");
+                        }
+                        if (printElement.EndAlternativePath != null)
+                        {
+                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n End Alternative Path : " +
+                        printElement.EndAlternativePath[0].ToString() +
+                        " from section " + printElement.EndAlternativePath[1].ToString() + "\n");
+                        }
+
+                        File.AppendAllText(@"C:\temp\TCSections.txt", "\n");
+                    }
+
+                    if (iSub < TCRouteSubpaths.Count - 1)
+                    {
+                        if (LoopEnd[iSub] > 0)
+                        {
+                            int loopSection = printSubpath[LoopEnd[iSub]].TCSectionIndex;
+                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Loop at : " + LoopEnd[iSub] + " : section : " + loopSection + "--\n");
+                        }
+                        else if (ReversalInfo[iSub].Valid)
+                        {
+                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- reversal --\n");
+                        }
+                        else
+                        {
+                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- path break --\n");
+                        }
+                    }
+                }
+
+                for (int iAlt = 0; iAlt < TCAlternativePaths.Count; iAlt++)
+                {
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
+
+                    TCSubpathRoute printSubpath = TCAlternativePaths[iAlt];
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Alternative path : " + iAlt.ToString() + " --\n\n");
+
+                    foreach (TCRouteElement printElement in printSubpath)
+                    {
+                        File.AppendAllText(@"C:\temp\TCSections.txt", " TC Index   : " + printElement.TCSectionIndex.ToString() + "\n");
+                        File.AppendAllText(@"C:\temp\TCSections.txt", " direction  : " + printElement.Direction.ToString() + "\n");
+                        File.AppendAllText(@"C:\temp\TCSections.txt",
+                            " outpins    : " + printElement.OutPin[0].ToString() + " - " + printElement.OutPin[1].ToString() + "\n");
+                        File.AppendAllText(@"C:\temp\TCSections.txt", "\n");
+                    }
+                }
+
+                for (int iRI = 0; iRI < ReversalInfo.Count; iRI++)
+                {
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Reversal Info : " + iRI.ToString() + " --\n\n");
+                    TCReversalInfo thisReversalInfo = ReversalInfo[iRI];
+
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Diverge sector : " + thisReversalInfo.DivergeSectorIndex.ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Diverge offset : " + thisReversalInfo.DivergeOffset.ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "First Index    : " + thisReversalInfo.FirstDivergeIndex.ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "First Signal   : " + thisReversalInfo.FirstSignalIndex.ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Last Index     : " + thisReversalInfo.LastDivergeIndex.ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Last Signal    : " + thisReversalInfo.LastSignalIndex.ToString() + "\n");
+                }
+
+                for (int iWP = 0; iWP < WaitingPoints.Count; iWP++)
+                {
+
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Waiting Point Info : " + iWP.ToString() + " --\n\n");
+                    int[] thisWaitingPoint = WaitingPoints[iWP];
+
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Sublist   : " + thisWaitingPoint[0].ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Section   : " + thisWaitingPoint[1].ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Wait time : " + thisWaitingPoint[2].ToString() + "\n");
+                    File.AppendAllText(@"C:\temp\TCSections.txt", "Dep time  : " + thisWaitingPoint[3].ToString() + "\n");
+                }
+
+                File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
+#endif
+            }
+
+            //  SPA: Used with enhanced MSTS Mode, please don't change
+            float GetOffsetToPathNode(AIPath aiPath, int direction, AIPathNode pathNode)
+            {
+
+                float offset = 0;
+                TrackNode WPNode;
+                TrVectorSection firstSection;
+                //int nextNodeIdx = 0;
+                int NodeDir = direction;
+
+                WPNode = aiPath.TrackDB.TrackNodes[pathNode.NextMainTVNIndex];
+                int idxSectionWP = ConvertWaitingPoint(pathNode, aiPath.TrackDB, aiPath.TSectionDat, direction);
+                firstSection = WPNode.TrVectorNode.TrVectorSections[0];
+                Traveller TDBTrav = new Traveller(aiPath.TSectionDat, aiPath.TrackDB.TrackNodes, WPNode,
+                    firstSection.TileX, firstSection.TileZ,
+                    firstSection.X, firstSection.Z, (Traveller.TravellerDirection)NodeDir);
+                if (TDBTrav.Direction == Traveller.TravellerDirection.Backward)
+                {
+                    NodeDir = 1 - direction;
+                    TDBTrav = new Traveller(aiPath.TSectionDat, aiPath.TrackDB.TrackNodes, WPNode,
+                    firstSection.TileX, firstSection.TileZ,
+                    firstSection.X, firstSection.Z, (Traveller.TravellerDirection)NodeDir);
+                    offset = TDBTrav.DistanceTo(WPNode,
+                        pathNode.Location.TileX, pathNode.Location.TileZ,
+                        pathNode.Location.Location.X,
+                        pathNode.Location.Location.Y,
+                        pathNode.Location.Location.Z);
+                    for (int idx = 0; idx < WPNode.TCCrossReference.Count(); idx++)
+                    {
+                        int TCSectionIndex = WPNode.TCCrossReference[idx].Index;
+                        if (TCSectionIndex == idxSectionWP)
+                        {
+                            float sectionOffset = offset - WPNode.TCCrossReference[idx].OffsetLength[NodeDir];
+                            offset = WPNode.TCCrossReference[idx].Length - sectionOffset;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    //Trace.TraceInformation("no reverse");
+                    offset = TDBTrav.DistanceTo(WPNode,
+                        pathNode.Location.TileX, pathNode.Location.TileZ,
+                        pathNode.Location.Location.X,
+                        pathNode.Location.Location.Y,
+                        pathNode.Location.Location.Z);
+                    for (int idx = 0; idx < WPNode.TCCrossReference.Count(); idx++)
+                    {
+                        int TCSectionIndex = WPNode.TCCrossReference[idx].Index;
+                        if (TCSectionIndex == idxSectionWP)
+                        {
+                            offset = offset - WPNode.TCCrossReference[idx].OffsetLength[NodeDir];
+                            break;
+                        }
+                    }
+                }
+                return offset;
+            }
+
+            public String[] GetTCRouteInfo(String[] stateString, TCPosition position)
+            {
+                String[] retString = new String[stateString.Length];
+                stateString.CopyTo(retString, 0);
+                string TCSidxString = "Index : ";
+                string lenTCcurrent = " ";
+                int show = 0;
+                string wpString = "";
+                int[] tabWP = new int[WaitingPoints.Count];
+                int cntWP = 0;
+                foreach (var wp in WaitingPoints)
+                {
+                    if (wp[0] == activeSubpath)
+                    {
+                        tabWP[cntWP] = wp[1];
+                    }
+                    else
+                    {
+                        tabWP[cntWP] = 0;
+                    }
+                    cntWP++;
+                }
+                cntWP = 0;
+                TCSidxString = String.Concat(TCSidxString, "(", activeSubpath.ToString(), "):");
+                foreach (var subpath in TCRouteSubpaths[activeSubpath])
+                {
+                    if (position.TCSectionIndex != subpath.TCSectionIndex)
+                        show++;
+                    if (position.TCSectionIndex == subpath.TCSectionIndex)
+                        break;
+                }
+                int cnt = 0;
+                foreach (var subpath in TCRouteSubpaths[activeSubpath])
+                {
+                    if (tabWP.Count() > 0 && subpath.TCSectionIndex == tabWP[activeSubpath])
+                    {
+                        wpString = String.Concat("(wp:", WaitingPoints[activeSubpath][2].ToString(), "sec)");
+                        tabWP[activeSubpath] = 0;
+                    }
+                    else
+                    {
+                        wpString = "";
+                    }
+                    if (position.TCSectionIndex == subpath.TCSectionIndex)
+                    {
+                        lenTCcurrent = String.Concat(" (", position.DistanceTravelledM.ToString("F0"), ")");
+                        TCSidxString = String.Concat(TCSidxString, subpath.TCSectionIndex.ToString(), lenTCcurrent, wpString, ", ");
+                    }
+                    else if (cnt > show - 3 && cnt < show)
+                    {
+                        TCSidxString = String.Concat(TCSidxString, "{", subpath.TCSectionIndex.ToString(), "}", wpString, ", ");
+                    }
+                    else if (cnt > show && cnt < show + 10)
+                    {
+                        TCSidxString = String.Concat(TCSidxString, subpath.TCSectionIndex.ToString(), wpString, ", ");
+                        lenTCcurrent = "";
+                    }
+                    cnt++;
+                    if (cnt > show + 10)
+                        break;
+                }
+                retString[3] = "...";
+                retString[4] = TCSidxString;
+                return (retString);
+
+            }
+            //================================================================================================//
+            //
+            // process alternative paths - MSTS style Path definition
+            //
+
+            public void ProcessAlternativePath_PathDef(Dictionary<int, int[]> AlternativeRoutes, AIPath aiPath, Signals orgSignals)
+            {
                 int altlist = 0;
 
                 foreach (KeyValuePair<int, int[]> thisAltPath in AlternativeRoutes)
@@ -9712,14 +13723,16 @@ namespace ORTS
                         endElement.EndAlternativePath[0] = altlist;
                         endElement.EndAlternativePath[1] = startSection;
 
-                        currentDir = startElement.Direction;
+                        int currentDir = startElement.Direction;
+                        int newDir = currentDir;
 
                         //
                         // loop through path nodes
                         //
 
-                        thisPathNode = aiPath.Nodes[pathDetails[1]];
-                        nextPathNode = null;
+                        AIPathNode thisPathNode = aiPath.Nodes[pathDetails[1]];
+                        AIPathNode nextPathNode = null;
+                        AIPathNode lastPathNode = null;
 
                         // process junction node
 
@@ -9728,7 +13741,7 @@ namespace ORTS
                             new TCRouteElement(firstJunctionNode, 0, currentDir, orgSignals);
                         thisAltpath.Add(thisJunctionElement);
 
-                        trackNodeIndex = thisPathNode.NextSidingTVNIndex;
+                        int trackNodeIndex = thisPathNode.NextSidingTVNIndex;
 
                         uint firstJunctionPin = (firstJunctionNode.Inpins > 1) ? 0 : firstJunctionNode.Inpins;
                         if (firstJunctionNode.TrPins[firstJunctionPin].Link == trackNodeIndex)
@@ -9745,7 +13758,7 @@ namespace ORTS
 
                         // process alternative path
 
-                        thisNode = null;
+                        TrackNode thisNode = null;
                         thisPathNode = thisPathNode.NextSidingNode;
 
                         while (thisPathNode != null)
@@ -9873,88 +13886,526 @@ namespace ORTS
                         altlist++;
                     }
                 }
+            }
 
-#if DEBUG_TEST
-                for (int iSub = 0; iSub < TCRouteSubpaths.Count; iSub++)
+            //================================================================================================//
+            //
+            // process alternative paths - location definition
+            //
+
+            public void ProcessAlternativePath_LocationDef(Dictionary<int, int[]> AlternativeRoutes, AIPath aiPath, Signals orgSignals, int trainNumber)
+            {
+                foreach (KeyValuePair<int, int[]> thisAltPathIndex in AlternativeRoutes)
                 {
-                    TCSubpathRoute printSubpath = TCRouteSubpaths[iSub];
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Subpath : " + iSub.ToString() + " --\n\n");
+                    TCSubpathRoute thisAltpath = new TCSubpathRoute();
 
-                    foreach (TCRouteElement printElement in printSubpath)
+                    int startSectionIndex = thisAltPathIndex.Key;
+                    int[] pathDetails = thisAltPathIndex.Value;
+                    int sublistRef = pathDetails[0];
+
+                    int startSectionRouteIndex = TCRouteSubpaths[sublistRef].GetRouteIndex(startSectionIndex, 0);
+                    int endSectionRouteIndex = -1;
+
+                    int endSectionIndex = pathDetails[2];
+                    if (endSectionIndex < 0)
                     {
-                        File.AppendAllText(@"C:\temp\TCSections.txt", " TC Index   : " + printElement.TCSectionIndex.ToString() + "\n");
-                        File.AppendAllText(@"C:\temp\TCSections.txt", " direction  : " + printElement.Direction.ToString() + "\n");
-                        File.AppendAllText(@"C:\temp\TCSections.txt",
-                            " outpins    : " + printElement.OutPin[0].ToString() + " - " + printElement.OutPin[1].ToString() + "\n");
-                        if (printElement.StartAlternativePath != null)
+                        Trace.TraceInformation("No end-index found for passing path for train {0} starting at {1}",
+                            trainNumber, startSectionIndex.ToString());
+                    }
+                    else
+                    {
+                        endSectionRouteIndex = TCRouteSubpaths[sublistRef].GetRouteIndex(endSectionIndex, 0);
+                    }
+
+                    if (startSectionRouteIndex < 0 || endSectionRouteIndex < 0)
+                    {
+                        Trace.TraceInformation("Start section " + startSectionIndex.ToString() + "or end section " + endSectionIndex.ToString() +
+                                               " for passing path not in subroute " + sublistRef.ToString());
+                    }
+                    else
+                    {
+                        TCRouteElement startElement = TCRouteSubpaths[sublistRef][startSectionRouteIndex];
+                        int currentDir = startElement.Direction;
+                        int newDir = currentDir;
+
+                        //
+                        // loop through path nodes
+                        //
+
+                        AIPathNode thisPathNode = aiPath.Nodes[pathDetails[1]];
+                        AIPathNode nextPathNode = null;
+                        AIPathNode lastPathNode = null;
+
+                        // process junction node
+
+                        TrackNode firstJunctionNode = aiPath.TrackDB.TrackNodes[thisPathNode.JunctionIndex];
+                        TCRouteElement thisJunctionElement =
+                            new TCRouteElement(firstJunctionNode, 0, currentDir, orgSignals);
+                        thisAltpath.Add(thisJunctionElement);
+
+                        int trackNodeIndex = thisPathNode.NextSidingTVNIndex;
+
+                        uint firstJunctionPin = (firstJunctionNode.Inpins > 1) ? 0 : firstJunctionNode.Inpins;
+                        if (firstJunctionNode.TrPins[firstJunctionPin].Link == trackNodeIndex)
                         {
-                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n Start Alternative Path : " +
-					    printElement.StartAlternativePath[0].ToString() +
-					    " upto section " + printElement.StartAlternativePath[1].ToString() + "\n");
+                            currentDir = firstJunctionNode.TrPins[firstJunctionPin].Direction;
+                            thisJunctionElement.OutPin[1] = 0;
                         }
-                        if (printElement.EndAlternativePath != null)
+                        else
                         {
-                            File.AppendAllText(@"C:\temp\TCSections.txt", "\n End Alternative Path : " +
-					    printElement.EndAlternativePath[0].ToString() +
-					    " from section " + printElement.EndAlternativePath[1].ToString() + "\n");
+                            firstJunctionPin++;
+                            currentDir = firstJunctionNode.TrPins[firstJunctionPin].Direction;
+                            thisJunctionElement.OutPin[1] = 1;
                         }
 
-                        File.AppendAllText(@"C:\temp\TCSections.txt", "\n");
-                    }
+                        // process alternative path
 
-                    if (iSub < TCRouteSubpaths.Count - 1)
+                        TrackNode thisNode = null;
+                        thisPathNode = thisPathNode.NextSidingNode;
+
+                        while (thisPathNode != null)
+                        {
+
+                            //
+                            // process last non-junction section
+                            //
+
+                            if (thisPathNode.Type == AIPathNodeType.Other)
+                            {
+                                if (trackNodeIndex > 0)
+                                {
+                                    thisNode = aiPath.TrackDB.TrackNodes[trackNodeIndex];
+
+                                    if (currentDir == 0)
+                                    {
+                                        for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
+                                        {
+                                            TCRouteElement thisElement =
+                                                new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                            thisAltpath.Add(thisElement);
+                                        }
+                                        newDir = thisNode.TrPins[currentDir].Direction;
+
+                                    }
+                                    else
+                                    {
+                                        for (int iTC = thisNode.TCCrossReference.Count - 1; iTC >= 0; iTC--)
+                                        {
+                                            TCRouteElement thisElement =
+                                                new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                            thisAltpath.Add(thisElement);
+                                        }
+                                        newDir = thisNode.TrPins[currentDir].Direction;
+                                    }
+                                    trackNodeIndex = -1;
+                                }
+
+                                //
+                                // process junction section
+                                //
+
+                                if (thisPathNode.JunctionIndex > 0)
+                                {
+                                    TrackNode junctionNode = aiPath.TrackDB.TrackNodes[thisPathNode.JunctionIndex];
+                                    TCRouteElement thisElement =
+                                        new TCRouteElement(junctionNode, 0, newDir, orgSignals);
+                                    thisAltpath.Add(thisElement);
+
+                                    trackNodeIndex = thisPathNode.NextSidingTVNIndex;
+
+                                    if (thisPathNode.IsFacingPoint)   // exit is one of two switch paths //
+                                    {
+                                        uint firstpin = (junctionNode.Inpins > 1) ? 0 : junctionNode.Inpins;
+                                        if (junctionNode.TrPins[firstpin].Link == trackNodeIndex)
+                                        {
+                                            newDir = junctionNode.TrPins[firstpin].Direction;
+                                            thisElement.OutPin[1] = 0;
+                                        }
+                                        else
+                                        {
+                                            firstpin++;
+                                            newDir = junctionNode.TrPins[firstpin].Direction;
+                                            thisElement.OutPin[1] = 1;
+                                        }
+                                    }
+                                    else  // exit is single path //
+                                    {
+                                        uint firstpin = (junctionNode.Inpins > 1) ? junctionNode.Inpins : 0;
+                                        newDir = junctionNode.TrPins[firstpin].Direction;
+                                    }
+                                }
+
+                                currentDir = newDir;
+
+                                //
+                                // find next junction path node
+                                //
+
+                                nextPathNode = thisPathNode.NextSidingNode;
+                            }
+                            else
+                            {
+                                nextPathNode = thisPathNode;
+                            }
+
+                            while (nextPathNode != null && nextPathNode.JunctionIndex < 0)
+                            {
+                                nextPathNode = nextPathNode.NextSidingNode;
+                            }
+
+                            lastPathNode = thisPathNode;
+                            thisPathNode = nextPathNode;
+                        }
+                        //
+                        // add last section
+                        //
+
+                        if (trackNodeIndex > 0)
+                        {
+                            thisNode = aiPath.TrackDB.TrackNodes[trackNodeIndex];
+
+                            if (currentDir == 0)
+                            {
+                                for (int iTC = 0; iTC < thisNode.TCCrossReference.Count; iTC++)
+                                {
+                                    TCRouteElement thisElement =
+                                        new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                    thisAltpath.Add(thisElement);
+                                }
+                            }
+                            else
+                            {
+                                for (int iTC = thisNode.TCCrossReference.Count - 1; iTC >= 0; iTC--)
+                                {
+                                    TCRouteElement thisElement =
+                                        new TCRouteElement(thisNode, iTC, currentDir, orgSignals);
+                                    thisAltpath.Add(thisElement);
+                                }
+                            }
+                        }
+
+                        InsertPassingPath(TCRouteSubpaths[sublistRef], thisAltpath, startSectionIndex, endSectionIndex, orgSignals, trainNumber, sublistRef);
+                    }
+                }
+            }
+            // check if path is valid diverge path
+
+            //================================================================================================//
+            //
+            // process alternative paths - location definition
+            // main path may be NULL if private path is to be set for fixed deadlocks
+            //
+
+            public void InsertPassingPath(TCSubpathRoute mainPath, TCSubpathRoute passPath, int startSectionIndex, int endSectionIndex,
+                                  Signals orgSignals, int trainNumber, int sublistRef)
+            {
+                // if main set, check if path is valid diverge path - otherwise assume it is indeed
+
+                if (mainPath != null)
+                {
+                    int[,] validPassingPath = mainPath.FindActualDivergePath(passPath, 0, mainPath.Count - 1);
+
+                    if (validPassingPath[0, 0] < 0)
                     {
-                        File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- reversal --\n");
+                        Trace.TraceInformation("Invalid passing path defined for train {0} at section {1} : path does not diverge from main path",
+                            trainNumber, startSectionIndex);
+                        return;
                     }
                 }
 
-                for (int iAlt = 0; iAlt < TCAlternativePaths.Count; iAlt++)
+                // find related deadlock definition - note that path may be extended to match other deadlock paths
+
+                DeadlockInfo thisDeadlock = new DeadlockInfo(orgSignals);
+                thisDeadlock = thisDeadlock.FindDeadlockInfo(ref passPath, mainPath, startSectionIndex, endSectionIndex);
+
+                if (thisDeadlock == null) // path is not valid in relation to other deadlocks
                 {
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
+                    Trace.TraceInformation("Invalid passing path defined for train {0} at section {1} : overlaps with other passing path", trainNumber, startSectionIndex);
+                    return;
+                }
 
-                    TCSubpathRoute printSubpath = TCAlternativePaths[iAlt];
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Alternative path : " + iAlt.ToString() + " --\n\n");
+                // insert main path
 
-                    foreach (TCRouteElement printElement in printSubpath)
+                int usedStartSectionIndex = passPath[0].TCSectionIndex;
+                int usedEndSectionIndex = passPath[passPath.Count - 1].TCSectionIndex;
+                int usedStartSectionRouteIndex = mainPath.GetRouteIndex(usedStartSectionIndex, 0);
+                int usedEndSectionRouteIndex = mainPath.GetRouteIndex(usedEndSectionIndex, usedStartSectionRouteIndex);
+
+                TCSubpathRoute mainPathPart = new TCSubpathRoute(mainPath, usedStartSectionRouteIndex, usedEndSectionRouteIndex);
+                if (mainPathPart != null)
+                {
+                    int[] mainIndex = thisDeadlock.AddPath(mainPathPart, usedStartSectionIndex);  // [0] is Index, [1] > 0 is existing
+
+                    if (mainIndex[1] < 0)
                     {
-                        File.AppendAllText(@"C:\temp\TCSections.txt", " TC Index   : " + printElement.TCSectionIndex.ToString() + "\n");
-                        File.AppendAllText(@"C:\temp\TCSections.txt", " direction  : " + printElement.Direction.ToString() + "\n");
-                        File.AppendAllText(@"C:\temp\TCSections.txt",
-                            " outpins    : " + printElement.OutPin[0].ToString() + " - " + printElement.OutPin[1].ToString() + "\n");
-                        File.AppendAllText(@"C:\temp\TCSections.txt", "\n");
+                        // calculate usefull lenght and usefull end section for main path
+                        Dictionary<int, float> mainPathUsefullInfo = mainPathPart.GetUsefullLength(0.0f, orgSignals, -1, -1);
+                        KeyValuePair<int, float> mainPathUsefullValues = mainPathUsefullInfo.ElementAt(0);
+
+                        DeadlockPathInfo thisDeadlockPathInfo = thisDeadlock.AvailablePathList[mainIndex[0]];
+                        thisDeadlockPathInfo.EndSectionIndex = usedEndSectionIndex;
+                        thisDeadlockPathInfo.LastUsefullSectionIndex = mainPathUsefullValues.Key;
+                        thisDeadlockPathInfo.UsefullLength = mainPathUsefullValues.Value;
+
+                        // only allow as public path if not in timetable mode
+                        if (Program.Simulator.TimetableMode)
+                        {
+                            thisDeadlockPathInfo.AllowedTrains.Add(thisDeadlock.GetTrainAndSubpathIndex(trainNumber, sublistRef));
+                        }
+                        else
+                        {
+                            thisDeadlockPathInfo.AllowedTrains.Add(-1); // set as public path
+                        }
+
+                        // if name is main insert inverse path also as MAIN to ensure reverse path is available
+
+                        if (String.Compare(thisDeadlockPathInfo.Name, "MAIN") == 0 && !Program.Simulator.TimetableMode)
+                        {
+                            TCSubpathRoute inverseMainPath = mainPathPart.ReversePath(orgSignals);
+                            int[] inverseIndex = thisDeadlock.AddPath(inverseMainPath, endSectionIndex, "MAIN", String.Empty);
+                            DeadlockPathInfo thisDeadlockInverseInfo = thisDeadlock.AvailablePathList[inverseIndex[0]];
+
+                            Dictionary<int, float> mainInversePathUsefullInfo = inverseMainPath.GetUsefullLength(0.0f, orgSignals, -1, -1);
+                            KeyValuePair<int, float> mainInversePathUsefullValues = mainInversePathUsefullInfo.ElementAt(0);
+
+                            thisDeadlockInverseInfo.EndSectionIndex = startSectionIndex;
+                            thisDeadlockInverseInfo.LastUsefullSectionIndex = mainInversePathUsefullValues.Key;
+                            thisDeadlockInverseInfo.UsefullLength = mainInversePathUsefullValues.Value;
+                            thisDeadlockInverseInfo.AllowedTrains.Add(-1);
+                        }
+                    }
+                    // if existing path, add trainnumber if set and path is not public
+                    else if (trainNumber >= 0)
+                    {
+                        DeadlockPathInfo thisDeadlockPathInfo = thisDeadlock.AvailablePathList[mainIndex[0]];
+                        if (!thisDeadlockPathInfo.AllowedTrains.Contains(-1))
+                        {
+                            thisDeadlockPathInfo.AllowedTrains.Add(thisDeadlock.GetTrainAndSubpathIndex(trainNumber, sublistRef));
+                        }
                     }
                 }
 
-                for (int iRI = 0; iRI < ReversalInfo.Count; iRI++)
-                {
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Reversal Info : " + iRI.ToString() + " --\n\n");
-                    TCReversalInfo thisReversalInfo = ReversalInfo[iRI];
+                // add passing path
 
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Diverge sector : " + thisReversalInfo.DivergeSectorIndex.ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Diverge offset : " + thisReversalInfo.DivergeOffset.ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "First Index    : " + thisReversalInfo.FirstDivergeIndex.ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "First Signal   : " + thisReversalInfo.FirstSignalIndex.ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Last Index     : " + thisReversalInfo.LastDivergeIndex.ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Last Signal    : " + thisReversalInfo.LastSignalIndex.ToString() + "\n");
+                int[] passIndex = thisDeadlock.AddPath(passPath, startSectionIndex);
+
+                if (passIndex[1] < 0)
+                {
+                    // calculate usefull lenght and usefull end section for passing path
+                    Dictionary<int, float> altPathUsefullInfo = passPath.GetUsefullLength(0.0f, orgSignals, -1, -1);
+                    KeyValuePair<int, float> altPathUsefullValues = altPathUsefullInfo.ElementAt(0);
+
+                    DeadlockPathInfo thisDeadlockPathInfo = thisDeadlock.AvailablePathList[passIndex[0]];
+                    thisDeadlockPathInfo.EndSectionIndex = endSectionIndex;
+                    thisDeadlockPathInfo.LastUsefullSectionIndex = altPathUsefullValues.Key;
+                    thisDeadlockPathInfo.UsefullLength = altPathUsefullValues.Value;
+
+                    if (trainNumber > 0)
+                    {
+                        thisDeadlockPathInfo.AllowedTrains.Add(thisDeadlock.GetTrainAndSubpathIndex(trainNumber, sublistRef));
+                    }
+                    else
+                    {
+                        thisDeadlockPathInfo.AllowedTrains.Add(-1);
+                    }
+
+                    // insert inverse path only if public
+
+                    if (trainNumber < 0)
+                    {
+                        TCSubpathRoute inversePassPath = passPath.ReversePath(orgSignals);
+                        int[] inverseIndex =
+                            thisDeadlock.AddPath(inversePassPath, endSectionIndex, String.Copy(thisDeadlockPathInfo.Name), String.Empty);
+                        DeadlockPathInfo thisDeadlockInverseInfo = thisDeadlock.AvailablePathList[inverseIndex[0]];
+
+                        Dictionary<int, float> altInversePathUsefullInfo = inversePassPath.GetUsefullLength(0.0f, orgSignals, -1, -1);
+                        KeyValuePair<int, float> altInversePathUsefullValues = altInversePathUsefullInfo.ElementAt(0);
+
+                        thisDeadlockInverseInfo.EndSectionIndex = startSectionIndex;
+                        thisDeadlockInverseInfo.LastUsefullSectionIndex = altInversePathUsefullValues.Key;
+                        thisDeadlockInverseInfo.UsefullLength = altInversePathUsefullValues.Value;
+                        thisDeadlockInverseInfo.AllowedTrains.Add(-1);
+                    }
+                }
+                // if existing path, add trainnumber if set and path is not public
+                else if (trainNumber >= 0)
+                {
+                    DeadlockPathInfo thisDeadlockPathInfo = thisDeadlock.AvailablePathList[passIndex[0]];
+                    if (!thisDeadlockPathInfo.AllowedTrains.Contains(-1))
+                    {
+                        thisDeadlockPathInfo.AllowedTrains.Add(thisDeadlock.GetTrainAndSubpathIndex(trainNumber, sublistRef));
+                    }
+                }
+            }
+
+            //================================================================================================//
+            //
+            // search for valid passing paths
+            // includes public paths
+            //
+
+            public void SearchPassingPaths(int trainNumber, float trainLength, Signals orgSignals)
+            {
+                for (int iSubpath = 0; iSubpath <= TCRouteSubpaths.Count - 1; iSubpath++)
+                {
+                    TCSubpathRoute thisSubpath = TCRouteSubpaths[iSubpath];
+
+                    for (int iElement = 0; iElement <= thisSubpath.Count - 1; iElement++)
+                    {
+                        TCRouteElement thisElement = thisSubpath[iElement];
+                        TrackCircuitSection thisSection = orgSignals.TrackCircuitList[thisElement.TCSectionIndex];
+
+                        // if section is a deadlock boundary determine available paths
+                        if (thisSection.DeadlockReference > 0)
+                        {
+                            DeadlockInfo thisDeadlockInfo = orgSignals.DeadlockInfoList[thisSection.DeadlockReference];
+                            int nextElement = thisDeadlockInfo.SetTrainDetails(trainNumber, iSubpath, trainLength, thisSubpath, iElement);
+
+                            if (nextElement < 0) // end of path reached
+                            {
+                                break;
+                            }
+                            else // skip deadlock area
+                            {
+                                iElement = nextElement;
+                            }
+                        }
+                    }
+                }
+            }
+
+            //================================================================================================//
+            //
+            // search for loops
+            //
+
+            public void LoopSearch()
+            {
+                List<List<int[]>> loopList = new List<List<int[]>>();
+
+                foreach (TCSubpathRoute thisRoute in TCRouteSubpaths)
+                {
+                    Dictionary<int, int> sections = new Dictionary<int, int>();
+                    List<int[]> loopInfo = new List<int[]>();
+                    loopList.Add(loopInfo);
+
+                    bool loopset = false;
+                    bool loopreverse = false; // loop is reversing loop, otherwise loop is continuing loop
+                    int loopindex = -1;
+
+                    for (int iElement = 0; iElement < thisRoute.Count; iElement++)
+                    {
+                        TCRouteElement thisElement = thisRoute[iElement];
+                        int sectionIndex = thisElement.TCSectionIndex;
+
+                        if (sections.ContainsKey(thisElement.TCSectionIndex) && !loopset)
+                        {
+                            int[] loopDetails = new int[2];
+                            loopindex = sections[thisElement.TCSectionIndex];
+                            loopDetails[0] = loopindex;
+                            loopDetails[1] = iElement;
+                            loopInfo.Add(loopDetails);
+                            loopset = true;
+
+                            // check if loop reverses or continues
+                            loopreverse = thisElement.Direction != thisRoute[loopindex].Direction;
+
+                        }
+                        else if (sections.ContainsKey(thisElement.TCSectionIndex) && loopset)
+                        {
+                            int preloopindex = sections[thisElement.TCSectionIndex];
+
+                            if (thisElement.Direction == thisRoute[preloopindex].Direction)
+                            {
+                                loopindex++;
+                            }
+                            else
+                            {
+                                loopindex--;
+                            }
+
+                            if (loopindex >= 0 && loopindex <= (thisRoute.Count - 1))
+                            {
+                                loopset = (thisElement.TCSectionIndex == thisRoute[loopindex].TCSectionIndex);
+                            }
+                        }
+                        else
+                        {
+                            loopset = false;
+                        }
+
+                        if (!loopset && !sections.ContainsKey(thisElement.TCSectionIndex))
+                        {
+                            sections.Add(thisElement.TCSectionIndex, iElement);
+                        }
+                    }
                 }
 
-                for (int iWP = 0; iWP < WaitingPoints.Count; iWP++)
+                // check for inner loops within outer loops
+                // if found, remove outer loops
+
+                for (int iRoute = 0; iRoute <= TCRouteSubpaths.Count - 1; iRoute++)
                 {
-
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "\n-- Waiting Point Info : " + iWP.ToString() + " --\n\n");
-                    int[] thisWaitingPoint = WaitingPoints[iWP];
-
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Sublist   : " + thisWaitingPoint[0].ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Section   : " + thisWaitingPoint[1].ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Wait time : " + thisWaitingPoint[2].ToString() + "\n");
-                    File.AppendAllText(@"C:\temp\TCSections.txt", "Dep time  : " + thisWaitingPoint[3].ToString() + "\n");
+                    List<int> invalids = new List<int>();
+                    for (int iLoop = loopList[iRoute].Count - 1; iLoop >= 1; iLoop--)
+                    {
+                        if (loopList[iRoute][iLoop][1] > loopList[iRoute][iLoop - 1][0] && loopList[iRoute][iLoop][0] < loopList[iRoute][iLoop - 1][1])
+                        {
+                            invalids.Add(iLoop);
+                        }
+                    }
+                    foreach (int iLoopRemove in invalids)
+                    {
+                        loopList[iRoute].RemoveAt(iLoopRemove);
+                    }
                 }
 
-                File.AppendAllText(@"C:\temp\TCSections.txt", "--------------------------------------------------\n");
-#endif
+                // preset loop ends to invalid
 
+                for (int iRoute = 0; iRoute <= TCRouteSubpaths.Count - 1; iRoute++)
+                {
+                    LoopEnd.Add(-1);
+                }
+
+                // split loops with overlap - search backward as subroutes may be added
+
+                int orgTotalRoutes = TCRouteSubpaths.Count;
+                for (int iRoute = orgTotalRoutes - 1; iRoute >= 0; iRoute--)
+                {
+                    TCSubpathRoute thisRoute = TCRouteSubpaths[iRoute];
+
+                    List<int[]> loopInfo = loopList[iRoute];
+
+                    // loop through looppoints backward as well
+                    for (int iLoop = loopInfo.Count - 1; iLoop >= 0; iLoop--)
+                    {
+                        int[] loopDetails = loopInfo[iLoop];
+
+                        // copy route and add after existing route
+                        // remove points from loop-end in first route
+                        // remove points upto loop-start in second route
+                        TCSubpathRoute newRoute = new TCSubpathRoute(thisRoute);
+                        thisRoute.RemoveRange(loopDetails[1], thisRoute.Count - loopDetails[1]);
+                        newRoute.RemoveRange(0, loopDetails[0] + 1);
+
+                        // add new route to list
+                        TCRouteSubpaths.Insert(iRoute + 1, newRoute);
+
+                        // set loop end
+                        LoopEnd.Insert(iRoute, thisRoute[loopDetails[0]].TCSectionIndex);
+
+                        // create dummy reversal lists
+                        // shift waiting points and revesal lists
+                        TCReversalInfo dummyReversal = new TCReversalInfo();
+                        dummyReversal.Valid = false;
+                        ReversalInfo.Insert(iRoute, dummyReversal);
+
+                        foreach (int[] thisWaitingPoint in WaitingPoints)
+                        {
+                            if (thisWaitingPoint[0] >= iRoute) thisWaitingPoint[0]++;
+                        }
+                    }
+                }
             }
 
             //================================================================================================//
@@ -9999,6 +14450,16 @@ namespace ORTS
                         ReversalInfo.Add(reversalInfo);
                     }
                 }
+
+                for (int iLoopEnd = 0; iLoopEnd < otherPath.LoopEnd.Count; iLoopEnd++)
+                {
+                    LoopEnd.Add(otherPath.LoopEnd[iLoopEnd]);
+                }
+
+                foreach (KeyValuePair<string, int[]> actStation in otherPath.StationXRef)
+                {
+                    StationXRef.Add(actStation.Key, actStation.Value);
+                }
             }
 
             //================================================================================================//
@@ -10028,12 +14489,13 @@ namespace ORTS
                 int totalWaitingPoint = inf.ReadInt32();
                 for (int iWP = 0; iWP < totalWaitingPoint; iWP++)
                 {
-                    int[] waitingPoint = new int[5];
+                    int[] waitingPoint = new int[6];
                     waitingPoint[0] = inf.ReadInt32();
                     waitingPoint[1] = inf.ReadInt32();
                     waitingPoint[2] = inf.ReadInt32();
                     waitingPoint[3] = inf.ReadInt32();
                     waitingPoint[4] = inf.ReadInt32();
+                    waitingPoint[5] = inf.ReadInt32();
 
                     WaitingPoints.Add(waitingPoint);
                 }
@@ -10043,6 +14505,14 @@ namespace ORTS
                 {
                     ReversalInfo.Add(new TCReversalInfo(inf));
                 }
+
+                int totalLoopEnd = inf.ReadInt32();
+                for (int iLE = 0; iLE < totalLoopEnd; iLE++)
+                {
+                    LoopEnd.Add(inf.ReadInt32());
+                }
+
+                // note : stationXRef only used on init, not saved
             }
 
             //================================================================================================//
@@ -10074,6 +14544,7 @@ namespace ORTS
                     outf.Write(waitingPoint[2]);
                     outf.Write(waitingPoint[3]);
                     outf.Write(waitingPoint[4]);
+                    outf.Write(waitingPoint[5]);
                 }
 
                 outf.Write(ReversalInfo.Count);
@@ -10081,6 +14552,14 @@ namespace ORTS
                 {
                     ReversalInfo[iRP].Save(outf);
                 }
+
+                outf.Write(LoopEnd.Count);
+                for (int iLE = 0; iLE < LoopEnd.Count; iLE++)
+                {
+                    outf.Write(LoopEnd[iLE]);
+                }
+
+                // note : stationXRef only used on init, need not be saved
             }
 
             //================================================================================================//
@@ -10088,7 +14567,7 @@ namespace ORTS
             // Convert waiting point to section no.
             //
 
-            private int ConvertWaitingPoint(AIPathNode stopPathNode, TrackDB TrackDB, TSectionDatFile TSectionDat, int direction)
+            static int ConvertWaitingPoint(AIPathNode stopPathNode, TrackDB TrackDB, TSectionDatFile TSectionDat, int direction)
             {
                 TrackNode waitingNode = TrackDB.TrackNodes[stopPathNode.NextMainTVNIndex];
                 TrVectorSection firstSection = waitingNode.TrVectorNode.TrVectorSections[0];
@@ -10106,15 +14585,15 @@ namespace ORTS
                 for (int iXRef = waitingNode.TCCrossReference.Count - 1; iXRef >= 0 && TCSectionIndex < 0; iXRef--)
                 {
                     if (offset <
-                     (waitingNode.TCCrossReference[iXRef].Position[1] + waitingNode.TCCrossReference[iXRef].Length))
+                     (waitingNode.TCCrossReference[iXRef].OffsetLength[1] + waitingNode.TCCrossReference[iXRef].Length))
                     {
-                        TCSectionIndex = waitingNode.TCCrossReference[iXRef].CrossRefIndex;
+                        TCSectionIndex = waitingNode.TCCrossReference[iXRef].Index;
                     }
                 }
 
                 if (TCSectionIndex < 0)
                 {
-                    TCSectionIndex = waitingNode.TCCrossReference[0].CrossRefIndex;
+                    TCSectionIndex = waitingNode.TCCrossReference[0].Index;
                 }
 
                 return TCSectionIndex;
@@ -10130,6 +14609,62 @@ namespace ORTS
                 TCReversalInfo thisReversal = ReversalInfo[activeSubpath];
                 thisReversal.SignalUsed = thisReversal.Valid && thisReversal.SignalAvailable && trainLength < thisReversal.SignalOffset;
             }
+
+            //================================================================================================//
+            //
+            // build station xref list
+            //
+
+            public void SetStationReference(List<TCSubpathRoute> subpaths, int sectionIndex, Signals orgSignals)
+            {
+                TrackCircuitSection actSection = orgSignals.TrackCircuitList[sectionIndex];
+                foreach (int platformRef in actSection.PlatformIndex)
+                {
+                    PlatformDetails actPlatform = orgSignals.PlatformDetailsList[platformRef];
+
+                    string stationName = actPlatform.Name.ToLower().Trim();
+
+                    if (!StationXRef.ContainsKey(stationName))
+                    {
+                        int[] platformInfo = new int[3] { subpaths.Count - 1, subpaths[subpaths.Count - 1].Count - 1, actPlatform.PlatformReference[0] };
+                        StationXRef.Add(stationName, platformInfo);
+                    }
+                }
+            }
+
+            //================================================================================================//
+            //
+            //  Clone subpath at a specific position.  The new subpath will be inserted after the current one and all TCElement from position
+            //  To the end will be added to the new subpath.
+            //  The WaitingPoint list will be aligned with.
+            //
+
+            public void CloneSubPath(int WPIdx, int position)
+            {
+                int subpathIdx = WaitingPoints[WPIdx][0];
+                var subpath = TCRouteSubpaths[subpathIdx];
+                TCSubpathRoute nextRoute = new TCSubpathRoute();
+                TCRouteSubpaths.Insert(subpathIdx + 1, nextRoute);
+                TCReversalInfo nextReversalPoint = new TCReversalInfo(); // also add dummy reversal info to match total number
+                //CSComment: insert subpath number and subpath index
+                nextReversalPoint.ReversalIndex = subpathIdx + 1;
+                ReversalInfo.Insert(subpathIdx + 1, nextReversalPoint);
+                LoopEnd.Add(-1); // also add dummy loop end
+                for (int iElement = subpath.Count - 1; iElement >= position + 1; iElement--)
+                {
+                    nextRoute.Insert(0, subpath[iElement]);
+                    subpath.RemoveAt(iElement);
+                }
+                nextRoute.Insert(0, subpath[position]);
+                for (int cntWP = WPIdx + 1; cntWP < WaitingPoints.Count; cntWP++)
+                {
+                    WaitingPoints[cntWP][0]++;
+                }
+                for (int cntRI = subpathIdx + 2; cntRI < ReversalInfo.Count - 1; cntRI++)
+                {
+                    if (ReversalInfo[cntRI].ReversalIndex >= 0) ReversalInfo[cntRI].ReversalIndex++;
+                }
+            }
         }
 
         //================================================================================================//
@@ -10142,8 +14677,14 @@ namespace ORTS
             public int TCSectionIndex;
             public int Direction;
             public int[] OutPin = new int[2];
-            public int[] StartAlternativePath = null;  // if used : index 0 = index of alternative path, index 1 = TC end index
-            public int[] EndAlternativePath = null;  // if used : index 0 = index of alternative path, index 1 = TC start index
+
+            // path based passing path definitions
+            public int[] StartAlternativePath;  // if used : index 0 = index of alternative path, index 1 = TC end index
+            public int[] EndAlternativePath;    // if used : index 0 = index of alternative path, index 1 = TC start index
+
+            // used for location based passing path processing
+            public bool FacingPoint;            // element is facing point
+            public int UsedAlternativePath;     // set to index of used alternative path
 
             //================================================================================================//
             /// <summary>
@@ -10152,22 +14693,33 @@ namespace ORTS
 
             public TCRouteElement(TrackNode thisNode, int TCIndex, int direction, ORTS.Signals mySignals)
             {
-                TCSectionIndex = thisNode.TCCrossReference[TCIndex].CrossRefIndex;
+                TCSectionIndex = thisNode.TCCrossReference[TCIndex].Index;
                 Direction = direction;
                 OutPin[0] = direction;
                 OutPin[1] = 0;           // always 0 for NORMAL sections, updated for JUNCTION sections
 
                 TrackCircuitSection thisSection = mySignals.TrackCircuitList[TCSectionIndex];
-                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                 {
                     int outPinLink = direction;
-                    int nextIndex = thisNode.TCCrossReference[TCIndex + 1].CrossRefIndex;
+                    int nextIndex = thisNode.TCCrossReference[TCIndex + 1].Index;
                     if (direction == 1)
                     {
-                        nextIndex = thisNode.TCCrossReference[TCIndex - 1].CrossRefIndex;
+                        nextIndex = thisNode.TCCrossReference[TCIndex - 1].Index;
                     }
                     OutPin[1] = (thisSection.Pins[outPinLink, 0].Link == nextIndex) ? 0 : 1;
                 }
+
+                FacingPoint = false;
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
+                {
+                    if (thisSection.Pins[direction, 1].Link != -1)
+                    {
+                        FacingPoint = true;
+                    }
+                }
+
+                UsedAlternativePath = -1;
             }
 
             //================================================================================================//
@@ -10182,11 +14734,22 @@ namespace ORTS
                 OutPin[0] = direction;
                 OutPin[1] = 0;           // always 0 for NORMAL sections, updated for JUNCTION sections
 
-                if (thisSection.CircuitType == TrackCircuitSection.CIRCUITTYPE.CROSSOVER)
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Crossover)
                 {
                     int inPinLink = direction == 0 ? 1 : 0;
                     OutPin[1] = (thisSection.Pins[inPinLink, 0].Link == lastSectionIndex) ? 0 : 1;
                 }
+
+                FacingPoint = false;
+                if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
+                {
+                    if (thisSection.Pins[direction, 1].Link != -1)
+                    {
+                        FacingPoint = true;
+                    }
+                }
+
+                UsedAlternativePath = -1;
             }
 
             //================================================================================================//
@@ -10200,6 +14763,36 @@ namespace ORTS
                 Direction = direction;
                 OutPin[0] = direction;
                 OutPin[1] = 0;
+                UsedAlternativePath = -1;
+            }
+
+            //================================================================================================//
+            //
+            // Constructor from other route element
+            //
+
+            public TCRouteElement(TCRouteElement otherElement)
+            {
+                TCSectionIndex = otherElement.TCSectionIndex;
+                Direction = otherElement.Direction;
+
+                OutPin = new int[2];
+                otherElement.OutPin.CopyTo(OutPin, 0);
+
+                if (otherElement.StartAlternativePath != null)
+                {
+                    StartAlternativePath = new int[2];
+                    otherElement.StartAlternativePath.CopyTo(StartAlternativePath, 0);
+                }
+
+                if (otherElement.EndAlternativePath != null)
+                {
+                    EndAlternativePath = new int[2];
+                    otherElement.EndAlternativePath.CopyTo(EndAlternativePath, 0);
+                }
+
+                FacingPoint = otherElement.FacingPoint;
+                UsedAlternativePath = otherElement.UsedAlternativePath;
             }
 
             //================================================================================================//
@@ -10229,6 +14822,9 @@ namespace ORTS
                     EndAlternativePath[0] = altindex;
                     EndAlternativePath[1] = inf.ReadInt32();
                 }
+
+                FacingPoint = inf.ReadBoolean();
+                UsedAlternativePath = inf.ReadInt32();
             }
 
             //================================================================================================//
@@ -10263,6 +14859,9 @@ namespace ORTS
                 {
                     outf.Write(-1);
                 }
+
+                outf.Write(FacingPoint);
+                outf.Write(UsedAlternativePath);
             }
         }
 
@@ -10297,6 +14896,27 @@ namespace ORTS
                     for (int iIndex = 0; iIndex < otherSubpathRoute.Count; iIndex++)
                     {
                         this.Add(otherSubpathRoute[iIndex]);
+                    }
+                }
+            }
+
+            //================================================================================================//
+            //
+            // Constructor from part of existing subpath
+            // if either value is < 0, start from start or stop at end
+            //
+
+            public TCSubpathRoute(TCSubpathRoute otherSubpathRoute, int startIndex, int endIndex)
+            {
+                int lstartIndex = startIndex >= 0 ? startIndex : 0;
+                int lendIndex = otherSubpathRoute.Count - 1;
+                lendIndex = endIndex >= 0 ? Math.Min(lendIndex, endIndex) : lendIndex;
+
+                if (otherSubpathRoute != null)
+                {
+                    for (int iIndex = lstartIndex; iIndex <= lendIndex; iIndex++)
+                    {
+                        this.Add(new TCRouteElement(otherSubpathRoute[iIndex]));
                     }
                 }
             }
@@ -10349,7 +14969,6 @@ namespace ORTS
 
                 return (-1);
             }
-
 
             //================================================================================================//
             /// <summary>
@@ -10467,7 +15086,7 @@ namespace ORTS
             /// <\summary>
 
             // without offset
-            public bool IsAheadOfTrain(TrackCircuitSection thisSection, TCPosition trainPosition)
+            public static bool IsAheadOfTrain(TrackCircuitSection thisSection, TCPosition trainPosition)
             {
                 float distanceAhead = thisSection.GetDistanceBetweenObjects(
                     trainPosition.TCSectionIndex, trainPosition.TCOffset, trainPosition.TCDirection,
@@ -10476,7 +15095,7 @@ namespace ORTS
             }
 
             // with offset
-            public bool IsAheadOfTrain(TrackCircuitSection thisSection, float offset, TCPosition trainPosition)
+            public static bool IsAheadOfTrain(TrackCircuitSection thisSection, float offset, TCPosition trainPosition)
             {
                 float distanceAhead = thisSection.GetDistanceBetweenObjects(
                     trainPosition.TCSectionIndex, trainPosition.TCOffset, trainPosition.TCDirection,
@@ -10516,7 +15135,228 @@ namespace ORTS
                 Dictionary<int, int> thisRoute = ConvertRoute();
                 return (thisRoute.ContainsKey(thisElement.TCSectionIndex));
             }
-        }
+
+
+            //================================================================================================//
+            /// <summary>
+            /// Find actual diverging path from alternative path definition
+            /// Returns : [0,*] = Main Route, [1,*] = Alt Route, [*,0] = Start Index, [*,1] = End Index
+            /// <\summary>
+
+            public int[,] FindActualDivergePath(TCSubpathRoute altRoute, int startIndex, int endIndex)
+            {
+                int[,] returnValue = new int[2, 2] { { -1, -1 }, { -1, -1 } };
+
+                bool firstfound = false;
+                bool lastfound = false;
+
+                int MainPathActualStartRouteIndex = -1;
+                int MainPathActualEndRouteIndex = -1;
+                int AltPathActualStartRouteIndex = -1;
+                int AltPathActualEndRouteIndex = -1;
+
+                for (int iIndex = 0; iIndex < altRoute.Count && !firstfound; iIndex++)
+                {
+                    int mainIndex = iIndex + startIndex;
+                    if (altRoute[iIndex].TCSectionIndex != this[mainIndex].TCSectionIndex)
+                    {
+                        firstfound = true;
+                        MainPathActualStartRouteIndex = mainIndex;
+                        AltPathActualStartRouteIndex = iIndex;
+                    }
+                }
+
+                for (int iIndex = 0; iIndex < altRoute.Count && firstfound && !lastfound; iIndex++)
+                {
+                    int altIndex = altRoute.Count - 1 - iIndex;
+                    int mainIndex = endIndex - iIndex;
+                    if (altRoute[altIndex].TCSectionIndex != this[mainIndex].TCSectionIndex)
+                    {
+                        lastfound = true;
+                        MainPathActualEndRouteIndex = mainIndex;
+                        AltPathActualEndRouteIndex = altIndex;
+                    }
+                }
+
+                if (lastfound)
+                {
+                    returnValue[0, 0] = MainPathActualStartRouteIndex;
+                    returnValue[0, 1] = MainPathActualEndRouteIndex;
+                    returnValue[1, 0] = AltPathActualStartRouteIndex;
+                    returnValue[1, 1] = AltPathActualEndRouteIndex;
+                }
+
+                return (returnValue);
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// Get usefull length
+            /// Returns : dictionary with : 
+            ///    key is last section to be used in path (before signal or node)
+            ///    value is usefull length
+            /// <\summary>
+
+            public Dictionary<int, float> GetUsefullLength(float defaultSignalClearingDistance, Signals signals, int startIndex, int endIndex)
+            {
+                float actLength = 0.0f;
+                float useLength = 0.0f;
+                bool endSignal = false;
+
+                int usedStartIndex = (startIndex >= 0) ? startIndex : 0;
+                int usedEndIndex = (endIndex > 0 && endIndex <= Count - 1) ? endIndex : Count - 1;
+                int lastUsedIndex = startIndex;
+
+                // first junction
+                TrackCircuitSection firstSection = signals.TrackCircuitList[this[usedStartIndex].TCSectionIndex];
+                if (firstSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
+                {
+                    actLength = firstSection.Length - (float)(2 * firstSection.Overlap);
+                }
+                else
+                {
+                    actLength = firstSection.Length;
+                }
+
+                useLength = actLength;
+
+                // intermediate sections
+
+                for (int iSection = usedStartIndex + 1; iSection < usedEndIndex - 1; iSection++)
+                {
+                    TCRouteElement thisElement = this[iSection];
+                    TrackCircuitSection thisSection = signals.TrackCircuitList[thisElement.TCSectionIndex];
+                    actLength += thisSection.Length;
+
+                    // if section has end signal, set usefull length upto this point
+                    if (thisSection.EndSignals[thisElement.Direction] != null)
+                    {
+                        useLength = actLength - (2 * defaultSignalClearingDistance);
+                        endSignal = true;
+                        lastUsedIndex = iSection - usedStartIndex;
+                    }
+                }
+
+                // last section if no signal found
+
+                if (!endSignal)
+                {
+                    TrackCircuitSection lastSection = signals.TrackCircuitList[this[usedEndIndex].TCSectionIndex];
+                    if (lastSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
+                    {
+                        actLength += (lastSection.Length - (float)(2 * lastSection.Overlap));
+                        lastUsedIndex = usedEndIndex - usedStartIndex - 1;
+                    }
+                    else
+                    {
+                        actLength += lastSection.Length;
+                        lastUsedIndex = usedEndIndex - usedStartIndex;
+                    }
+
+                    useLength = actLength;
+                }
+
+                return (new Dictionary<int, float>() { { lastUsedIndex, useLength } });
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// compares if equal to other path
+            /// paths must be exactly equal (no part check)
+            /// <\summary>
+
+            public bool EqualsPath(TCSubpathRoute otherRoute)
+            {
+                // check common route parts
+
+                if (Count != otherRoute.Count) return (false);  // if path lengths are unequal they cannot be the same
+
+                bool equalPath = true;
+
+                for (int iIndex = 0; iIndex < Count - 1; iIndex++)
+                {
+                    if (this[iIndex].TCSectionIndex != otherRoute[iIndex].TCSectionIndex)
+                    {
+                        equalPath = false;
+                        break;
+                    }
+                }
+
+                return (equalPath);
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// compares if equal to other path in reverse
+            /// paths must be exactly equal (no part check)
+            /// <\summary>
+
+            public bool EqualsReversePath(TCSubpathRoute otherRoute)
+            {
+                // check common route parts
+
+                if (Count != otherRoute.Count) return (false);  // if path lengths are unequal they cannot be the same
+
+                bool equalPath = true;
+
+                for (int iIndex = 0; iIndex < Count - 1; iIndex++)
+                {
+                    if (this[iIndex].TCSectionIndex != otherRoute[otherRoute.Count - 1 - iIndex].TCSectionIndex)
+                    {
+                        equalPath = false;
+                        break;
+                    }
+                }
+
+                return (equalPath);
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// reverses existing path
+            /// <\summary>
+
+            public TCSubpathRoute ReversePath(Signals orgSignals)
+            {
+                TCSubpathRoute reversePath = new TCSubpathRoute();
+                int lastSectionIndex = -1;
+
+                for (int iIndex = Count - 1; iIndex >= 0; iIndex--)
+                {
+                    TCRouteElement thisElement = this[iIndex];
+                    int newDirection = (thisElement.Direction == 0) ? 1 : 0;
+                    TrackCircuitSection thisSection = orgSignals.TrackCircuitList[thisElement.TCSectionIndex];
+
+                    TCRouteElement newElement = new TCRouteElement(thisSection, newDirection, orgSignals, lastSectionIndex);
+
+                    // reset outpin for JUNCTION
+                    // if trailing, pin[0] = 0, pin[1] = 0
+                    // if facing, pin[0] = 1, check next element for pin[1]
+
+                    if (thisSection.CircuitType == TrackCircuitSection.TrackCircuitType.Junction)
+                    {
+                        if (newElement.FacingPoint)
+                        {
+                            if (iIndex >= 1)
+                            {
+                                newElement.OutPin[0] = 1;
+                                newElement.OutPin[1] = (thisSection.Pins[1, 0].Link == this[iIndex - 1].TCSectionIndex) ? 0 : 1;
+                            }
+                        }
+                        else
+                        {
+                            newElement.OutPin[0] = 0;
+                            newElement.OutPin[1] = 0;
+                        }
+                    }
+
+                    reversePath.Add(newElement);
+                    lastSectionIndex = thisElement.TCSectionIndex;
+                }
+
+                return (reversePath);
+            }
+        }// end class TCSubpathRoute
 
         //================================================================================================//
         /// <summary>
@@ -10559,7 +15399,7 @@ namespace ORTS
                 int direction = (int)train.FrontTDBTraveller.Direction;
 
                 TCPosition tempPosition = new TCPosition();
-                tn.TCCrossReference.GetTCPosition(offset, direction, ref tempPosition);
+                tempPosition.SetTCPosition(tn.TCCrossReference, offset, direction);
 
                 TCSectionIndex = inf.ReadInt32();
                 TCDirection = inf.ReadInt32();
@@ -10572,7 +15412,7 @@ namespace ORTS
                 if (TCSectionIndex != tempPosition.TCSectionIndex ||
                         (TCSectionIndex == tempPosition.TCSectionIndex && offsetDif > 5.0f))
                 {
-                    Trace.TraceWarning("Train {0} restored at different present position : was {1}-{3}, is {2}-{4}",
+                    Trace.TraceWarning("Train {0} restored at different present position : was {1} - {3}, is {2} - {4}",
                             train.Number, TCSectionIndex, tempPosition.TCSectionIndex,
                             TCOffset, tempPosition.TCOffset);
                 }
@@ -10586,7 +15426,7 @@ namespace ORTS
                 int direction = (int)train.RearTDBTraveller.Direction;
 
                 TCPosition tempPosition = new TCPosition();
-                tn.TCCrossReference.GetTCPosition(offset, direction, ref tempPosition);
+                tempPosition.SetTCPosition(tn.TCCrossReference, offset, direction);
 
                 TCSectionIndex = inf.ReadInt32();
                 TCDirection = inf.ReadInt32();
@@ -10707,6 +15547,24 @@ namespace ORTS
 
                 DistanceTravelledM = offset;
             }
+
+            /// <summary>
+            /// Set the position based on the trackcircuit section.
+            /// </summary>
+            /// <param name="trackCircuitXRefList">List of cross-references from tracknode to trackcircuitsection</param>
+            /// <param name="offset">Offset along the tracknode</param>
+            /// <param name="direction">direction along the tracknode (1 is forward)</param>
+            public void SetTCPosition(TrackCircuitXRefList trackCircuitXRefList, float offset, int direction)
+            {
+                int XRefIndex = trackCircuitXRefList.GetXRefIndex(offset, direction);
+
+                if (XRefIndex < 0) return;
+
+                TrackCircuitSectionXref thisReference = trackCircuitXRefList[XRefIndex];
+                this.TCSectionIndex = thisReference.Index;
+                this.TCDirection = direction;
+                this.TCOffset = offset - thisReference.OffsetLength[direction];
+            }
         }
 
         //================================================================================================//
@@ -10727,13 +15585,17 @@ namespace ORTS
             public int FirstSignalIndex;
             public int SignalSectorIndex;
             public float SignalOffset;
+            public float ReverseReversalOffset;
+            public int ReversalIndex;
+            public int ReversalSectionIndex;
+            public bool ReversalActionInserted;
 
             //================================================================================================//
             /// <summary>
             /// Constructor (from route path details)
             /// <\summary>
 
-            public TCReversalInfo(TCSubpathRoute lastRoute, int prevReversalIndex, TCSubpathRoute firstRoute, Signals orgSignals)
+            public TCReversalInfo(TCSubpathRoute lastRoute, int prevReversalIndex, TCSubpathRoute firstRoute, Signals orgSignals, float reverseReversalOffset, int reversalIndex, int reversalSectionIndex)
             {
                 // preset values
                 Valid = false;
@@ -10743,6 +15605,10 @@ namespace ORTS
                 FirstSignalIndex = -1;
                 SignalAvailable = false;
                 SignalUsed = false;
+                ReverseReversalOffset = reverseReversalOffset;
+                ReversalIndex = reversalIndex;
+                ReversalSectionIndex = reversalSectionIndex;
+                ReversalActionInserted = false;
 
                 // search for first common section in last and first
 
@@ -10788,7 +15654,8 @@ namespace ORTS
                     lastIndex = lastCommonSection;
                     firstIndex = firstCommonSection;
 
-                    int endLastIndex = (prevReversalIndex > 0 && prevReversalIndex < lastCommonSection) ? prevReversalIndex : 0;
+                    int endLastIndex = (prevReversalIndex > 0 && prevReversalIndex < lastCommonSection &&
+                        Program.Simulator.TimetableMode) ? prevReversalIndex : 0;
 
                     while (lastIndex >= endLastIndex && firstIndex <= (firstRoute.Count - 1) && lastRoute[lastIndex].TCSectionIndex == firstRoute[firstIndex].TCSectionIndex)
                     {
@@ -10801,7 +15668,9 @@ namespace ORTS
                     }
 
                     Valid = LastDivergeIndex >= 0; // it is a reversal
-                    validDivPoint = LastDivergeIndex > 0 && FirstDivergeIndex < (firstRoute.Count-1); // valid reversal point
+                    validDivPoint = true;
+                    if (Program.Simulator.TimetableMode)
+                        validDivPoint = LastDivergeIndex > 0 && FirstDivergeIndex < (firstRoute.Count - 1); // valid reversal point
                     if (lastRoute.Count == 1 && FirstDivergeIndex < (firstRoute.Count - 1)) validDivPoint = true; // valid reversal point in first and only section
                 }
 
@@ -10819,7 +15688,20 @@ namespace ORTS
                     // find last signal furthest away from diverging point
 
                     bool signalFound = false;
-                    for (int iSection = 0; iSection <= FirstDivergeIndex && !signalFound; iSection++)
+                    int startSection = 0;
+                    if (!Program.Simulator.TimetableMode)
+                    // In this case test starts only after reverse point.
+                    {
+                        for (int iSection = 0; iSection < firstRoute.Count; iSection++)
+                        {
+                            if (firstRoute[iSection].TCSectionIndex == ReversalSectionIndex)
+                            {
+                                startSection = iSection;
+                                break;
+                            }
+                        }
+                    }
+                    for (int iSection = startSection; iSection <= FirstDivergeIndex && !signalFound; iSection++)
                     {
                         TrackCircuitSection thisSection = orgSignals.TrackCircuitList[firstRoute[iSection].TCSectionIndex];
                         if (thisSection.EndSignals[firstRoute[iSection].Direction] != null)   // signal in required direction
@@ -10874,6 +15756,10 @@ namespace ORTS
                 FirstSignalIndex = otherInfo.FirstSignalIndex;
                 SignalSectorIndex = otherInfo.SignalSectorIndex;
                 SignalOffset = otherInfo.SignalOffset;
+                ReverseReversalOffset = otherInfo.ReverseReversalOffset;
+                ReversalIndex = otherInfo.ReversalIndex;
+                ReversalSectionIndex = otherInfo.ReversalSectionIndex;
+                ReversalActionInserted = false;
             }
 
             //================================================================================================//
@@ -10898,6 +15784,10 @@ namespace ORTS
 
                 SignalAvailable = false;
                 SignalUsed = false;
+                ReverseReversalOffset = 0.0f;
+                ReversalIndex = -1;
+                ReversalSectionIndex = -1;
+                ReversalActionInserted = false;
             }
 
             //================================================================================================//
@@ -10908,36 +15798,21 @@ namespace ORTS
             public TCReversalInfo(BinaryReader inf)
             {
                 Valid = inf.ReadBoolean();
+                LastDivergeIndex = inf.ReadInt32();
+                FirstDivergeIndex = inf.ReadInt32();
+                DivergeSectorIndex = inf.ReadInt32();
+                DivergeOffset = inf.ReadSingle();
 
-                if (Valid)
-                {
-                    LastDivergeIndex = inf.ReadInt32();
-                    FirstDivergeIndex = inf.ReadInt32();
-                    DivergeSectorIndex = inf.ReadInt32();
-                    DivergeOffset = inf.ReadSingle();
-
-                    SignalAvailable = inf.ReadBoolean();
-                    SignalUsed = inf.ReadBoolean();
-                    LastSignalIndex = inf.ReadInt32();
-                    FirstSignalIndex = inf.ReadInt32();
-                    SignalSectorIndex = inf.ReadInt32();
-                    SignalOffset = inf.ReadSingle();
-                }
-                else
-                {
-                    LastDivergeIndex = -1;
-                    FirstDivergeIndex = -1;
-                    DivergeSectorIndex = -1;
-                    DivergeOffset = 0.0f;
-
-                    LastSignalIndex = -1;
-                    FirstSignalIndex = -1;
-                    SignalSectorIndex = -1;
-                    SignalOffset = 0.0f;
-
-                    SignalAvailable = false;
-                    SignalUsed = false;
-                }
+                SignalAvailable = inf.ReadBoolean();
+                SignalUsed = inf.ReadBoolean();
+                LastSignalIndex = inf.ReadInt32();
+                FirstSignalIndex = inf.ReadInt32();
+                SignalSectorIndex = inf.ReadInt32();
+                SignalOffset = inf.ReadSingle();
+                ReverseReversalOffset = inf.ReadSingle();
+                ReversalIndex = inf.ReadInt32();
+                ReversalSectionIndex = inf.ReadInt32();
+                ReversalActionInserted = inf.ReadBoolean();
             }
 
             //================================================================================================//
@@ -10948,24 +15823,50 @@ namespace ORTS
             public void Save(BinaryWriter outf)
             {
                 outf.Write(Valid);
-
-                if (Valid)
-                {
-                    outf.Write(LastDivergeIndex);
-                    outf.Write(FirstDivergeIndex);
-                    outf.Write(DivergeSectorIndex);
-                    outf.Write(DivergeOffset);
-
-                    outf.Write(SignalAvailable);
-                    outf.Write(SignalUsed);
-                    outf.Write(LastSignalIndex);
-                    outf.Write(FirstSignalIndex);
-                    outf.Write(SignalSectorIndex);
-                    outf.Write(SignalOffset);
-                }
+                outf.Write(LastDivergeIndex);
+                outf.Write(FirstDivergeIndex);
+                outf.Write(DivergeSectorIndex);
+                outf.Write(DivergeOffset);
+                outf.Write(SignalAvailable);
+                outf.Write(SignalUsed);
+                outf.Write(LastSignalIndex);
+                outf.Write(FirstSignalIndex);
+                outf.Write(SignalSectorIndex);
+                outf.Write(SignalOffset);
+                outf.Write(ReverseReversalOffset);
+                outf.Write(ReversalIndex);
+                outf.Write(ReversalSectionIndex);
+                outf.Write(ReversalActionInserted);
             }
 
         }//TCReversalInfo
+
+        //================================================================================================//
+        /// <summary>
+        /// Rough Reversal information class, used only during route building.
+        /// </summary>
+
+        public class RoughReversalInfo
+        {
+            public int SubPathIndex;
+            public float ReverseReversalOffset;
+            public int ReversalSectionIndex;
+
+            //================================================================================================//
+            /// <summary>
+            /// Constructor (from route path details)
+            /// <\summary>
+
+            public RoughReversalInfo(int subPathIndex, float reverseReversalOffset, int reversalSectionIndex)
+            {
+
+
+                SubPathIndex = subPathIndex;
+                ReverseReversalOffset = reverseReversalOffset;
+                ReversalSectionIndex = reversalSectionIndex;
+            }
+        }
+
 
         //================================================================================================//
         /// <summary>
@@ -11011,6 +15912,7 @@ namespace ORTS
 
             public void InsertAction(DistanceTravelledItem thisItem)
             {
+
                 if (this.Count == 0)
                 {
                     this.AddFirst(thisItem);
@@ -11079,7 +15981,24 @@ namespace ORTS
                         itemsCollected = true;
                     }
                 }
+                return (itemList);
+            }
 
+            public List<DistanceTravelledItem> GetAuxActions(Train thisTrain, float distance)
+            {
+                List<DistanceTravelledItem> itemList = new List<DistanceTravelledItem>();
+                LinkedListNode<DistanceTravelledItem> nextNode = this.First;
+
+                while (nextNode != null)
+                {
+                    if (nextNode.Value is AuxActionItem)
+                    {
+                        AuxActionItem item = nextNode.Value as AuxActionItem;
+                        if (item.CanActivate(thisTrain, thisTrain.SpeedMpS, false))
+                            itemList.Add(nextNode.Value);
+                    }
+                    nextNode = nextNode.Next;
+                }
                 return (itemList);
             }
 
@@ -11098,12 +16017,19 @@ namespace ORTS
 
                 while (!itemsCollected && nextNode != null)
                 {
-                    if (nextNode.Value.RequiredDistance <= distance && nextNode.Value.GetType() == reqType)
+                    if (nextNode.Value.RequiredDistance <= distance)
                     {
-                        itemList.Add(nextNode.Value);
-                        prevNode = nextNode;
-                        nextNode = prevNode.Next;
-                        this.Remove(prevNode);
+                        if (nextNode.Value.GetType() == reqType)
+                        {
+                            itemList.Add(nextNode.Value);
+                            prevNode = nextNode;
+                            nextNode = prevNode.Next;
+                            this.Remove(prevNode);
+                        }
+                        else
+                        {
+                            nextNode = nextNode.Next;
+                        }
                     }
                     else
                     {
@@ -11112,6 +16038,31 @@ namespace ORTS
                 }
 
                 return (itemList);
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// Get distance of last track clearance item
+            /// <\summary>
+
+            public float? GetLastClearingDistance()
+            {
+                float? lastDistance = null;
+
+                bool itemsCollected = false;
+                LinkedListNode<DistanceTravelledItem> nextNode = this.Last;
+
+                while (!itemsCollected && nextNode != null)
+                {
+                    if (nextNode.Value is ClearSectionItem)
+                    {
+                        lastDistance = nextNode.Value.RequiredDistance;
+                        itemsCollected = true;
+                    }
+                    nextNode = nextNode.Previous;
+                }
+
+                return (lastDistance);
             }
 
             //================================================================================================//
@@ -11150,7 +16101,7 @@ namespace ORTS
 
                 foreach (var thisAction in this)
                 {
-                    if (thisAction is AIActionItem || removeAll)
+                    if ((thisAction is AIActionItem && !(thisAction is AuxActionItem)) || removeAll)
                     {
                         DistanceTravelledItem thisItem = thisAction;
                         itemsToRemove.Add(thisItem);
@@ -11215,11 +16166,18 @@ namespace ORTS
                     ClearSectionItem thisSection = this as ClearSectionItem;
                     thisSection.SaveItem(outf);
                 }
-                else if (this is AIActionItem)
+                else if (this is AIActionItem && !(this is AuxActionItem))
                 {
                     outf.Write(3);
                     outf.Write(RequiredDistance);
                     AIActionItem thisAction = this as AIActionItem;
+                    thisAction.SaveItem(outf);
+                }
+                else if (this is AuxActionItem)
+                {
+                    outf.Write(4);
+                    outf.Write(RequiredDistance);
+                    AuxActionItem thisAction = this as AuxActionItem;
                     thisAction.SaveItem(outf);
                 }
                 else
@@ -11329,6 +16287,8 @@ namespace ORTS
 
         public class StationStop : IComparable<StationStop>
         {
+            public const int NumSecPerPass = 10; // number of seconds to board of a passengers
+            public const int DefaultFreightStopTime = 20; // MSTS stoptime for freight trains
 
             public enum STOPTYPE
             {
@@ -11348,6 +16308,9 @@ namespace ORTS
             public int Direction;
             public int ExitSignal;
             public bool HoldSignal;
+            public bool NoWaitSignal;
+            public bool CallOnAllowed;
+            public bool NoClaimAllowed;
             public float StopOffset;
             public float DistanceToTrainM;
             public int ArrivalTime;
@@ -11355,7 +16318,11 @@ namespace ORTS
             public int ActualArrival;
             public int ActualDepart;
             public bool Passed;
-
+            public DateTime arrivalDT;
+            public DateTime departureDT;
+            public List<int> ConnectionsWaiting = new List<int>();                                // List of trains waiting
+            public Dictionary<int, int> ConnectionsAwaited = new Dictionary<int, int>();          // List of awaited trains : key = trainno., value = arr time
+            public Dictionary<int, WaitInfo> ConnectionDetails = new Dictionary<int, WaitInfo>(); // Details of connection : key = trainno., value = wait info
 
             //================================================================================================//
             //
@@ -11363,7 +16330,7 @@ namespace ORTS
             //
 
             public StationStop(int platformReference, PlatformDetails platformItem, int subrouteIndex, int routeIndex,
-                int tcSectionIndex, int direction, int exitSignal, bool holdSignal, float stopOffset,
+                int tcSectionIndex, int direction, int exitSignal, bool holdSignal, bool noWaitSignal, bool noClaimAllowed, float stopOffset,
                 int arrivalTime, int departTime, STOPTYPE actualStopType)
             {
                 ActualStopType = actualStopType;
@@ -11375,6 +16342,8 @@ namespace ORTS
                 Direction = direction;
                 ExitSignal = exitSignal;
                 HoldSignal = holdSignal;
+                NoWaitSignal = noWaitSignal;
+                NoClaimAllowed = noClaimAllowed;
                 StopOffset = stopOffset;
                 if (actualStopType == STOPTYPE.STATION_STOP)
                 {
@@ -11382,40 +16351,17 @@ namespace ORTS
                     DepartTime = Math.Max(0, departTime);
                 }
                 else
-                    // times may be <0 for waiting point
+                // times may be <0 for waiting point
                 {
                     ArrivalTime = arrivalTime;
                     DepartTime = departTime;
                 }
-                ActualArrival = arrivalTime;
-                ActualDepart = departTime;
+                ActualArrival = -1;
+                ActualDepart = -1;
                 DistanceToTrainM = 9999999f;
                 Passed = false;
-            }
 
-            //================================================================================================//
-            //
-            // Constructor from copy
-            //
-
-            public StationStop(StationStop orgStop)
-            {
-                ActualStopType = orgStop.ActualStopType;
-                PlatformReference = orgStop.PlatformReference;
-                PlatformItem = new PlatformDetails(orgStop.PlatformItem);
-                SubrouteIndex = orgStop.SubrouteIndex;
-                RouteIndex = orgStop.RouteIndex;
-                TCSectionIndex = orgStop.TCSectionIndex;
-                Direction = orgStop.Direction;
-                ExitSignal = orgStop.ExitSignal;
-                HoldSignal = orgStop.HoldSignal;
-                StopOffset = orgStop.StopOffset;
-                ArrivalTime = orgStop.ArrivalTime;
-                DepartTime = orgStop.DepartTime;
-                ActualArrival = orgStop.ActualArrival;
-                ActualDepart = orgStop.ActualDepart;
-                DistanceToTrainM = orgStop.DistanceToTrainM;
-                Passed = orgStop.Passed;
+                CallOnAllowed = false;
             }
 
             //================================================================================================//
@@ -11451,6 +16397,9 @@ namespace ORTS
                 Direction = inf.ReadInt32();
                 ExitSignal = inf.ReadInt32();
                 HoldSignal = inf.ReadBoolean();
+                NoWaitSignal = inf.ReadBoolean();
+                NoClaimAllowed = inf.ReadBoolean();
+                CallOnAllowed = inf.ReadBoolean();
                 StopOffset = inf.ReadSingle();
                 ArrivalTime = inf.ReadInt32();
                 DepartTime = inf.ReadInt32();
@@ -11458,6 +16407,29 @@ namespace ORTS
                 ActualDepart = inf.ReadInt32();
                 DistanceToTrainM = 9999999f;
                 Passed = inf.ReadBoolean();
+                arrivalDT = new DateTime(inf.ReadInt64());
+                departureDT = new DateTime(inf.ReadInt64());
+
+                ConnectionsWaiting = new List<int>();
+                int totalConWait = inf.ReadInt32();
+                for (int iCW = 0; iCW <= totalConWait - 1; iCW++)
+                {
+                    ConnectionsWaiting.Add(inf.ReadInt32());
+                }
+
+                ConnectionsAwaited = new Dictionary<int, int>();
+                int totalConAwait = inf.ReadInt32();
+                for (int iCA = 0; iCA <= totalConAwait - 1; iCA++)
+                {
+                    ConnectionsAwaited.Add(inf.ReadInt32(), inf.ReadInt32());
+                }
+
+                ConnectionDetails = new Dictionary<int, WaitInfo>();
+                int totalConDetails = inf.ReadInt32();
+                for (int iCD = 0; iCD <= totalConDetails - 1; iCD++)
+                {
+                    ConnectionDetails.Add(inf.ReadInt32(), new WaitInfo(inf));
+                }
             }
 
             //================================================================================================//
@@ -11512,15 +16484,195 @@ namespace ORTS
                 outf.Write(Direction);
                 outf.Write(ExitSignal);
                 outf.Write(HoldSignal);
+                outf.Write(NoWaitSignal);
+                outf.Write(NoClaimAllowed);
+                outf.Write(CallOnAllowed);
                 outf.Write(StopOffset);
                 outf.Write(ArrivalTime);
                 outf.Write(DepartTime);
                 outf.Write(ActualArrival);
                 outf.Write(ActualDepart);
                 outf.Write(Passed);
+                outf.Write((Int64)arrivalDT.Ticks);
+                outf.Write((Int64)departureDT.Ticks);
+
+                outf.Write(ConnectionsWaiting.Count);
+                foreach (int iWait in ConnectionsWaiting)
+                {
+                    outf.Write(iWait);
+                }
+
+                outf.Write(ConnectionsAwaited.Count);
+                foreach (KeyValuePair<int, int> thisAwait in ConnectionsAwaited)
+                {
+                    outf.Write(thisAwait.Key);
+                    outf.Write(thisAwait.Value);
+                }
+
+                outf.Write(ConnectionDetails.Count);
+                foreach (KeyValuePair<int, WaitInfo> thisDetails in ConnectionDetails)
+                {
+                    outf.Write(thisDetails.Key);
+                    WaitInfo thisWait = (WaitInfo)thisDetails.Value;
+                    thisWait.Save(outf);
+                }
+            }
+
+            /// <summary>
+            ///  create copy
+            /// </summary>
+            /// <returns></returns>
+            public StationStop CreateCopy()
+            {
+                return ((StationStop)this.MemberwiseClone());
+            }
+
+            /// <summary>
+            /// Calculate actual depart time
+            /// Make special checks for stops arount midnight
+            /// </summary>
+            /// <param name="presentTime"></param>
+
+            public void CalculateDepartTime(int presentTime, Train stoppedTrain)
+            {
+                int eightHundredHours = 8 * 3600;
+                int sixteenHundredHours = 16 * 3600;
+
+                // preset depart to booked time
+                ActualDepart = DepartTime;
+
+                // correct arrival for stop around midnight
+                if (ActualArrival < eightHundredHours && ArrivalTime > sixteenHundredHours) // arrived after midnight, expected to arrive before
+                {
+                    ActualArrival += (24 * 3600);
+                }
+                else if (ActualArrival > sixteenHundredHours && ArrivalTime < eightHundredHours) // arrived before midnight, expected to arrive before
+                {
+                    ActualArrival -= (24 * 3600);
+                }
+
+                // correct stop time for stop around midnight
+                int stopTime = DepartTime - ArrivalTime;
+                if (DepartTime < eightHundredHours && ArrivalTime > sixteenHundredHours) // stop over midnight
+                {
+                    stopTime += (24 * 3600);
+                }
+
+                // if MSTS compatibility mode uses platform passenger number
+                if (!Program.Simulator.TimetableMode)
+                {
+                    stopTime = ComputeBoardingTime(stoppedTrain);
+                }
+
+
+                else
+                    // use minimun station dwell time
+                    if (stopTime <= 0 || stopTime > PlatformItem.MinWaitingTime)
+                    {
+                        stopTime = (int)PlatformItem.MinWaitingTime;
+                    }
+
+                // correct departure time for stop around midnight
+                int correctedTime = ActualArrival + stopTime;
+                var validSched = CheckScheduleValidity(stoppedTrain);
+                if (validSched) ActualDepart = CompareTimes.LatestTime(DepartTime, correctedTime);
+                else
+                {
+                    ActualDepart = correctedTime;
+                    if (ActualDepart < 0)
+                    {
+                        ActualDepart += (24 * 3600);
+                        ActualArrival += (24 * 3600);
+                    }
+                }
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// <CScomment> Compute boarding time for passenger train. Solution based on number of carriages within platform.
+            /// Number of carriages computed considering an average Traincar length...
+            /// ...moreover considering that carriages are in the train part within platform (MSTS apparently does so).
+            /// Player train has more sophisticated computing, as in MSTS.
+            /// As of now the position of the carriages within the train is computed here at every station together with the statement if the carriage is within the 
+            /// platform boundaries. To be evaluated if the position of the carriages within the train could later be computed together with the CheckFreight method</CScomment>
+            /// <\summary>
+            public virtual int ComputeBoardingTime(Train stopTrain)
+            {
+                var passengerCarsWithinPlatform = stopTrain.PassengerCarsNumber;
+                int stopTime = DefaultFreightStopTime;
+                if (passengerCarsWithinPlatform == 0) return stopTime; // pure freight train
+                var distancePlatformHeadtoTrainHead = -stopTrain.StationStops[0].StopOffset
+                   + PlatformItem.TCOffset[1, stopTrain.StationStops[0].Direction]
+                   + stopTrain.StationStops[0].DistanceToTrainM;
+                var trainPartOutsidePlatformForward = distancePlatformHeadtoTrainHead < 0 ? -distancePlatformHeadtoTrainHead : 0;
+                if (trainPartOutsidePlatformForward >= stopTrain.Length) return (int)PlatformItem.MinWaitingTime; // train actually passed platform; should not happen
+                var distancePlatformTailtoTrainTail = distancePlatformHeadtoTrainHead - PlatformItem.Length + stopTrain.Length;
+                var trainPartOutsidePlatformBackward = distancePlatformTailtoTrainTail > 0 ? distancePlatformTailtoTrainTail : 0;
+                if (trainPartOutsidePlatformBackward >= stopTrain.Length) return (int)PlatformItem.MinWaitingTime; // train actually stopped before platform; should not happen
+                if (stopTrain.IsActualPlayerTrain)
+                {
+                    if (trainPartOutsidePlatformForward == 0 && trainPartOutsidePlatformBackward == 0) passengerCarsWithinPlatform = stopTrain.PassengerCarsNumber;
+                    else
+                    {
+                        if (trainPartOutsidePlatformForward > 0)
+                        {
+                            var walkingDistance = 0.0f;
+                            int trainCarIndex = 0;
+                            while (walkingDistance <= trainPartOutsidePlatformForward && passengerCarsWithinPlatform > 0 && trainCarIndex < stopTrain.Cars.Count - 1)
+                            {
+                                var walkingDistanceBehind = walkingDistance + stopTrain.Cars[trainCarIndex].CarLengthM;
+                                if ((!stopTrain.Cars[trainCarIndex].IsFreight && !stopTrain.Cars[trainCarIndex].IsTender && !stopTrain.Cars[trainCarIndex].IsDriveable) ||
+                                   (stopTrain.Cars[trainCarIndex].IsDriveable && stopTrain.Cars[trainCarIndex].HasPassengerCapacity))
+                                {
+                                    if ((trainPartOutsidePlatformForward - walkingDistance) > 0.67 * stopTrain.Cars[trainCarIndex].CarLengthM) passengerCarsWithinPlatform--;
+                                }
+                                walkingDistance = walkingDistanceBehind;
+                                trainCarIndex++;
+                            }
+                        }
+                        if (trainPartOutsidePlatformBackward > 0 && passengerCarsWithinPlatform > 0)
+                        {
+                            var walkingDistance = 0.0f;
+                            int trainCarIndex = stopTrain.Cars.Count - 1;
+                            while (walkingDistance <= trainPartOutsidePlatformBackward && passengerCarsWithinPlatform > 0 && trainCarIndex >= 0)
+                            {
+                                var walkingDistanceBehind = walkingDistance + stopTrain.Cars[trainCarIndex].CarLengthM;
+                                if ((!stopTrain.Cars[trainCarIndex].IsFreight && !stopTrain.Cars[trainCarIndex].IsTender && !stopTrain.Cars[trainCarIndex].IsDriveable) ||
+                                   (stopTrain.Cars[trainCarIndex].IsDriveable && stopTrain.Cars[trainCarIndex].HasPassengerCapacity))
+                                {
+                                    if ((trainPartOutsidePlatformBackward - walkingDistance) > 0.67 * stopTrain.Cars[trainCarIndex].CarLengthM) passengerCarsWithinPlatform--;
+                                }
+                                walkingDistance = walkingDistanceBehind;
+                                trainCarIndex--;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+
+                    passengerCarsWithinPlatform = stopTrain.Length - trainPartOutsidePlatformForward - trainPartOutsidePlatformBackward > 0 ?
+                    stopTrain.PassengerCarsNumber : (int)Math.Min((stopTrain.Length - trainPartOutsidePlatformForward - trainPartOutsidePlatformBackward) / stopTrain.Cars.Count() + 0.33,
+                    stopTrain.PassengerCarsNumber);
+                }
+                if (passengerCarsWithinPlatform > 0) stopTime = Math.Max(NumSecPerPass * PlatformItem.NumPassengersWaiting / passengerCarsWithinPlatform, DefaultFreightStopTime);
+                else stopTime = 0; // no passenger car stopped within platform: sorry, no countdown starts
+                return stopTime;
+            }
+
+            //================================================================================================//
+            /// <summary>
+            /// CheckScheduleValidity
+            /// Quite frequently in MSTS activities AI trains have invalid values (often near midnight), because MSTS does not consider them anyway
+            /// As OR considers them, it is wise to discard the least credible values, to avoid AI trains stopping for hours
+            /// <\summary>
+            private bool CheckScheduleValidity(Train stopTrain)
+            {
+                if (Program.Simulator.TimetableMode || stopTrain.TrainType != Train.TRAINTYPE.AI) return true;
+                if (ArrivalTime == DepartTime && Math.Abs(ArrivalTime - ActualArrival) > 14400) return false;
+                else return true;
             }
         }
-
 
         //================================================================================================//
         /// <summary>
@@ -11578,6 +16730,8 @@ namespace ORTS
             public TrackMonitorSignalAspect SignalState;
             public float AllowedSpeedMpS;
             public float DistanceToTrainM;
+            public bool Enabled;
+            public int StationPlatformLength;
 
             // field validity :
             // if ItemType == SIGNAL :
@@ -11629,23 +16783,25 @@ namespace ORTS
             }
 
             // Constructor for Station
-            public TrainObjectItem(float thisDistanceM)
+            public TrainObjectItem(float thisDistanceM, int thisPlatformLength)
             {
                 ItemType = TRAINOBJECTTYPE.STATION;
                 AuthorityType = END_AUTHORITY.NO_PATH_RESERVED;
                 SignalState = TrackMonitorSignalAspect.Clear_2;
                 AllowedSpeedMpS = -1;
                 DistanceToTrainM = thisDistanceM;
+                StationPlatformLength = thisPlatformLength;
             }
 
             // Constructor for Reversal
-            public TrainObjectItem(int dummy, float thisDistanceM)  // dummy int as first parameter to make it unique
+            public TrainObjectItem(bool enabled, float thisDistanceM)
             {
                 ItemType = TRAINOBJECTTYPE.REVERSAL;
                 AuthorityType = END_AUTHORITY.NO_PATH_RESERVED;
                 SignalState = TrackMonitorSignalAspect.Clear_2;
                 AllowedSpeedMpS = -1;
                 DistanceToTrainM = thisDistanceM;
+                Enabled = enabled;
             }
 
             // Constructor for Authority
@@ -11685,7 +16841,7 @@ namespace ORTS
         //used by remote train to update location based on message received
         public int expectedTileX, expectedTileZ, expectedTracIndex, expectedDIr, expectedTDir;
         public float expectedX, expectedZ, expectedTravelled, expectedLength;
-        public bool updateMSGReceived = false;
+        public bool updateMSGReceived;
 
         public void ToDoUpdate(int tni, int tX, int tZ, float x, float z, float eT, float speed, int dir, int tDir, float len)
         {
@@ -11708,7 +16864,7 @@ namespace ORTS
             var staticLength = 0f;
             foreach (var car in Cars)
             {
-                staticLength += car.Length;
+                staticLength += car.CarLengthM;
             }
             staticLength = (expectedLength - staticLength) / (Cars.Count - 1);
             foreach (var car in Cars)//update slack for each car
@@ -11719,11 +16875,11 @@ namespace ORTS
         }
         public void UpdateRemoteTrainPos(float elapsedClockSeconds)
         {
+            float newDistanceTravelledM = DistanceTravelledM;
+
             if (updateMSGReceived)
             {
                 updateMSGReceived = false;
-                float move = 0.0f;
-                var requestedSpeed = SpeedMpS;
                 try
                 {
                     UpdateCarSlack(expectedLength);//update car slack first
@@ -11731,16 +16887,18 @@ namespace ORTS
                     var x = travelled + LastSpeedMpS * elapsedClockSeconds + (SpeedMpS - LastSpeedMpS) / 2 * elapsedClockSeconds;
                     this.MUDirection = (Direction)expectedDIr;
 
-                    if (Math.Abs(x - expectedTravelled) < 0.2 || Math.Abs(x - expectedTravelled) > 10)
+                    if (Math.Abs(x - expectedTravelled) < 1 || Math.Abs(x - expectedTravelled) > 20)
                     {
                         CalculatePositionOfCars(expectedTravelled - travelled);
+                        newDistanceTravelledM = DistanceTravelledM + expectedTravelled - travelled;
+
                         //if something wrong with the switch
                         if (this.RearTDBTraveller.TrackNodeIndex != expectedTracIndex)
                         {
                             Traveller t = null;
                             if (expectedTracIndex <= 0)
                             {
-                                t = new Traveller(Simulator.TSectionDat, Simulator.TDB.TrackDB.TrackNodes,  expectedTileX, expectedTileZ, expectedX, expectedZ, (Traveller.TravellerDirection)expectedTDir);
+                                t = new Traveller(Simulator.TSectionDat, Simulator.TDB.TrackDB.TrackNodes, expectedTileX, expectedTileZ, expectedX, expectedZ, (Traveller.TravellerDirection)expectedTDir);
                             }
                             else
                             {
@@ -11757,11 +16915,11 @@ namespace ORTS
                     {
                         SpeedMpS += (expectedTravelled - x) / 1;
                         CalculatePositionOfCars(SpeedMpS * elapsedClockSeconds);
+                        newDistanceTravelledM = DistanceTravelledM + (SpeedMpS * elapsedClockSeconds);
                     }
                 }
                 catch (Exception)
                 {
-                    move = expectedTravelled - travelled;
                 }
                 /*if (Math.Abs(requestedSpeed) < 0.00001 && Math.Abs(SpeedMpS) > 0.01) updateMSGReceived = true; //if requested is stop, but the current speed is still moving
                 else*/
@@ -11770,6 +16928,7 @@ namespace ORTS
             else//no message received, will move at the previous speed
             {
                 CalculatePositionOfCars(SpeedMpS * elapsedClockSeconds);
+                newDistanceTravelledM = DistanceTravelledM + (SpeedMpS * elapsedClockSeconds);
             }
 
             //update speed for each car, so wheels will rotate
@@ -11792,10 +16951,13 @@ namespace ORTS
                 }
             }
             LastSpeedMpS = SpeedMpS;
+            DistanceTravelledM = newDistanceTravelledM;
+
             //Orient();
             return;
 
         }
     }// class Train
 }
+
 

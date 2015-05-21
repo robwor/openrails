@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2011, 2012 by the Open Rails project.
+﻿// COPYRIGHT 2011, 2012, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -22,10 +22,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using Microsoft.Xna.Framework;
-using MSTS;
+using Orts.Formats.Msts;
+using ORTS.Common;
 
-namespace ORTS
+namespace ORTS.Viewer3D
 {
+    // TODO: Move to simulator!
     public class RoadCarSpawner
     {
         public const float StopDistance = 10;
@@ -35,7 +37,7 @@ namespace ORTS
         const float TrackRailHeight = 0.275f;
         const float TrainRailHeightMaximum = 1;
 
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
         readonly CarSpawnerObj CarSpawnerObj;
 
         // THREAD SAFETY:
@@ -50,7 +52,7 @@ namespace ORTS
         float LastSpawnedTime;
         float NextSpawnTime;
 
-        public RoadCarSpawner(Viewer3D viewer, WorldPosition position, CarSpawnerObj carSpawnerObj)
+        public RoadCarSpawner(Viewer viewer, WorldPosition position, CarSpawnerObj carSpawnerObj)
         {
             Debug.Assert(TrackMergeDistance >= 2 * (RampLength + TrackHalfWidth), "TrackMergeDistance is less than 2 * (RampLength + TrackHalfWidth); vertical inconsistencies will occur at close, but not merged, tracks.");
             Viewer = viewer;
@@ -175,6 +177,7 @@ namespace ORTS
         }
     }
 
+    // TODO: Move to simulator!
     public class RoadCar
     {
         const float VisualHeightAdjustment = 0.1f;
@@ -216,7 +219,7 @@ namespace ORTS
         float SpeedMax;
         int NextCrossingIndex;
 
-        public RoadCar(Viewer3D viewer, RoadCarSpawner spawner, float averageSpeed)
+        public RoadCar(Viewer viewer, RoadCarSpawner spawner, float averageSpeed)
         {
             Spawner = spawner;
             Type = Program.Random.Next() % viewer.Simulator.CarSpawnerFile.shapeNames.Length;
@@ -277,17 +280,17 @@ namespace ORTS
         }
     }
 
-    public class RoadCarDrawer
+    public class RoadCarViewer
     {
-        readonly Viewer3D Viewer;
+        readonly Viewer Viewer;
 
         // THREAD SAFETY:
         //   All accesses must be done in local variables. No modifications to the objects are allowed except by
         //   assignment of a new instance (possibly cloned and then modified).
-        Dictionary<RoadCar, RoadCarViewer> Cars = new Dictionary<RoadCar, RoadCarViewer>();
+        Dictionary<RoadCar, RoadCarPrimitive> Cars = new Dictionary<RoadCar, RoadCarPrimitive>();
         List<RoadCar> VisibleCars = new List<RoadCar>();
 
-        public RoadCarDrawer(Viewer3D viewer)
+        public RoadCarViewer(Viewer viewer)
         {
             Viewer = viewer;
         }
@@ -299,9 +302,11 @@ namespace ORTS
             var cars = Cars;
             if (visibleCars.Any(c => !cars.ContainsKey(c)) || cars.Keys.Any(c => !visibleCars.Contains(c)))
             {
-                var newCars = new Dictionary<RoadCar, RoadCarViewer>();
+                var newCars = new Dictionary<RoadCar, RoadCarPrimitive>();
                 foreach (var car in visibleCars)
                 {
+                    if (Viewer.LoaderProcess.Terminated)
+                        break;
                     if (cars.ContainsKey(car))
                         newCars.Add(car, cars[car]);
                     else
@@ -331,9 +336,9 @@ namespace ORTS
         }
 
         [CallOnThread("Loader")]
-        RoadCarViewer LoadCar(RoadCar car)
+        RoadCarPrimitive LoadCar(RoadCar car)
         {
-            return new RoadCarViewer(Viewer, car);
+            return new RoadCarPrimitive(Viewer, car);
         }
 
         [CallOnThread("Loader")]
@@ -345,12 +350,12 @@ namespace ORTS
         }
     }
 
-    public class RoadCarViewer
+    public class RoadCarPrimitive
     {
         readonly RoadCar Car;
         readonly RoadCarShape CarShape;
 
-        public RoadCarViewer(Viewer3D viewer, RoadCar car)
+        public RoadCarPrimitive(Viewer viewer, RoadCar car)
         {
             Car = car;
             CarShape = new RoadCarShape(viewer, viewer.Simulator.CarSpawnerFile.shapeNames[car.Type]);

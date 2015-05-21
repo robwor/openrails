@@ -20,6 +20,7 @@ namespace ORTS
     public interface EventHandler
     {
         void HandleEvent(Event evt);
+        void HandleEvent(Event evt, object viewer);
     }
 
     public enum Event
@@ -27,7 +28,7 @@ namespace ORTS
         None,
         BellOff,
         BellOn,
-        BlowerChange, // NOTE: Currently not used in Open Rails.
+        BlowerChange,
         CompressorOff,
         CompressorOn,
         ControlError,
@@ -36,28 +37,36 @@ namespace ORTS
         CoupleC, // NOTE: Currently not used in Open Rails.
         CrossingClosing,
         CrossingOpening,
-        CylinderCocksToggle, // NOTE: Currently not used in Open Rails.
-        DamperChange, // NOTE: Currently not used in Open Rails.
+        CylinderCocksToggle,
+        CylinderCompoundToggle,
+        DamperChange,
         Derail1, // NOTE: Currently not used in Open Rails.
         Derail2, // NOTE: Currently not used in Open Rails.
         Derail3, // NOTE: Currently not used in Open Rails.
-        DynamicBrakeChange, // NOTE: Currently not used in Open Rails.
+        DoorClose,
+        DoorOpen,
+        DynamicBrakeChange,
         DynamicBrakeIncrease, // NOTE: Currently not used in Open Rails.
-        DynamicBrakeOff, // NOTE: Currently not used in Open Rails.
-        EngineBrakeChange, // NOTE: Currently not used in Open Rails.
+        DynamicBrakeOff,
+        EngineBrakeChange,
         EngineBrakePressureDecrease,
         EngineBrakePressureIncrease,
-        EnginePowerOff, // NOTE: Currently not used in Open Rails.
-        EnginePowerOn, // NOTE: Currently not used in Open Rails.
-        FireboxDoorChange, // NOTE: Currently not used in Open Rails.
-        FireboxDoorClose, // NOTE: Currently not used in Open Rails.
-        FuelTowerDown, // NOTE: Currently not used in Open Rails.
-        FuelTowerTransferEnd, // NOTE: Currently not used in Open Rails.
-        FuelTowerTransferStart, // NOTE: Currently not used in Open Rails.
-        FuelTowerUp, // NOTE: Currently not used in Open Rails.
+        EnginePowerOff, 
+        EnginePowerOn, 
+        FireboxDoorChange,
+        FireboxDoorOpen,
+        FireboxDoorClose,
+        FuelTowerDown,
+        FuelTowerTransferEnd,
+        FuelTowerTransferStart,
+        FuelTowerUp,
+        GearDown,
+        GearUp,
         HornOff,
         HornOn,
         LightSwitchToggle,
+        MirrorClose, 
+        MirrorOpen, 
         Pantograph1Down,
         Pantograph1Toggle, // NOTE: Currently not used in Open Rails.
         Pantograph1Up,
@@ -67,26 +76,54 @@ namespace ORTS
         PermissionGranted,
         PermissionToDepart,
         ReverserChange,
+        ReverserToForwardBackward,
+        ReverserToNeutral,
         SanderOff,
         SanderOn,
-        SemaphoreArm, // NOTE: Currently not used in Open Rails.
-        SteamEjector1Off, // NOTE: Currently not used in Open Rails.
-        SteamEjector1On, // NOTE: Currently not used in Open Rails.
-        SteamEjector2Off, // NOTE: Currently not used in Open Rails.
-        SteamEjector2On, // NOTE: Currently not used in Open Rails.
+        SemaphoreArm,
+        SteamEjector1Off,
+        SteamEjector1On,
+        SteamEjector2Off,
+        SteamEjector2On,
         SteamHeatChange, // NOTE: Currently not used in Open Rails.
-        SteamSafetyValveOff, // NOTE: Currently not used in Open Rails.
-        SteamSafetyValveOn, // NOTE: Currently not used in Open Rails.
+        SteamPulse1,
+        SteamPulse2,
+        SteamPulse3,
+        SteamPulse4,
+        SteamPulse5,
+        SteamPulse6,
+        SteamPulse7,
+        SteamPulse8,
+        SteamPulse9,
+        SteamPulse10,
+        SteamPulse11,
+        SteamPulse12,
+        SteamPulse13,
+        SteamPulse14,
+        SteamPulse15,
+        SteamPulse16,
+        SteamSafetyValveOff,
+        SteamSafetyValveOn,
         ThrottleChange,
         TrainBrakeChange,
         TrainBrakePressureDecrease,
         TrainBrakePressureIncrease,
+        TrainControlSystemActivate,
+        TrainControlSystemAlert1,
+        TrainControlSystemAlert2,
+        TrainControlSystemDeactivate,
+        TrainControlSystemInfo1,
+        TrainControlSystemInfo2,
+        TrainControlSystemPenalty1,
+        TrainControlSystemPenalty2,
+        TrainControlSystemWarning1,
+        TrainControlSystemWarning2,
         Uncouple,
         UncoupleB, // NOTE: Currently not used in Open Rails.
         UncoupleC, // NOTE: Currently not used in Open Rails.
         VigilanceAlarmOff,
         VigilanceAlarmOn,
-        VigilanceAlarmReset, // NOTE: Currently not used in Open Rails.
+        VigilanceAlarmReset,
         WaterScoopDown, // NOTE: Currently not used in Open Rails.
         WaterScoopUp, // NOTE: Currently not used in Open Rails.
         WiperOff,
@@ -94,7 +131,9 @@ namespace ORTS
         _HeadlightDim,
         _HeadlightOff,
         _HeadlightOn,
-        _ResetWheelSlip,
+        _ResetWheelSlip
+
+
     }
 
     public static class Events
@@ -173,7 +212,7 @@ namespace ORTS
                         case 37: return Event.LightSwitchToggle;
                         case 38: return Event.WaterScoopDown;
                         case 39: return Event.WaterScoopUp;
-                        // Event 40 is the firebox door open in MSTS sound files but is never used.
+                        case 40: return Event.FireboxDoorOpen; // Used in default steam locomotives (Scotsman and 380)
                         case 41: return Event.FireboxDoorClose;
                         case 42: return Event.SteamSafetyValveOn;
                         case 43: return Event.SteamSafetyValveOff;
@@ -198,6 +237,46 @@ namespace ORTS
                         case 62: return Event.UncoupleB;
                         case 63: return Event.UncoupleC;
                         // Event 64 is unused in MSTS.
+
+                        // ORTS only Events
+                        case 101: return Event.GearUp; // for gearbox based engines
+                        case 102: return Event.GearDown; // for gearbox based engines
+                        case 103: return Event.ReverserToForwardBackward; // reverser moved to forward or backward position
+                        case 104: return Event.ReverserToNeutral; // reversed moved to neutral
+                        case 105: return Event.DoorOpen; // door opened; propagated to all locos and wagons of the consist
+                        case 106: return Event.DoorClose; // door closed; propagated to all locos and wagons of the consist
+                        case 107: return Event.MirrorOpen; 
+                        case 108: return Event.MirrorClose;
+                        case 109: return Event.TrainControlSystemInfo1;
+                        case 110: return Event.TrainControlSystemInfo2;
+                        case 111: return Event.TrainControlSystemActivate;
+                        case 112: return Event.TrainControlSystemDeactivate;
+                        case 113: return Event.TrainControlSystemPenalty1;
+                        case 114: return Event.TrainControlSystemPenalty2;
+                        case 115: return Event.TrainControlSystemWarning1;
+                        case 116: return Event.TrainControlSystemWarning2;
+                        case 117: return Event.TrainControlSystemAlert1;
+                        case 118: return Event.TrainControlSystemAlert2;
+                        case 119: return Event.CylinderCompoundToggle; // Locomotive switched to compound
+                        
+                        case 121: return Event.SteamPulse1;
+                        case 122: return Event.SteamPulse2;
+                        case 123: return Event.SteamPulse3;
+                        case 124: return Event.SteamPulse4;
+                        case 125: return Event.SteamPulse5;
+                        case 126: return Event.SteamPulse6;
+                        case 127: return Event.SteamPulse7;
+                        case 128: return Event.SteamPulse8;
+                        case 129: return Event.SteamPulse9;
+                        case 130: return Event.SteamPulse10;
+                        case 131: return Event.SteamPulse11;
+                        case 132: return Event.SteamPulse12;
+                        case 133: return Event.SteamPulse13;
+                        case 134: return Event.SteamPulse14;
+                        case 135: return Event.SteamPulse15;
+                        case 136: return Event.SteamPulse16;
+                        //
+
                         default: return 0;
                     }
                 case Source.MSTSCrossing:

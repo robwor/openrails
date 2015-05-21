@@ -20,13 +20,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
-using MSTS;
+using Orts.Parsers.Msts;
 
 namespace ORTS
 {
     public static class RollingStock
     {
-        public static TrainCar Load(Simulator simulator, string wagFilePath)
+        public static TrainCar Load(Simulator simulator, string wagFilePath, bool initialize = true)
         {
             GenericWAGFile wagFile = SharedGenericWAGFileManager.Get(wagFilePath);  
             TrainCar car;
@@ -66,9 +66,21 @@ namespace ORTS
                     case "electric": car = new MSTSElectricLocomotive(simulator, wagFilePath); break;
                     case "steam": car = new MSTSSteamLocomotive(simulator, wagFilePath); break;
                     case "diesel": car = new MSTSDieselLocomotive(simulator, wagFilePath); break;
-					default: throw new InvalidDataException(wagFilePath + "\r\n\r\nUnknown engine type: " + wagFile.Engine.Type);
+                    default: throw new InvalidDataException(wagFilePath + "\r\n\r\nUnknown engine type: " + wagFile.Engine.Type);
                 }
             }
+
+            MSTSWagon wagon = car as MSTSWagon;
+            if (car != null)
+            {
+                wagon.Load();
+
+                if (initialize)
+                {
+                    wagon.Initialize();
+                }
+            }
+
             return car;
         }
 
@@ -81,12 +93,12 @@ namespace ORTS
 
         public static TrainCar Restore(Simulator simulator, BinaryReader inf, Train train)
         {
-            TrainCar car = Load(simulator, inf.ReadString());
+            TrainCar car = Load(simulator, inf.ReadString(), false);
             car.Train = train;
             car.Restore(inf);
+            car.Initialize();
             return car;
         }
-
 
         /// <summary>
         /// Utility class to avoid loading multiple copies of the same file.
@@ -116,8 +128,8 @@ namespace ORTS
         public class GenericWAGFile
         {
             public bool IsEngine { get { return Engine != null; } }
-            public EngineClass Engine = null;
-            public OpenRailsData OpenRails = null;
+            public EngineClass Engine;
+            public OpenRailsData OpenRails;
 
             public GenericWAGFile(string filenamewithpath)
             {
@@ -135,7 +147,7 @@ namespace ORTS
 
             public class EngineClass
             {
-                public string Type = null;
+                public string Type;
 
                 public EngineClass(STFReader stf)
                 {
@@ -147,15 +159,15 @@ namespace ORTS
                 }
             } // class WAGFile.Engine
 
-            public class OpenRailsData
+			public class OpenRailsData
             {
-                public string DLL = null;
+                public string DLL;
 
                 public OpenRailsData(STFReader stf)
                 {
                     stf.MustMatch("(");
                     stf.ParseBlock(new STFReader.TokenProcessor[] {
-                        new STFReader.TokenProcessor("dll", ()=>{ DLL = stf.ReadStringBlock(null); }),
+                        new STFReader.TokenProcessor("ortsdll", ()=>{ DLL = stf.ReadStringBlock(null); }),
                     });
                 }
             } // class WAGFile.Engine

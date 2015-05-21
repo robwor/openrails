@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -17,73 +17,48 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using ORTS.Common;
+using ORTS.Viewer3D;
 using System;
 using System.Diagnostics;
 using System.Windows.Forms;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
 
-namespace ORTS
+namespace ORTS.Processes
 {
-    public class ElapsedTime
-    {
-        public float ClockSeconds;
-        public float RealSeconds;
-
-        public static ElapsedTime Zero = new ElapsedTime();
-
-        public static ElapsedTime operator +(ElapsedTime a, ElapsedTime b)
-        {
-            return new ElapsedTime(a.ClockSeconds + b.ClockSeconds, a.RealSeconds + b.RealSeconds);
-        }
-
-        public ElapsedTime()
-            : this(0, 0)
-        {
-        }
-
-        public ElapsedTime(float clockSeconds, float realSeconds)
-        {
-            ClockSeconds = clockSeconds;
-            RealSeconds = realSeconds;
-        }
-
-        public void Reset()
-        {
-            ClockSeconds = 0;
-            RealSeconds = 0;
-        }
-    }
-
     [CallOnThread("Render")]
-    public class RenderProcess : Microsoft.Xna.Framework.Game
+    public class RenderProcess
     {
         public const int ShadowMapCountMaximum = 4;
         public const int ShadowMapMipCount = 1;
 
-        public readonly Profiler Profiler = new Profiler("Render");
-        public readonly Viewer3D Viewer;
+        public Point DisplaySize { get; private set; }
+        public GraphicsDevice GraphicsDevice { get { return Game.GraphicsDevice; } }
+        public bool IsActive { get { return Game.IsActive; } }
+        public Viewer Viewer { get { return Game.State is GameStateViewer3D ? (Game.State as GameStateViewer3D).Viewer : null; } }
 
-        public Vector2 WindowSize = new Vector2(1024, 768);
+        public Profiler Profiler { get; private set; }
 
-        System.Windows.Forms.Form Form;    // the 3D view is drawn on this form
-        public GraphicsDeviceManager GraphicsDeviceManager;
+        readonly Game Game;
+        readonly Form GameForm;
+        readonly Point GameWindowSize;
+        readonly WatchdogToken WatchdogToken;
+
+        public GraphicsDeviceManager GraphicsDeviceManager { get; private set; }
 
         RenderFrame CurrentFrame;   // a frame contains a list of primitives to draw at a specified time
         RenderFrame NextFrame;      // we prepare the next frame in the background while the current one is rendering,
 
-        public bool Stopped = false;  // use for shutdown
-
-        public new bool IsMouseVisible = false;  // handles cross thread issues by signalling RenderProcess of a change
+        public bool IsMouseVisible { get; set; }  // handles cross thread issues by signalling RenderProcess of a change
 
         // Diagnostic information
-        public readonly SmoothedData FrameRate = new SmoothedData();
-        public readonly SmoothedData FrameTime = new SmoothedData();
-        public readonly SmoothedData FrameJitter = new SmoothedData();
-        public int[] PrimitiveCount = new int[(int)RenderPrimitiveSequence.Sentinel];
-        public int[] PrimitivePerFrame = new int[(int)RenderPrimitiveSequence.Sentinel];
-        public int[] ShadowPrimitiveCount;
-        public int[] ShadowPrimitivePerFrame;
+        public SmoothedData FrameRate { get; private set; }
+        public SmoothedDataWithPercentiles FrameTime { get; private set; }
+        public int[] PrimitiveCount { get; private set; }
+        public int[] PrimitivePerFrame { get; private set; }
+        public int[] ShadowPrimitiveCount { get; private set; }
+        public int[] ShadowPrimitivePerFrame { get; private set; }
 
         // Dynamic shadow map setup.
         public static int ShadowMapCount = -1; // number of shadow maps
@@ -91,29 +66,45 @@ namespace ORTS
         public static int[] ShadowMapDiameter; // diameter of shadow map
         public static float[] ShadowMapLimit; // diameter of shadow map far edge from camera
 
-        public RenderProcess(Viewer3D viewer)
+        internal RenderProcess(Game game)
         {
-            Viewer = viewer;
+            Game = game;
+            GameForm = (Form)Control.FromHandle(Game.Window.Handle);
+
+            WatchdogToken = new WatchdogToken(System.Threading.Thread.CurrentThread);
+
+            Profiler = new Profiler("Render");
             Profiler.SetThread();
+            Game.SetThreadLanguage();
 
-            Window.Title = "Open Rails";
-            Form = Control.FromHandle(this.Window.Handle).FindForm();
-            GraphicsDeviceManager = Viewer.GDM = new GraphicsDeviceManager(this);
+            Game.Window.Title = "Open Rails";
+            GraphicsDeviceManager = new GraphicsDeviceManager(game);
 
-            Content.RootDirectory = "Content";
+            var windowSizeParts = Game.Settings.WindowSize.Split(new[] { 'x' }, 2);
+            GameWindowSize = new Point(Convert.ToInt32(windowSizeParts[0]), Convert.ToInt32(windowSizeParts[1]));
 
-            var windowSizeParts = Viewer.Settings.WindowSize.Split(new[] { 'x' }, 2);
-            WindowSize.X = Convert.ToInt32(windowSizeParts[0]);
-            WindowSize.Y = Convert.ToInt32(windowSizeParts[1]);
+            FrameRate = new SmoothedData();
+            FrameTime = new SmoothedDataWithPercentiles();
+            PrimitiveCount = new int[(int)RenderPrimitiveSequence.Sentinel];
+            PrimitivePerFrame = new int[(int)RenderPrimitiveSequence.Sentinel];
 
-            IsFixedTimeStep = false;
-            TargetElapsedTime = TimeSpan.FromMilliseconds(1);
-            GraphicsDeviceManager.SynchronizeWithVerticalRetrace = Viewer.Settings.VerticalSync;
-            GraphicsDeviceManager.PreferredBackBufferWidth = (int)WindowSize.X;
-            GraphicsDeviceManager.PreferredBackBufferHeight = (int)WindowSize.Y;
+            // Run the game initially at 10FPS fixed-time-step. Do not change this! It affects the loading performance.
+            Game.IsFixedTimeStep = true;
+            Game.TargetElapsedTime = TimeSpan.FromMilliseconds(100);
+            Game.InactiveSleepTime = TimeSpan.FromMilliseconds(100);
+
+            // Set up the rest of the graphics according to the settings.
+            GraphicsDeviceManager.SynchronizeWithVerticalRetrace = Game.Settings.VerticalSync;
+            GraphicsDeviceManager.PreferredBackBufferFormat = SurfaceFormat.Color;
+            GraphicsDeviceManager.PreferredDepthStencilFormat = DepthFormat.Depth32;
             GraphicsDeviceManager.IsFullScreen = false;
             GraphicsDeviceManager.PreferMultiSampling = true;
             GraphicsDeviceManager.PreparingDeviceSettings += new EventHandler<PreparingDeviceSettingsEventArgs>(GDM_PreparingDeviceSettings);
+
+            if (Game.Settings.FullScreen)
+                ToggleFullScreen();
+
+            SynchronizeGraphicsDeviceManager();
         }
 
         void GDM_PreparingDeviceSettings(object sender, PreparingDeviceSettingsEventArgs e)
@@ -132,28 +123,36 @@ namespace ORTS
             // This stops ResolveBackBuffer() clearing the back buffer.
             e.GraphicsDeviceInformation.PresentationParameters.RenderTargetUsage = RenderTargetUsage.PreserveContents;
             e.GraphicsDeviceInformation.PresentationParameters.AutoDepthStencilFormat = DepthFormat.Depth24Stencil8;
-            Viewer.UpdateAdapterInformation(e.GraphicsDeviceInformation.Adapter);
         }
 
-        /// <summary>
-        /// Allows the game to perform any initialization it needs after the graphics device has started
-        /// </summary>
-        [ThreadName("Render")]
-        protected override void Initialize()
+        internal void Start()
         {
-            Viewer.Initialize();
+            Game.WatchdogProcess.Register(WatchdogToken);
 
-            ShadowMapCount = Viewer.Settings.ShadowMapCount;
-            if (!Viewer.Settings.DynamicShadows)
+            DisplaySize = new Point(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+
+            if (Game.Settings.ShaderModel == 0)
+                Game.Settings.ShaderModel = GraphicsDevice.GraphicsDeviceCapabilities.PixelShaderVersion.Major;
+            else if (Game.Settings.ShaderModel < 2)
+                Game.Settings.ShaderModel = 2;
+            else if (Game.Settings.ShaderModel > 3)
+                Game.Settings.ShaderModel = 3;
+
+            if (Game.Settings.ShadowMapDistance == 0)
+                Game.Settings.ShadowMapDistance = Game.Settings.ViewingDistance / 2;
+
+            ShadowMapCount = Game.Settings.ShadowMapCount;
+            if (!Game.Settings.DynamicShadows)
                 ShadowMapCount = 0;
-            else if ((ShadowMapCount > 1) && (Viewer.Settings.ShaderModel < 3))
+            else if ((ShadowMapCount > 1) && (Game.Settings.ShaderModel < 3))
                 ShadowMapCount = 1;
             else if (ShadowMapCount < 0)
                 ShadowMapCount = 0;
             else if (ShadowMapCount > ShadowMapCountMaximum)
                 ShadowMapCount = ShadowMapCountMaximum;
             if (ShadowMapCount < 1)
-                Viewer.Settings.DynamicShadows = false;
+                Game.Settings.DynamicShadows = false;
+
             ShadowMapDistance = new int[ShadowMapCount];
             ShadowMapDiameter = new int[ShadowMapCount];
             ShadowMapLimit = new float[ShadowMapCount];
@@ -161,20 +160,20 @@ namespace ORTS
             ShadowPrimitiveCount = new int[ShadowMapCount];
             ShadowPrimitivePerFrame = new int[ShadowMapCount];
 
-            InitializeShadowMapLocations(Viewer);
+            InitializeShadowMapLocations();
 
-            CurrentFrame = new RenderFrame(this);
-            NextFrame = new RenderFrame(this);
-            base.Initialize();
-            Viewer.Simulator.Paused = false;
+            CurrentFrame = new RenderFrame(Game);
+            NextFrame = new RenderFrame(Game);
         }
 
-        internal static void InitializeShadowMapLocations(Viewer3D viewer)
+        void InitializeShadowMapLocations()
         {
-            var ratio = (float)viewer.DisplaySize.X / viewer.DisplaySize.Y;
-            var fov = MathHelper.ToRadians(viewer.Settings.ViewingFOV);
+            var ratio = (float)DisplaySize.X / DisplaySize.Y;
+            var fov = MathHelper.ToRadians(Game.Settings.ViewingFOV);
             var n = (float)0.5;
-            var f = (float)viewer.Settings.ShadowMapDistance;
+            var f = (float)Game.Settings.ShadowMapDistance;
+            if (f == 0)
+                f = Game.Settings.ViewingDistance / 2;
 
             var m = (float)ShadowMapCount;
             var LastC = n;
@@ -220,84 +219,111 @@ namespace ORTS
             }
         }
 
-        /// <summary>
-        /// Called regularly.   Used to update the simulator class when
-        /// the window is minimized.
-        /// </summary>
-        [ThreadName("Render")]
-        protected override void Update(GameTime gameTime)
+        internal void Update(GameTime gameTime)
         {
-            if (IsMouseVisible != base.IsMouseVisible)
-                base.IsMouseVisible = IsMouseVisible;
+            if (IsMouseVisible != Game.IsMouseVisible)
+                Game.IsMouseVisible = IsMouseVisible;
 
             if (ToggleFullScreenRequested)
             {
-                GraphicsDeviceManager.ToggleFullScreen();
+                SynchronizeGraphicsDeviceManager();
                 ToggleFullScreenRequested = false;
             }
 
-            if (Stopped)
+            if (gameTime.TotalRealTime.TotalSeconds > 0.001)
             {
-                Exit();
-            }
-            else if (gameTime.TotalRealTime.TotalSeconds > 0.001)
-            {
-                Viewer.UpdaterProcess.WaitTillFinished();
+                Game.UpdaterProcess.WaitTillFinished();
 
                 // Must be done in XNA Game thread.
-                UserInput.Update(Viewer);
+                UserInput.Update(Game);
 
                 // Swap frames and start the next update (non-threaded updater does the whole update).
                 SwapFrames(ref CurrentFrame, ref NextFrame);
-                Viewer.UpdaterProcess.StartUpdate(NextFrame, gameTime.TotalRealTime.TotalSeconds);
+                Game.UpdaterProcess.StartUpdate(NextFrame, gameTime.TotalRealTime.TotalSeconds);
             }
-
-            base.Update(gameTime);
         }
 
-        /// <summary>
-        /// This is called once per frame when the game should draw itself.
-        /// In a multiprocessor environement, it starts the background UpdateProcessor
-        /// task preparing the next frame, while it renders this frame.
-        /// In a single processor environment, it does the update/draw in
-        /// sequence using this thread alone.
-        /// </summary>
-        int ProfileFrames = 0;
-        [ThreadName("Render")]
-        protected override void Draw(GameTime gameTime)
+        void SynchronizeGraphicsDeviceManager()
         {
-            if (Viewer.Settings.Profiling)
-                if ((Viewer.Settings.ProfilingFrameCount > 0 && ++ProfileFrames > Viewer.Settings.ProfilingFrameCount) || (Viewer.Settings.ProfilingTime > 0 && Viewer.RealTime >= Viewer.Settings.ProfilingTime))
-                    Exit();
+            if (IsFullScreen)
+            {
+                var screen = Game.Settings.FastFullScreenAltTab ? Screen.FromControl(GameForm) : Screen.PrimaryScreen;
+                GraphicsDeviceManager.PreferredBackBufferWidth = screen.Bounds.Width;
+                GraphicsDeviceManager.PreferredBackBufferHeight = screen.Bounds.Height;
+            }
+            else
+            {
+                GraphicsDeviceManager.PreferredBackBufferWidth = GameWindowSize.X;
+                GraphicsDeviceManager.PreferredBackBufferHeight = GameWindowSize.Y;
+            }
+            if (Game.Settings.FastFullScreenAltTab)
+            {
+                GameForm.FormBorderStyle = IsFullScreen ? System.Windows.Forms.FormBorderStyle.None : System.Windows.Forms.FormBorderStyle.FixedSingle;
+                GraphicsDeviceManager.ApplyChanges();
+            }
+            else if (GraphicsDeviceManager.IsFullScreen != IsFullScreen)
+            {
+                GraphicsDeviceManager.ToggleFullScreen();
+            }
+        }
+
+        internal void BeginDraw()
+        {
+            if (Game.State == null)
+                return;
 
             Profiler.Start();
+            WatchdogToken.Ping();
 
             // Sort-of hack to allow the NVIDIA PerfHud to display correctly.
             GraphicsDevice.RenderState.DepthBufferEnable = true;
 
-            if ((Viewer.DisplaySize.X != GraphicsDevice.Viewport.Width) || (Viewer.DisplaySize.Y != GraphicsDevice.Viewport.Height))
+            CurrentFrame.IsScreenChanged = (DisplaySize.X != GraphicsDevice.Viewport.Width) || (DisplaySize.Y != GraphicsDevice.Viewport.Height);
+            if (CurrentFrame.IsScreenChanged)
             {
-                Viewer.DisplaySize.X = GraphicsDevice.Viewport.Width;
-                Viewer.DisplaySize.Y = GraphicsDevice.Viewport.Height;
-                Viewer.WindowManager.ScreenChanged();
+                DisplaySize = new Point(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+                InitializeShadowMapLocations();
             }
 
+            Game.State.BeginRender(CurrentFrame);
+        }
+
+        [ThreadName("Render")]
+        internal void Draw()
+        {
             if (Debugger.IsAttached)
             {
-                Draw();
-                base.Draw(gameTime);
+                CurrentFrame.Draw(Game.GraphicsDevice);
             }
             else
             {
                 try
                 {
-                    Draw();
-                    base.Draw(gameTime);
+                    CurrentFrame.Draw(Game.GraphicsDevice);
                 }
                 catch (Exception error)
                 {
-                    Viewer.ProcessReportError(error);
+                    Game.ProcessReportError(error);
                 }
+            }
+        }
+
+        internal void EndDraw()
+        {
+            if (Game.State == null)
+                return;
+
+            Game.State.EndRender(CurrentFrame);
+
+            for (var i = 0; i < (int)RenderPrimitiveSequence.Sentinel; i++)
+            {
+                PrimitivePerFrame[i] = PrimitiveCount[i];
+                PrimitiveCount[i] = 0;
+            }
+            for (var shadowMapIndex = 0; shadowMapIndex < ShadowMapCount; shadowMapIndex++)
+            {
+                ShadowPrimitivePerFrame[shadowMapIndex] = ShadowPrimitiveCount[shadowMapIndex];
+                ShadowPrimitiveCount[shadowMapIndex] = 0;
             }
 
             // Sort-of hack to allow the NVIDIA PerfHud to display correctly.
@@ -306,82 +332,26 @@ namespace ORTS
             Profiler.Stop();
         }
 
-        void Draw()
+        internal void Stop()
         {
-            CurrentFrame.Draw(GraphicsDevice);
-
-            for (var i = 0; i < (int)RenderPrimitiveSequence.Sentinel; i++)
-            {
-                PrimitivePerFrame[i] = PrimitiveCount[i];
-                PrimitiveCount[i] = 0;
-            }
-            for (var shadowMapIndex = 0; shadowMapIndex < RenderProcess.ShadowMapCount; shadowMapIndex++)
-            {
-                ShadowPrimitivePerFrame[shadowMapIndex] = ShadowPrimitiveCount[shadowMapIndex];
-                ShadowPrimitiveCount[shadowMapIndex] = 0;
-            }
+            Game.WatchdogProcess.Unregister(WatchdogToken);
         }
 
-        void SwapFrames(ref RenderFrame frame1, ref RenderFrame frame2)
+        static void SwapFrames(ref RenderFrame frame1, ref RenderFrame frame2)
         {
             RenderFrame temp = frame1;
             frame1 = frame2;
             frame2 = temp;
         }
 
-        bool ToggleFullScreenRequested = false;
+        bool IsFullScreen;
+        bool ToggleFullScreenRequested;
         [CallOnThread("Updater")]
         public void ToggleFullScreen()
         {
-            bool IsFullScreen = !GraphicsDeviceManager.IsFullScreen;
-            if (IsFullScreen)
-            {
-                System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.PrimaryScreen;
-                GraphicsDeviceManager.PreferredBackBufferWidth = screen.Bounds.Width;
-                GraphicsDeviceManager.PreferredBackBufferHeight = screen.Bounds.Height;
-                GraphicsDeviceManager.PreferredBackBufferFormat = SurfaceFormat.Color;
-                GraphicsDeviceManager.PreferredDepthStencilFormat = DepthFormat.Depth32;
-            }
-            else
-            {
-                GraphicsDeviceManager.PreferredBackBufferWidth = (int)WindowSize.X;
-                GraphicsDeviceManager.PreferredBackBufferHeight = (int)WindowSize.Y;
-            }
-            Viewer.AdjustCabHeight( GraphicsDeviceManager.PreferredBackBufferWidth, GraphicsDeviceManager.PreferredBackBufferHeight );
+            IsFullScreen = !IsFullScreen;
             ToggleFullScreenRequested = true;
         }
-
-        /// <summary>
-        /// Internal method - do not call! Use Viewer3D.Stop() instead.
-        /// </summary>
-        internal void Stop()
-        {
-            // Do not put shutdown code in here! Use RenderProcess.Terminate() instead.
-            Stopped = true;
-        }
-
-        [ThreadName("Render")]
-        void Terminate()
-        {
-            if (Viewer.Settings.Profiling)
-                Viewer.Settings.ProfilingFrameCount = ProfileFrames;
-            Viewer.UpdaterProcess.Stop();
-            Viewer.LoaderProcess.Stop();
-            Viewer.SoundProcess.Stop();
-            Viewer.Terminate();
-        }
-
-        /// <summary>
-        /// User closed the window without pressing the exit key
-        /// </summary>
-        [ThreadName("Render")]
-        protected override void OnExiting(object sender, EventArgs args)
-        {
-            Terminate();
-            base.OnExiting(sender, args);
-        }
-
-        float lastElapsedTime = -1;
 
         [CallOnThread("Render")]
         [CallOnThread("Updater")]
@@ -392,9 +362,6 @@ namespace ORTS
 
             FrameRate.Update(elapsedRealTime, 1f / elapsedRealTime);
             FrameTime.Update(elapsedRealTime, elapsedRealTime);
-            if (lastElapsedTime != -1)
-                FrameJitter.Update(elapsedRealTime, Math.Abs(lastElapsedTime - elapsedRealTime));
-            lastElapsedTime = elapsedRealTime;
         }
     }
 }

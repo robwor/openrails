@@ -57,6 +57,7 @@ namespace ORTS.MultiPlayer
 			decoder = new Decoder();
 
 			listenThread = new Thread(new ParameterizedThreadStart(this.Receive));
+            listenThread.Name = "Multiplayer Client-Server";
 			listenThread.Start(client);
 
 		}
@@ -109,13 +110,22 @@ namespace ORTS.MultiPlayer
 				{
 					break;
 				}
+				catch (SameNameError) //I have conflict with some one in the game, will close, and abort.
+				{
+					if (Program.Simulator.Confirmer != null)
+                        Program.Simulator.Confirmer.Error(Viewer3D.Viewer.Catalog.GetString("Connection to the server is lost, will play as single mode"));
+					Program.Client = null;
+					tcpClient.Close();
+					listenThread.Abort();
+				}
 				catch (Exception e)
 				{
 					System.Console.WriteLine(e.Message + e.StackTrace);
 					Trace.TraceWarning(e.Message + e.StackTrace);
 				}
 			}
-			if (Program.Simulator.Confirmer != null) Program.Simulator.Confirmer.Error("Connection to the server is lost, will play as single mode");
+			if (Program.Simulator.Confirmer != null)
+                Program.Simulator.Confirmer.Error(Viewer3D.Viewer.Catalog.GetString("Connection to the server is lost, will play as single mode"));
 			try
 			{
 				foreach (var p in MPManager.OnlineTrains.Players)
@@ -131,7 +141,8 @@ namespace ORTS.MultiPlayer
 				Program.Simulator.PlayerLocomotive.Train.TrainType = Train.TRAINTYPE.PLAYER;
 				Program.Simulator.PlayerLocomotive.Train.LeadLocomotive = Program.Simulator.PlayerLocomotive;
 			}
-			if (Program.Simulator.Confirmer != null) Program.Simulator.Confirmer.Information("Shift-E to gain control of your train");
+			if (Program.Simulator.Confirmer != null)
+                Program.Simulator.Confirmer.Information(Viewer3D.Viewer.Catalog.GetString("Alt-E to gain control of your train"));
 
 			Program.Client = null;
 			tcpClient.Close();

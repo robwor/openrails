@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -17,45 +17,71 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using ORTS.Common;
 using System;
 using System.Diagnostics;
 using System.Threading;
-using System.Windows.Forms;
 
-namespace ORTS
+namespace ORTS.Processes
 {
     public class LoaderProcess
     {
-        public readonly bool Threaded;
         public readonly Profiler Profiler = new Profiler("Loader");
-        readonly Viewer3D Viewer;
+        readonly ProcessState State = new ProcessState("Loader");
+        readonly Game Game;
         readonly Thread Thread;
-        readonly ProcessState State;
+        readonly WatchdogToken WatchdogToken;
 
-        public LoaderProcess(Viewer3D viewer)
+        public LoaderProcess(Game game)
         {
-            Threaded = true;
-            Viewer = viewer;
-            if (Threaded)
-            {
-                State = new ProcessState("Loader");
-                Thread = new Thread(LoaderThread);
-                Thread.Start();
-            }
+            Game = game;
+            Thread = new Thread(LoaderThread);
+            WatchdogToken = new WatchdogToken(Thread);
+            WatchdogToken.SpecialDispensationFactor = 6;
+        }
+
+        public void Start()
+        {
+            Game.WatchdogProcess.Register(WatchdogToken);
+            Thread.Start();
         }
 
         public void Stop()
         {
-            if (Threaded)
-                Thread.Abort();
+            Game.WatchdogProcess.Unregister(WatchdogToken);
+            State.SignalTerminate();
         }
 
         public bool Finished
         {
             get
             {
-                // Non-threaded updater is always "finished".
-                return !Threaded || State.Finished;
+                return State.Finished;
+            }
+        }
+
+        /// <summary>
+        /// Returns whether the loading process has been terminated, i.e. all loading should stop.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// All loading code should periodically (e.g. between loading each file) check this and exit as soon as it is
+        /// seen to be true.
+        /// </para>
+        /// <para>
+        /// Reading this property implicitly causes the <see cref="WatchdogToken"/> to be pinged, informing the
+        /// <see cref="WatchdogProcess"/> that the loader is still responsive. Therefore the remarks about the
+        /// <see cref="WatchdogToken.Ping()"/> method apply to this property regarding when it should and should not
+        /// be used.
+        /// </para>
+        /// </remarks>
+        public bool Terminated
+        {
+            get
+            {
+                // Specially for the loader process: this keeps it "alive" while objects are loading, as they check Terminated periodically.
+                WatchdogToken.Ping();
+                return State.Terminated;
             }
         }
 
@@ -68,11 +94,14 @@ namespace ORTS
         void LoaderThread()
         {
             Profiler.SetThread();
+            Game.SetThreadLanguage();
 
-            while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
+            while (true)
             {
                 // Wait for a new Update() command
                 State.WaitTillStarted();
+                if (State.Terminated)
+                    break;
                 try
                 {
                     if (!DoLoad())
@@ -87,13 +116,10 @@ namespace ORTS
         }
 
         [CallOnThread("Updater")]
-        public void StartLoad()
+        internal void StartLoad()
         {
-            Debug.Assert(Finished);
-            if (Threaded)
-                State.SignalStart();
-            else
-                DoLoad();
+            Debug.Assert(State.Finished);
+            State.SignalStart();
         }
 
         [ThreadName("Loader")]
@@ -111,14 +137,10 @@ namespace ORTS
                 }
                 catch (Exception error)
                 {
-                    if (!(error is ThreadAbortException))
-                    {
-                        // Unblock anyone waiting for us, report error and die.
-                        if (Threaded)
-                            State.SignalFinish();
-                        Viewer.ProcessReportError(error);
-                        return false;
-                    }
+                    // Unblock anyone waiting for us, report error and die.
+                    State.SignalTerminate();
+                    Game.ProcessReportError(error);
+                    return false;
                 }
             }
             return true;
@@ -130,7 +152,8 @@ namespace ORTS
             Profiler.Start();
             try
             {
-                Viewer.Load();
+                WatchdogToken.Ping();
+                Game.State.Load();
             }
             finally
             {

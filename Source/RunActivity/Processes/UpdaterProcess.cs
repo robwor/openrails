@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2009, 2010, 2011, 2012 by the Open Rails project.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -17,63 +17,58 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using ORTS.Common;
+using ORTS.Viewer3D;
 using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace ORTS
+namespace ORTS.Processes
 {
     public class UpdaterProcess
     {
-        public readonly bool Threaded;
         public readonly Profiler Profiler = new Profiler("Updater");
-        readonly Viewer3D Viewer;
+        readonly ProcessState State = new ProcessState("Updater");
+        readonly Game Game;
         readonly Thread Thread;
-        readonly ProcessState State;
+        readonly WatchdogToken WatchdogToken;
 
-        public UpdaterProcess(Viewer3D viewer)
+        public UpdaterProcess(Game game)
         {
-            Threaded = System.Environment.ProcessorCount > 1;
-            Viewer = viewer;
-            if (Threaded)
-            {
-                State = new ProcessState("Updater");
-                Thread = new Thread(UpdaterThread);
-                Thread.Start();
-            }
+            Game = game;
+            Thread = new Thread(UpdaterThread);
+            WatchdogToken = new WatchdogToken(Thread);
+        }
+
+        public void Start()
+        {
+            Game.WatchdogProcess.Register(WatchdogToken);
+            Thread.Start();
         }
 
         public void Stop()
         {
-            if (Threaded)
-                Thread.Abort();
-        }
-
-        public bool Finished
-        {
-            get
-            {
-                // Non-threaded updater is always "finished".
-                return !Threaded || State.Finished;
-            }
+            Game.WatchdogProcess.Unregister(WatchdogToken);
+            State.SignalTerminate();
         }
 
         public void WaitTillFinished()
         {
-            // Non-threaded updater never waits.
-            if (Threaded)
-                State.WaitTillFinished();
+            State.WaitTillFinished();
         }
 
         [ThreadName("Updater")]
         void UpdaterThread()
         {
             Profiler.SetThread();
+            Game.SetThreadLanguage();
 
-            while (Thread.CurrentThread.ThreadState == System.Threading.ThreadState.Running)
+            while (true)
             {
                 // Wait for a new Update() command
                 State.WaitTillStarted();
+                if (State.Terminated)
+                    break;
                 try
                 {
                     if (!DoUpdate())
@@ -87,18 +82,16 @@ namespace ORTS
             }
         }
 
-        [CallOnThread("Render")]
-        public void StartUpdate(RenderFrame frame, double totalRealSeconds)
-        {
-            if (!Finished)
-                throw new InvalidOperationException("Can't overlap updates.");
+        RenderFrame CurrentFrame;
+        double TotalRealSeconds;
 
+        [CallOnThread("Render")]
+        internal void StartUpdate(RenderFrame frame, double totalRealSeconds)
+        {
+            Debug.Assert(State.Finished);
             CurrentFrame = frame;
             TotalRealSeconds = totalRealSeconds;
-            if (Threaded)
-                State.SignalStart();
-            else
-                DoUpdate();
+            State.SignalStart();
         }
 
         [ThreadName("Updater")]
@@ -116,47 +109,24 @@ namespace ORTS
                 }
                 catch (Exception error)
                 {
-                    if (!(error is ThreadAbortException))
-                    {
-                        // Unblock anyone waiting for us, report error and die.
-                        if (Threaded)
-                            State.SignalFinish();
-                        Viewer.ProcessReportError(error);
-                        return false;
-                    }
+                    // Unblock anyone waiting for us, report error and die.
+                    State.SignalTerminate();
+                    Game.ProcessReportError(error);
+                    return false;
                 }
             }
             return true;
         }
 
-        RenderFrame CurrentFrame;
-        double TotalRealSeconds;
-        double LastTotalRealSeconds = -1;
-
         [CallOnThread("Updater")]
         public void Update()
         {
             Profiler.Start();
-
-            // The first time we update, the TotalRealSeconds will be ~time
-            // taken to load everything. We'd rather not skip that far through
-            // the simulation so the first time we deliberately have an
-            // elapsed real and clock time of 0.0s.
-            if (LastTotalRealSeconds == -1)
-                LastTotalRealSeconds = TotalRealSeconds;
-            // We would like to avoid any large jumps in the simulation, so
-            // this is a 4FPS minimum, 250ms maximum update time.
-            else if (TotalRealSeconds - LastTotalRealSeconds > 0.25f)
-                LastTotalRealSeconds = TotalRealSeconds;
-
-            var elapsedRealTime = (float)(TotalRealSeconds - LastTotalRealSeconds);
-            LastTotalRealSeconds = TotalRealSeconds;
-
             try
             {
+                WatchdogToken.Ping();
                 CurrentFrame.Clear();
-                Viewer.RenderProcess.ComputeFPS(elapsedRealTime);
-                Viewer.Update(elapsedRealTime, CurrentFrame);
+                Game.State.Update(CurrentFrame, TotalRealSeconds);
                 CurrentFrame.Sort();
             }
             finally
