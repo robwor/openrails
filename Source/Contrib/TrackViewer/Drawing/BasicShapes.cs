@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2014 by the Open Rails project.
+﻿// COPYRIGHT 2014, 2015 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -18,10 +18,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Windows.Media.Imaging;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Content;
 using Microsoft.Xna.Framework.Graphics;
-using ORTS.Viewer3D.Popups;
+using Orts.Viewer3D.Popups;
 
 namespace ORTS.TrackViewer.Drawing
 {
@@ -91,7 +92,7 @@ namespace ORTS.TrackViewer.Drawing
             LoadAndHighlightTexture(graphicsDevice, contentPath, "playerTrain", "steamTrain",31,31);
 
             prepareArcDrawing();
-            fontManager = FontManager.Instance();
+            fontManager = FontManager.Instance;
 
         }
 
@@ -309,10 +310,10 @@ namespace ORTS.TrackViewer.Drawing
                 oldAceFiles = new List<string>();
                 if (System.IO.File.Exists(path))
                 {
-                    Texture2D texture = Orts.Formats.Msts.ACEFile.Texture2DFromFile(graphicsDevice, path);
+                    Texture2D texture = Orts.Formats.Msts.AceFile.Texture2DFromFile(graphicsDevice, path);
                     textures[textureName] = texture;
-                    textureScales[textureName] = textures[textureName].Width;
-                    textureOffsets[textureName] = Vector2.Zero;
+                    textureScales[textureName] = texture.Width;
+                    textureOffsets[textureName] = new Vector2(texture.Width / 2, texture.Height / 2);
                     oldAceFiles.Add(textureName);
                 }
             }
@@ -490,11 +491,15 @@ namespace ORTS.TrackViewer.Drawing
         /// <param name="angle">Angle used to rotate the texture</param>
         /// <param name="size">Size of the texture in pixels</param>
         /// <param name="color">Color mask for the texture to draw (white will not affect the texture)</param>
-        public static void DrawTexture(Vector2 point, string textureName, float angle, float size, Color color)
+        /// <param name="flip">Whether the texture needs to be flipped (vertically)</param>
+        public static void DrawTexture(Vector2 point, string textureName, float angle, float size, Color color, bool flip)
         {
-            float scaledSize = size/ textureScales[textureName];
-            spriteBatch.Draw(textures[textureName], point, null, color, 
-                angle, textureOffsets[textureName], new Vector2(scaledSize), SpriteEffects.None, 0);
+            if (textureScales.ContainsKey(textureName))
+            {
+                float scaledSize = size / textureScales[textureName];
+                spriteBatch.Draw(textures[textureName], point, null, color,
+                    angle, textureOffsets[textureName], new Vector2(scaledSize), (flip ? SpriteEffects.FlipVertically : SpriteEffects.None), 0);
+            }
         }
 
         /// <summary>
@@ -578,10 +583,7 @@ namespace ORTS.TrackViewer.Drawing
         /// <summary>
         /// Return the singleton instance of the font manager
         /// </summary>
-        public static FontManager Instance() {
-            return instance;
-        }
-
+        public static FontManager Instance { get { return instance; } }
         /// <summary>his is the default font that can be used for drawing</summary>
         public WindowTextFont DefaultFont { get; private set; }
         /// <summary>This is the expanding font that can be used for drawing</summary>
@@ -624,5 +626,49 @@ namespace ORTS.TrackViewer.Drawing
             textManager.Load(graphicsDevice);
         }
 
+    }
+
+    /// <summary>
+    /// Load and store images in bitmap format (needed for WPF-parts)
+    /// </summary>
+    class BitmapImageManager
+    {
+        //Singleton class
+
+        /// <summary>Singleton instance of the class</summary>
+        private static readonly BitmapImageManager instance = new BitmapImageManager();
+
+        private Dictionary<string, BitmapImage> images;
+
+        /// <summary>
+        /// Return the singleton instance of the bitmap manager
+        /// </summary>
+        public static BitmapImageManager Instance { get { return instance; } }
+
+        /// <summary>
+        /// Constructor, private so only called during class initialization
+        /// </summary>
+        private BitmapImageManager()
+        {
+            this.images = new Dictionary<string, BitmapImage>();
+        }
+
+        /// <summary>
+        /// Return an image defined by its name (should be in the Content directory)
+        /// </summary>
+        /// <param name="pngFileName">Name of the file, without extension</param>
+        public BitmapImage GetImage(string pngFileName)
+        {
+            if (images.ContainsKey(pngFileName))
+            {
+                return images[pngFileName];
+            }
+
+            string contentPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath), "Content");
+            string fullFileName = System.IO.Path.Combine(contentPath, pngFileName + ".png");
+            BitmapImage newImage = new BitmapImage(new Uri(fullFileName, UriKind.Relative));
+            images[pngFileName] = newImage;
+            return newImage;
+        }
     }
 }

@@ -30,6 +30,9 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Orts.Formats.Msts;
+using Orts.Simulation;
+using Orts.Simulation.RollingStocks;
+using Orts.Viewer3D.Common;
 using ORTS.Common;
 using System;
 using System.Collections.Generic;
@@ -37,9 +40,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using ORTS.Viewer3D.RollingStock;
+using Event = Orts.Common.Event;
+using Events = Orts.Common.Events;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     [CallOnThread("Loader")]
     public class SharedShapeManager
@@ -103,7 +107,7 @@ namespace ORTS.Viewer3D
         [CallOnThread("Updater")]
         public string GetStatus()
         {
-            return Viewer.Catalog.GetStringFmt("{0:F0} shapes", Shapes.Keys.Count);
+            return Viewer.Catalog.GetPluralStringFmt("{0:F0} shape", "{0:F0} shapes", Shapes.Keys.Count);
         }
     }
 
@@ -748,6 +752,7 @@ namespace ORTS.Viewer3D
 		readonly int AnimationFrames;
 		float Moved = 0f;
 		float AnimationKey;
+        float DelayHazAnimation;
 
 		public static HazzardShape CreateHazzard(Viewer viewer, string path, WorldPosition position, ShapeFlags shapeFlags, HazardObj hObj)
 		{
@@ -776,6 +781,7 @@ namespace ORTS.Viewer3D
 			if (Hazzard == null) return;
 			Vector2 CurrentRange;
 			AnimationKey += elapsedTime.ClockSeconds* 24f;
+            DelayHazAnimation += elapsedTime.ClockSeconds;
 			switch (Hazzard.state)
 			{
 				case Hazzard.State.Idle1:
@@ -799,18 +805,43 @@ namespace ORTS.Viewer3D
 					else { Moved = 0; Hazzard.state = Hazzard.State.Idle1; }
 					break;
 			}
-			if (AnimationKey < CurrentRange.X) AnimationKey = CurrentRange.X;
-			if (AnimationKey > CurrentRange.Y)
-			{
-				AnimationKey = CurrentRange.X;
-				if (Hazzard.state == Hazzard.State.LookLeft || Hazzard.state == Hazzard.State.LookRight) Hazzard.state = Hazzard.State.Scared;
-			}
+
+            if (Hazzard.state == Hazzard.State.Idle1 || Hazzard.state == Hazzard.State.Idle2)
+            {
+                if (DelayHazAnimation > 5f)
+                {
+                    if (AnimationKey < CurrentRange.X)
+                    {
+                        AnimationKey = CurrentRange.X;
+                        DelayHazAnimation = 0;
+                    }
+
+                    if (AnimationKey > CurrentRange.Y)
+                    {
+                        AnimationKey = CurrentRange.X;
+                        DelayHazAnimation = 0;
+                    }
+                }
+            }
+
+            if (Hazzard.state == Hazzard.State.LookLeft || Hazzard.state == Hazzard.State.LookRight)
+            {
+                if (AnimationKey < CurrentRange.X) AnimationKey = CurrentRange.X;
+                if (AnimationKey > CurrentRange.Y) AnimationKey = CurrentRange.Y;
+            }
+            
+            if (Hazzard.state == Hazzard.State.Scared)
+            {
+                if (AnimationKey < CurrentRange.X) AnimationKey = CurrentRange.X;
+
+                if (AnimationKey > CurrentRange.Y) AnimationKey = CurrentRange.X;
+            }
 
 			for (var i = 0; i < SharedShape.Matrices.Length; ++i)
 				AnimateMatrix(i, AnimationKey);
 			
-			var pos = this.HazardObj.Position;
-			
+			//var pos = this.HazardObj.Position;
+            			
 			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
 		}
 	}
@@ -820,6 +851,7 @@ namespace ORTS.Viewer3D
         readonly PickupObj FuelPickupItemObj;
         readonly FuelPickupItem FuelPickupItem;
         readonly SoundSource Sound;
+        readonly int FrameRate;
 
         readonly int AnimationFrames;
         protected float AnimationKey;
@@ -875,31 +907,41 @@ namespace ORTS.Viewer3D
                     }
                 }
             }
-             //Current wave files for coal transfer not cutting out.
-            //if (viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS != null && FuelPickupItemObj.PickupType == 6)
-            //{
-            //    var soundPath = viewer.Simulator.RoutePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS;
-            //    try
-            //    {
-            //        Sound = new SoundSource(viewer, position.WorldLocation, Events.Source.MSTSFuelTower, soundPath);
-            //        viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
-            //    }
-            //    catch
-            //    {
-            //        soundPath = viewer.Simulator.BasePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS;
-            //        try
-            //        {
-            //            Sound = new SoundSource(viewer, position.WorldLocation, Events.Source.MSTSFuelTower, soundPath);
-            //            viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
-            //        }
-            //        catch (Exception error)
-            //        {
-            //            Trace.WriteLine(new FileLoadException(soundPath, error));
-            //        }
-            //    }
-            //}
+            if (viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS != null && FuelPickupItemObj.PickupType == 6)
+            {
+                var soundPath = viewer.Simulator.RoutePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS;
+                try
+                {
+                    Sound = new SoundSource(viewer, position.WorldLocation, Events.Source.MSTSFuelTower, soundPath);
+                    viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
+                }
+                catch
+                {
+                    soundPath = viewer.Simulator.BasePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS;
+                    try
+                    {
+                        Sound = new SoundSource(viewer, position.WorldLocation, Events.Source.MSTSFuelTower, soundPath);
+                        viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
+                    }
+                    catch (Exception error)
+                    {
+                        Trace.WriteLine(new FileLoadException(soundPath, error));
+                    }
+                }
+            }
             FuelPickupItem = viewer.Simulator.FuelManager.CreateFuelStation(position, from tid in FuelPickupItemObj.TrItemIDList where tid.db == 0 select tid.dbID);
             AnimationFrames = 1;
+            FrameRate = 1;
+            if (SharedShape.Animations != null && SharedShape.Animations.Count > 0 && SharedShape.Animations[0].anim_nodes != null && SharedShape.Animations[0].anim_nodes.Count > 0)
+            {
+                FrameRate = (int)(SharedShape.Animations[0].FrameCount / FuelPickupItemObj.PickupAnimData.AnimationSpeed);
+                foreach (var anim_node in SharedShape.Animations[0].anim_nodes)
+                    if (anim_node.Name == "ANIMATED_PARTS")
+                    {
+                        AnimationFrames = SharedShape.Animations[0].FrameCount;
+                        break;
+                    }
+            }
         }
 
         public override void Unload()
@@ -915,23 +957,17 @@ namespace ORTS.Viewer3D
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
 
-            // A PickupObject that is not animated will always have the StaticFlags entry.
-            if (FuelPickupItem.ReFill() && FuelPickupItemObj.UID == MSTSLocomotiveViewer.RefillProcess.ActivePickupObjectUID && FuelPickupItemObj.StaticFlags != 0)
-                if (Sound != null) Sound.HandleEvent(Event.FuelTowerTransferStart);
-
-            // 0 can be used as a setting for instant animation.
-            // A PickupObject that is animated will always test as 0 since it does not have the StaticFlags entry.
-            if (FuelPickupItem.ReFill() && FuelPickupItemObj.UID == MSTSLocomotiveViewer.RefillProcess.ActivePickupObjectUID && FuelPickupItemObj.StaticFlags == 0)
+             // 0 can be used as a setting for instant animation.
+            if (FuelPickupItem.ReFill() && FuelPickupItemObj.UID == MSTSWagon.RefillProcess.ActivePickupObjectUID)
                 if (FuelPickupItemObj.PickupAnimData.AnimationSpeed == 0) AnimationKey = 1.0f;
-                else
-                    AnimationKey += elapsedTime.ClockSeconds / FuelPickupItemObj.PickupAnimData.AnimationSpeed;
+                else if (AnimationKey < AnimationFrames)
+                    AnimationKey += elapsedTime.ClockSeconds * FrameRate;
 
             if (!FuelPickupItem.ReFill() && AnimationKey > 0)
             {
                 if (Sound != null) Sound.HandleEvent(Event.FuelTowerTransferEnd);
-                AnimationKey -= elapsedTime.ClockSeconds / FuelPickupItemObj.PickupAnimData.AnimationSpeed;
+                AnimationKey -= elapsedTime.ClockSeconds * FrameRate;
             }
-            if (!FuelPickupItem.ReFill() && FuelPickupItemObj.StaticFlags != 0) if (Sound != null) Sound.HandleEvent(Event.FuelTowerTransferEnd);
 
             if (AnimationKey < 0)
             {
@@ -939,7 +975,7 @@ namespace ORTS.Viewer3D
             }
             if (AnimationKey > AnimationFrames)
             {
-                AnimationKey = 1.0f;
+                AnimationKey = AnimationFrames;
                 if (Sound != null) Sound.HandleEvent(Event.FuelTowerTransferStart);
             }
 
@@ -1180,12 +1216,12 @@ namespace ORTS.Viewer3D
         void LoadContent()
         {
             Trace.Write("S");
-            var sFile = new SFile(FilePath, Viewer.Settings.SuppressShapeWarnings);
+            var sFile = new ShapeFile(FilePath, Viewer.Settings.SuppressShapeWarnings);
 
             var textureFlags = Helpers.TextureFlags.None;
             if (File.Exists(FilePath + "d"))
             {
-                var sdFile = new SDFile(FilePath + "d");
+                var sdFile = new ShapeDescriptorFile(FilePath + "d");
                 textureFlags = (Helpers.TextureFlags)sdFile.shape.ESD_Alternative_Texture;
                 if (FilePath != null && FilePath.Contains("\\global\\")) textureFlags |= Helpers.TextureFlags.SnowTrack;//roads and tracks are in global, as MSTS will always use snow texture in snow weather
                 HasNightSubObj = sdFile.shape.ESD_SubObj;
@@ -1241,7 +1277,7 @@ namespace ORTS.Viewer3D
         {
             public DistanceLevel[] DistanceLevels;
 
-            public LodControl(lod_control MSTSlod_control, Helpers.TextureFlags textureFlags, SFile sFile, SharedShape sharedShape)
+            public LodControl(lod_control MSTSlod_control, Helpers.TextureFlags textureFlags, ShapeFile sFile, SharedShape sharedShape)
             {
 #if DEBUG_SHAPE_HIERARCHY
                 Console.WriteLine("  LOD control:");
@@ -1266,7 +1302,7 @@ namespace ORTS.Viewer3D
             public float ViewSphereRadius;
             public SubObject[] SubObjects;
 
-            public DistanceLevel(distance_level MSTSdistance_level, Helpers.TextureFlags textureFlags, SFile sFile, SharedShape sharedShape)
+            public DistanceLevel(distance_level MSTSdistance_level, Helpers.TextureFlags textureFlags, ShapeFile sFile, SharedShape sharedShape)
             {
 #if DEBUG_SHAPE_HIERARCHY
                 Console.WriteLine("    Distance level {0}: hierarchy={1}", MSTSdistance_level.distance_level_header.dlevel_selection, String.Join(" ", MSTSdistance_level.distance_level_header.hierarchy.Select(i => i.ToString()).ToArray()));
@@ -1309,11 +1345,11 @@ namespace ORTS.Viewer3D
             };
 
             static readonly Dictionary<string, SceneryMaterialOptions> ShaderNames = new Dictionary<string, SceneryMaterialOptions> {
-                { "Tex", SceneryMaterialOptions.None },
+                { "Tex", SceneryMaterialOptions.ShaderFullBright },
                 { "TexDiff", SceneryMaterialOptions.Diffuse },
-                { "BlendATex", SceneryMaterialOptions.AlphaBlendingBlend },
+                { "BlendATex", SceneryMaterialOptions.AlphaBlendingBlend | SceneryMaterialOptions.ShaderFullBright},
                 { "BlendATexDiff", SceneryMaterialOptions.AlphaBlendingBlend | SceneryMaterialOptions.Diffuse },
-                { "AddATex", SceneryMaterialOptions.AlphaBlendingAdd },
+                { "AddATex", SceneryMaterialOptions.AlphaBlendingAdd | SceneryMaterialOptions.ShaderFullBright},
                 { "AddATexDiff", SceneryMaterialOptions.AlphaBlendingAdd | SceneryMaterialOptions.Diffuse },
             };
 
@@ -1333,7 +1369,7 @@ namespace ORTS.Viewer3D
 #if DEBUG_SHAPE_HIERARCHY
             public SubObject(sub_object sub_object, ref int totalPrimitiveIndex, int[] hierarchy, Helpers.TextureFlags textureFlags, int subObjectIndex, SFile sFile, SharedShape sharedShape)
 #else
-            public SubObject(sub_object sub_object, ref int totalPrimitiveIndex, int[] hierarchy, Helpers.TextureFlags textureFlags, SFile sFile, SharedShape sharedShape)
+            public SubObject(sub_object sub_object, ref int totalPrimitiveIndex, int[] hierarchy, Helpers.TextureFlags textureFlags, ShapeFile sFile, SharedShape sharedShape)
 #endif
             {
 #if DEBUG_SHAPE_HIERARCHY
@@ -1553,7 +1589,7 @@ namespace ORTS.Viewer3D
             }
 #endif
 
-            public VertexBufferSet(sub_object sub_object, SFile sFile, GraphicsDevice graphicsDevice)
+            public VertexBufferSet(sub_object sub_object, ShapeFile sFile, GraphicsDevice graphicsDevice)
 #if DEBUG_SHAPE_NORMALS
                 : this(CreateVertexData(sub_object, sFile.shape), CreateDebugNormalsVertexData(sub_object, sFile.shape), graphicsDevice)
 #else

@@ -29,15 +29,15 @@ namespace ORTS.TrackViewer.Drawing
         List<Trainpath> selectedTrainpaths;
     
         private TrackDB trackDB;
-        private TSectionDatFile tsectionDat;
+        private TrackSectionsFile tsectionDat;
 
         /// <summary>
         /// Constructor
         /// </summary>
-        public DrawMultiplePaths (TrackDB trackDB, TSectionDatFile tsectionDat, Collection<Path> paths)
+        public DrawMultiplePaths (RouteData routeData, Collection<Path> paths)
         {
-            this.trackDB = trackDB;
-            this.tsectionDat = tsectionDat;
+            this.trackDB = routeData.TrackDB;
+            this.tsectionDat = routeData.TsectionDat;
             fullPathNames = new Dictionary<string, string>();
             loadedPaths = new Dictionary<string, Trainpath>();
             selectedTrainpaths = new List<Trainpath>();

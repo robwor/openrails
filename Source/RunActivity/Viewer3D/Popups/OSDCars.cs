@@ -19,12 +19,10 @@
 
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System;
+using Orts.Simulation.RollingStocks;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class OSDCars : LayeredWindow
     {
@@ -58,7 +56,7 @@ namespace ORTS.Viewer3D.Popups
             else if (State == DisplayState.Cars) State = DisplayState.Trains;
         }
 
-        public override void PrepareFrame(RenderFrame frame, Common.ElapsedTime elapsedTime, bool updateFull)
+        public override void PrepareFrame(RenderFrame frame, ORTS.Common.ElapsedTime elapsedTime, bool updateFull)
         {
             if (updateFull)
             {

@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2014 by the Open Rails project.
+﻿// COPYRIGHT 2014, 2015 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -102,6 +102,7 @@ namespace ORTS.TrackViewer.UserInterface
             AddVectorSectionStatus(trackViewer);
             AddPATfileStatus(trackViewer);
             AddTrainpathStatus(trackViewer);
+            AddTerrainStatus(trackViewer);
         }
 
         /// <summary>
@@ -162,6 +163,7 @@ namespace ORTS.TrackViewer.UserInterface
                 "{0,3:F3} ", closestPoint.X);
                 statusTrItemLocationZ.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture,
                     "{0,3:F3} ", closestPoint.Z);
+                AddSignalStatus(trackViewer, closestPoint.Description, closestPoint.Index);
             }
         }
 
@@ -194,7 +196,7 @@ namespace ORTS.TrackViewer.UserInterface
                 try
                 {
                     // Try to find a fixed track
-                    TrackShape shape = trackViewer.DrawTrackDB.TsectionDat.TrackShapes.Get(shapeIndex);
+                    TrackShape shape = trackViewer.RouteData.TsectionDat.TrackShapes.Get(shapeIndex);
                     shapeName = shape.FileName;
                 }
                 catch
@@ -202,7 +204,7 @@ namespace ORTS.TrackViewer.UserInterface
                     // try to find a dynamic track
                     try
                     {
-                        TrackPath trackPath = trackViewer.DrawTrackDB.TsectionDat.TSectionIdx.TrackPaths[tvs.ShapeIndex];
+                        TrackPath trackPath = trackViewer.RouteData.TsectionDat.TSectionIdx.TrackPaths[tvs.ShapeIndex];
                         shapeName = "<dynamic ?>";
                         foreach (uint trackSection in trackPath.TrackSections)
                         {
@@ -300,6 +302,35 @@ namespace ORTS.TrackViewer.UserInterface
             {
                 statusAdditional.Text += string.Format(System.Globalization.CultureInfo.CurrentCulture,
                     " FPS={0:F1} ", trackViewer.FrameRate.SmoothedValue);
+            }
+        }
+
+        /// <summary>
+        /// Add information from terrain
+        /// </summary>
+        /// <param name="trackViewer"></param>
+        private void AddTerrainStatus(TrackViewer trackViewer)
+        {
+            if (Properties.Settings.Default.statusShowTerrain && (trackViewer.drawTerrain != null))
+            {
+                statusAdditional.Text += trackViewer.drawTerrain.StatusInformation;
+            }
+        }
+
+        /// <summary>
+        /// Add information from signal
+        /// </summary>
+        /// <param name="trackViewer"></param>
+        private void AddSignalStatus(TrackViewer trackViewer, string description, uint index)
+        {
+            if (Properties.Settings.Default.statusShowSignal)
+            {
+                if (String.Equals(description, "signal"))
+                {
+                    statusAdditional.Text += "signal shape = ";
+                    statusAdditional.Text += trackViewer.RouteData.GetSignalFilename(index);
+                }
+
             }
         }
 

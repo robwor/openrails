@@ -15,10 +15,29 @@
 		<div class="row">
 			<div class="col-md-1"></div>
 			<div class="col-md-5">
+          <h2>Dec 2015 - More Access to Elvas Tower</h2>
+          <p>
+            The Elvas Tower forum plays a major role in developing Open Rails but has been closed to non-members following a dispute.
+            We can now report that some of the <a href="http://www.elvastower.com/forums/">Open Rails sub-forums</a> 
+            are open again.
+          </p>
+          <hr />
+          <h2>Jun 2015 - Great Zig Zag Railway</h2>
+          <p>
+            Peter Newell has just released (June 2105) the <a href="http://www.zigzag.coalstonewcastle.com.au/">Great Zig Zag Railway</a>,
+            a steam route for Open Rails v1.0 (this 120MB download requires no other files).
+          </p>
+          <hr />
+          <h2>May 2015 - Version 1.0</h2>
+          <p>
+            <a href="/discover/version-1-0/">Open Rails 1.0</a> released! <a href="/download/program/">Download it here</a>.
+          </p>
+          <hr />
           <h2>Apr 2015 - Demo Model 1</h2>
           <p>
           Open Rails first demonstration route <a href="/download/content">Demo Model 1</a> has been published.
           </p>
+          <hr />
           <h2>Dec 2014 - 3D Cabs</h2> 
           <p>
           <a href="http://www.dekosoft.com">Dekosoft Trains</a> has added locos exclusively for Open Rails to its range.
@@ -38,7 +57,7 @@
           An installer is now available, so Open Rails and its pre-requisites such as XNA can be delivered in a single download. 
           </p>
           <hr />
-          <h2>April 2014 - Smoother, More Detailed Graphics</h2>
+          <h2>Apr 2014 - Smoother, More Detailed Graphics</h2>
           <p>
             Open Rails currently uses DirectX 9 and, although this is not the latest version of DirectX, hidden away inside is a method for reducing the
             number of "draw calls" which the CPU makes to the GPU. Fewer calls mean higher frame rates, smoother motion and the capacity to handle

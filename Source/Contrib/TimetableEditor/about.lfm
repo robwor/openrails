@@ -6,6 +6,7 @@ object Form2: TForm2
   Caption = 'about'
   ClientHeight = 180
   ClientWidth = 320
+  Position = poMainFormCenter
   LCLVersion = '1.2.2.0'
   object Button1: TButton
     Left = 123
@@ -37,7 +38,7 @@ object Form2: TForm2
     Width = 97
     Alignment = taCenter
     AutoSize = True
-    Caption = 'Version: 1.4.2'
+    Caption = 'Version: 1.5.1'
     Font.CharSet = ANSI_CHARSET
     Font.Height = -16
     Font.Name = 'Arial'

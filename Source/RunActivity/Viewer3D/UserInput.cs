@@ -29,17 +29,14 @@
 // This logs every UserCommandInput change from pressed to released.
 //#define DEBUG_USER_INPUT
 
-using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using ORTS.Settings;
-using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
-using Game = ORTS.Processes.Game;
+using Game = Orts.Viewer3D.Processes.Game;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public static class UserInput
     {
@@ -59,7 +56,7 @@ namespace ORTS.Viewer3D
 
         public static void Update(Game game)
         {
-            if (MultiPlayer.MPManager.IsMultiPlayer() && MultiPlayer.MPManager.Instance().ComposingText) return;
+            if (Orts.MultiPlayer.MPManager.IsMultiPlayer() && Orts.MultiPlayer.MPManager.Instance().ComposingText) return;
             if (InputSettings == null) InputSettings = game.Settings.Input;
             LastKeyboardState = KeyboardState;
             LastMouseState = MouseState;

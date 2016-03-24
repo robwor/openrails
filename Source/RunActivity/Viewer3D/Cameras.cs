@@ -17,16 +17,20 @@
 
 // This file is the responsibility of the 3D & Environment Team.
 
+using Microsoft.Xna.Framework;
+using Orts.Common;
+using Orts.Simulation;
+using Orts.Simulation.Physics;
+using Orts.Simulation.RollingStocks;
+using ORTS.Common;
+using ORTS.Settings;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using Microsoft.Xna.Framework;
-using ORTS.Common;
-using ORTS.Settings;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public abstract class Camera
     {
@@ -124,6 +128,7 @@ namespace ORTS.Viewer3D
             ScreenChanged();
             OnActivate(Viewer.Camera == this);
             Viewer.Camera = this;
+            Viewer.Simulator.PlayerIsInCab = Style == Styles.Cab || Style == Styles.ThreeDimCab;
             Update(ElapsedTime.Zero);
             xnaView = GetCameraView();
             SoundBaseTile = new Point(cameraLocation.TileX, cameraLocation.TileZ);
@@ -323,10 +328,14 @@ namespace ORTS.Viewer3D
 
             if (!(this is TracksideCamera) && !(this is FreeRoamCamera) && AttachedCar != null)
             {
-                cameraVelocity = AttachedCar.Velocity;
+                var cars = Viewer.World.Trains.Cars;
+                if (cars.ContainsKey(AttachedCar))
+                    cameraVelocity = cars[AttachedCar].Velocity;
+                else
+                    cameraVelocity = new float[] { 0, 0, 0 };
             }
 
-            float[] cameraOrientation = new float[] { 
+            float[] cameraOrientation = new float[] {
                         XnaView.Backward.X, XnaView.Backward.Y, XnaView.Backward.Z,
                         XnaView.Down.X, XnaView.Down.Y, XnaView.Down.Z };
 
@@ -808,7 +817,7 @@ namespace ORTS.Viewer3D
 
         protected virtual List<TrainCar> GetCameraCars()
         {
-            if (Viewer.SelectedTrain.TrainType  == Train.TRAINTYPE.AI_INCORPORATED) Viewer.ChangeSelectedTrain(Viewer.SelectedTrain.IncorporatingTrain);
+            if (Viewer.SelectedTrain.TrainType == Train.TRAINTYPE.AI_INCORPORATED) Viewer.ChangeSelectedTrain(Viewer.SelectedTrain.IncorporatingTrain);
             return Viewer.SelectedTrain.Cars;
         }
 
@@ -877,7 +886,7 @@ namespace ORTS.Viewer3D
                     cameraLocation.Location.Z = attachedLocation.Z;
                 }
                 cameraLocation.Location.Z *= -1;
-                cameraLocation.Location = Vector3.Transform(cameraLocation.Location, attachedCar.GetXNAMatrix());
+                cameraLocation.Location = Vector3.Transform(cameraLocation.Location, attachedCar.WorldPosition.XNAMatrix);
                 cameraLocation.Location.Z *= -1;
             }
         }
@@ -901,28 +910,12 @@ namespace ORTS.Viewer3D
                 lookAtPosition.Z += attachedLocation.Z;
             }
             lookAtPosition.Z *= -1;
-            lookAtPosition = Vector3.Transform(lookAtPosition, attachedCar.GetXNAMatrix());
-            if (tiltingLand && Program.Simulator.CabRotating > 0)
-            {
-                var loco = attachedCar as MSTSLocomotive;
-                // TODO this is a hack to prevent problems viewing freightanims from the cab; however the problem should be solved from the root up
-				if (attachedCar.HasFreightAnim && !attachedCar.HasInsideView && !attachedCar.HasPassengerCapacity && loco.CabViewList != null &&
-                    (( loco.CabViewList[0] != null && loco.CabViewList[0].NoseAhead && !loco.UsingRearCab) ||
-                    (loco.CabViewList.Count > 1 && loco.CabViewList[1] != null && loco.CabViewList[1].NoseAhead && loco.UsingRearCab)))
-				//cars with freight animation  will rotate only camera (except passenger motor units), the land will rotate with the camera, so the FA can follow
-				{
-					var up = (Matrix.CreateRotationZ( Program.Simulator.CabRotating * attachedCar.totalRotationZ) * attachedCar.GetXNAMatrix()).Up;
-					return Matrix.CreateLookAt(XnaLocation(cameraLocation), lookAtPosition, up);//Vector3.Transform(Vector3.Up, Matrix.CreateRotationZ(3 * attachedCar.totalRotationZ)));
-				}
-				else
-                // end of hack
-				{
-					var up = (Matrix.CreateRotationZ((Program.Simulator.CabRotating - 4) * attachedCar.totalRotationZ) * attachedCar.GetXNAMatrix()).Up;
-					return Matrix.CreateLookAt(XnaLocation(cameraLocation), lookAtPosition, up);//Vector3.Transform(Vector3.Up, Matrix.CreateRotationZ(3 * attachedCar.totalRotationZ)));
-				}
-            }
-            else
-                return Matrix.CreateLookAt(XnaLocation(cameraLocation), lookAtPosition, Vector3.Up);
+            lookAtPosition = Vector3.Transform(lookAtPosition, attachedCar.WorldPosition.XNAMatrix);
+            // Don't forget to rotate the up vector so the camera rotates with us.
+            var upRotation = attachedCar.WorldPosition.XNAMatrix;
+            upRotation.Translation = Vector3.Zero;
+            var up = Vector3.Transform(Vector3.Up, upRotation);
+            return Matrix.CreateLookAt(XnaLocation(cameraLocation), lookAtPosition, up);
         }
 
         public override void Update(ElapsedTime elapsedTime)
@@ -944,7 +937,7 @@ namespace ORTS.Viewer3D
                     cameraLocation.Location.Z = attachedLocation.Z;
                 }
                 cameraLocation.Location.Z *= -1;
-                cameraLocation.Location = Vector3.Transform(cameraLocation.Location, attachedCar.GetXNAMatrix());
+                cameraLocation.Location = Vector3.Transform(cameraLocation.Location, attachedCar.WorldPosition.XNAMatrix);
                 cameraLocation.Location.Z *= -1;
             }
             UpdateRotation(elapsedTime);
@@ -1208,7 +1201,7 @@ namespace ORTS.Viewer3D
             if (UserInput.IsDown(UserCommands.CameraRotateDown) || UserInput.IsDown(UserCommands.CameraPanDown)) RotateDown(speed);
             if (UserInput.IsDown(UserCommands.CameraRotateLeft) || UserInput.IsDown(UserCommands.CameraPanLeft)) RotateRight(-speed);
             if (UserInput.IsDown(UserCommands.CameraRotateRight) || UserInput.IsDown(UserCommands.CameraPanRight)) RotateRight(speed);
-            
+
             // Zoom
             ZoomByMouseWheel(speed);
 
@@ -1259,7 +1252,7 @@ namespace ORTS.Viewer3D
             return attachedToRear ^ attachedCar.Flipped;
         }
 
-// attached car may be no more part of the list, therefore base methods would return errors
+        // attached car may be no more part of the list, therefore base methods would return errors
         public override void NextCar()
         {
             FirstCar();
@@ -1514,7 +1507,7 @@ namespace ORTS.Viewer3D
                 if (base.IsUnderground)
                     return true;
                 var elevationAtCameraTarget = Viewer.Tiles.GetElevation(attachedCar.WorldPosition.WorldLocation);
-                return attachedCar.WorldPosition.Location.Y + TerrainAltitudeMargin < elevationAtCameraTarget;
+                return attachedCar.WorldPosition.Location.Y + TerrainAltitudeMargin < elevationAtCameraTarget || attachedCar.CarTunnelData.LengthMOfTunnelAheadFront > 0;
             }
         }
 
@@ -1549,7 +1542,7 @@ namespace ORTS.Viewer3D
             tiltingLand = false;
             if (Viewer.Simulator.UseSuperElevation > 0 || Viewer.Simulator.CarVibrating > 0) tiltingLand = true;
             var car = attachedCar;
-            if (car != null && car.Train != null && car.Train.tilted == true) tiltingLand = true;
+            if (car != null && car.Train != null && car.Train.IsTilting == true) tiltingLand = true;
             base.OnActivate(sameCamera);
         }
 
@@ -1685,7 +1678,6 @@ namespace ORTS.Viewer3D
         public override string Name { get { return Viewer.Catalog.GetString("Trackside"); } }
 
         protected TrainCar LastCheckCar;
-        protected readonly Random Random;
         protected WorldLocation TrackCameraLocation;
         protected float CameraAltitudeOffset;
 
@@ -1707,7 +1699,6 @@ namespace ORTS.Viewer3D
         public TracksideCamera(Viewer viewer)
             : base(viewer)
         {
-            Random = new Random();
         }
 
         public override void Reset()
@@ -1774,9 +1765,9 @@ namespace ORTS.Viewer3D
             //if (train != Viewer.PlayerTrain && train.LeadLocomotive == null) train.ChangeToNextCab();
             var trainForwards = true;
             if (train.LeadLocomotive != null)
-            //TODO: next code line has been modified to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
-            // To achieve the same result with other means, without flipping trainset physics, maybe the line should be changed
-            trainForwards = (train.LeadLocomotive.SpeedMpS >= 0) ^ train.LeadLocomotive.Flipped ^ ((MSTSLocomotive)train.LeadLocomotive).UsingRearCab;
+                //TODO: next code line has been modified to flip trainset physics in order to get viewing direction coincident with loco direction when using rear cab.
+                // To achieve the same result with other means, without flipping trainset physics, maybe the line should be changed
+                trainForwards = (train.LeadLocomotive.SpeedMpS >= 0) ^ train.LeadLocomotive.Flipped ^ ((MSTSLocomotive)train.LeadLocomotive).UsingRearCab;
             else if (Viewer.PlayerLocomotive != null && train.IsActualPlayerTrain)
                 trainForwards = (Viewer.PlayerLocomotive.SpeedMpS >= 0) ^ Viewer.PlayerLocomotive.Flipped ^ ((MSTSLocomotive)Viewer.PlayerLocomotive).UsingRearCab;
 
@@ -1807,7 +1798,7 @@ namespace ORTS.Viewer3D
                 var newLocation = tdb.WorldLocation;
                 TrackCameraLocation = new WorldLocation(newLocation);
                 var directionForward = WorldLocation.GetDistance((trainForwards ? train.FirstCar : train.LastCar).WorldPosition.WorldLocation, newLocation);
-                if (Random.Next(2) == 0)
+                if (Viewer.Random.Next(2) == 0)
                 {
                     newLocation.Location.X += -directionForward.Z / SidewaysScale; // Use swapped -X and Z to move to the left of the track.
                     newLocation.Location.Z += directionForward.X / SidewaysScale;
@@ -1829,41 +1820,47 @@ namespace ORTS.Viewer3D
         }
     }
 
-	public class ThreeDimCabCamera : InsideThreeDimCamera
-	{
-		public override Styles Style { get { return Styles.ThreeDimCab; } }
-        public override bool IsAvailable { get { return Viewer.SelectedTrain != null && Viewer.SelectedTrain.IsActualPlayerTrain && 
-            Viewer.PlayerLocomotive != null && Viewer.PlayerLocomotive.CabViewpoints != null; } }
-		public override string Name { get { return Viewer.Catalog.GetString("3D Cab"); } }
-		bool StartDirectionSet = false;
-		protected int CurrentViewpointIndex;
-		protected bool PrevCabWasRear;
+    public class ThreeDimCabCamera : InsideThreeDimCamera
+    {
+        public override Styles Style { get { return Styles.ThreeDimCab; } }
+        public override bool IsAvailable
+        {
+            get
+            {
+                return Viewer.SelectedTrain != null && Viewer.SelectedTrain.IsActualPlayerTrain &&
+                    Viewer.PlayerLocomotive != null && Viewer.PlayerLocomotive.CabViewpoints != null;
+            }
+        }
+        public override string Name { get { return Viewer.Catalog.GetString("3D Cab"); } }
+        bool StartDirectionSet = false;
+        protected int CurrentViewpointIndex;
+        protected bool PrevCabWasRear;
 
-		public ThreeDimCabCamera(Viewer viewer)
-			: base(viewer)
-		{
-		}
+        public ThreeDimCabCamera(Viewer viewer)
+            : base(viewer)
+        {
+        }
 
-		protected override List<TrainCar> GetCameraCars()
-		{
+        protected override List<TrainCar> GetCameraCars()
+        {
             if (Viewer.SelectedTrain != null && Viewer.SelectedTrain.IsActualPlayerTrain &&
             Viewer.PlayerLocomotive != null && Viewer.PlayerLocomotive.CabViewpoints != null)
-			{
-				List<TrainCar> l = new List<TrainCar>();
+            {
+                List<TrainCar> l = new List<TrainCar>();
                 l.Add(Viewer.PlayerLocomotive);
-				return l;
-			}
-			else return base.GetCameraCars();
-		}
+                return l;
+            }
+            else return base.GetCameraCars();
+        }
 
-		protected override void SetCameraCar(TrainCar car)
-		{
-			base.SetCameraCar(car);
+        protected override void SetCameraCar(TrainCar car)
+        {
+            base.SetCameraCar(car);
             if (attachedCar.CabViewpoints != null)
-			{
+            {
                 if (CurrentViewpointIndex >= attachedCar.CabViewpoints.Count) { viewPoint = attachedCar.CabViewpoints[0]; CurrentViewpointIndex = 0; }
-				else viewPoint = attachedCar.CabViewpoints[CurrentViewpointIndex];
-				attachedLocation = viewPoint.Location;
+                else viewPoint = attachedCar.CabViewpoints[CurrentViewpointIndex];
+                attachedLocation = viewPoint.Location;
                 if (!StartDirectionSet) // Only set the initial direction on first use so, when switching back from another camera, direction is not reset.
                 {
                     StartDirectionSet = true;
@@ -1875,11 +1872,11 @@ namespace ORTS.Viewer3D
                     RotationXRadians = viewPoint.RotationXRadians;
                     RotationYRadians = viewPoint.RotationYRadians;
                 }
-			}
-		}
+            }
+        }
 
-		public void ChangeCab(TrainCar newCar)
-		{
+        public void ChangeCab(TrainCar newCar)
+        {
             try
             {
                 var mstsLocomotive = newCar as MSTSLocomotive;
@@ -1890,6 +1887,6 @@ namespace ORTS.Viewer3D
                 SetCameraCar(newCar);
             }
             catch { }
-		}
-	}
+        }
+    }
 }

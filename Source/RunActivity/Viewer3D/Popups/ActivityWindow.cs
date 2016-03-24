@@ -19,14 +19,18 @@
 
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Simulation;
 using ORTS.Common;
 using System;
 using System.Linq;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class ActivityWindow : Window
     {
+        int WindowHeightMin = 0;
+        int WindowHeightMax = 0;
+
         Activity Activity;
         ControlLayoutScrollbox MessageScroller;
         TextFlow Message;
@@ -38,27 +42,37 @@ namespace ORTS.Viewer3D.Popups
         DateTime PopupTime;
 
         public ActivityWindow(WindowManager owner)
-            : base(owner, Window.DecorationSize.X + owner.TextFontDefault.Height * 25, Window.DecorationSize.Y + owner.TextFontDefault.Height * 8 + ControlLayout.SeparatorSize * 2, Viewer.Catalog.GetString("Activity Events"))
+            : base(owner, Window.DecorationSize.X + owner.TextFontDefault.Height * 40, Window.DecorationSize.Y + owner.TextFontDefault.Height * 12 /* 10 lines + 2 lines of controls */ + ControlLayout.SeparatorSize * 2, Viewer.Catalog.GetString("Activity Events"))
         {
+            WindowHeightMin = Location.Height;
+            WindowHeightMax = Location.Height + owner.TextFontDefault.Height * 10; // Add another 10 lines for longer messages.
             Activity = Owner.Viewer.Simulator.ActivityRun;
         }
 
         protected override ControlLayout Layout(ControlLayout layout)
         {
+            var originalMessage = Message == null ? null : Message.Text;
+            var originalResumeLabel = ResumeLabel == null ? null : ResumeLabel.Text;
+            var originalCloseLabel = CloseLabel == null ? null : CloseLabel.Text;
+            var originalQuitLabel = QuitLabel == null ? null : QuitLabel.Text;
+            var originalEventNameLabel = EventNameLabel == null ? null : EventNameLabel.Text;
+            var originalStatusLabel = StatusLabel == null ? null : StatusLabel.Text;
+            var originalStatusLabelColor = StatusLabel == null ? null : new Color?(StatusLabel.Color);
+
             var vbox = base.Layout(layout).AddLayoutVertical();
             {
-                var hbox = vbox.AddLayoutHorizontal(Owner.TextFontDefault.Height * 6);
+                var hbox = vbox.AddLayoutHorizontal(vbox.RemainingHeight - (ControlLayout.SeparatorSize + vbox.TextHeight) * 2);
                 var scrollbox = hbox.AddLayoutScrollboxVertical(hbox.RemainingWidth);
-                scrollbox.Add(Message = new TextFlow(scrollbox.RemainingWidth - scrollbox.TextHeight, ""));
+                scrollbox.Add(Message = new TextFlow(scrollbox.RemainingWidth - scrollbox.TextHeight, originalMessage));
                 MessageScroller = (ControlLayoutScrollbox)hbox.Controls.Last();
             }
             vbox.AddHorizontalSeparator();
             {
                 var hbox = vbox.AddLayoutHorizontalLineOfText();
                 var boxWidth = hbox.RemainingWidth / 3;
-                hbox.Add(ResumeLabel = new Label(boxWidth, hbox.RemainingHeight, "", LabelAlignment.Center));
-                hbox.Add(CloseLabel = new Label(boxWidth, hbox.RemainingHeight, "", LabelAlignment.Center));
-                hbox.Add(QuitLabel = new Label(boxWidth, hbox.RemainingHeight, "", LabelAlignment.Center));
+                hbox.Add(ResumeLabel = new Label(boxWidth, hbox.RemainingHeight, originalResumeLabel, LabelAlignment.Center));
+                hbox.Add(CloseLabel = new Label(boxWidth, hbox.RemainingHeight, originalCloseLabel, LabelAlignment.Center));
+                hbox.Add(QuitLabel = new Label(boxWidth, hbox.RemainingHeight, originalQuitLabel, LabelAlignment.Center));
                 ResumeLabel.Click += new Action<Control, Point>(ResumeActivity_Click);
                 CloseLabel.Click += new Action<Control, Point>(CloseBox_Click);
                 QuitLabel.Click += new Action<Control, Point>(QuitActivity_Click);
@@ -67,9 +81,9 @@ namespace ORTS.Viewer3D.Popups
             {
                 var hbox = vbox.AddLayoutHorizontalLineOfText();
                 var boxWidth = hbox.RemainingWidth / 2;
-                hbox.Add(EventNameLabel = new Label(boxWidth, hbox.RemainingHeight, "", LabelAlignment.Left));
-                hbox.Add(StatusLabel = new Label(boxWidth, hbox.RemainingHeight, "", LabelAlignment.Left));
-                StatusLabel.Color = Color.LightSalmon;
+                hbox.Add(EventNameLabel = new Label(boxWidth, hbox.RemainingHeight, originalEventNameLabel, LabelAlignment.Left));
+                hbox.Add(StatusLabel = new Label(boxWidth, hbox.RemainingHeight, originalStatusLabel, LabelAlignment.Left));
+                StatusLabel.Color = originalStatusLabelColor.HasValue ? originalStatusLabelColor.Value : Color.LightSalmon;
             }
             return vbox;
         }
@@ -104,7 +118,7 @@ namespace ORTS.Viewer3D.Popups
             Owner.Viewer.Simulator.Paused = false;   // Move to Viewer3D?
             this.Activity.IsActivityResumed = !Owner.Viewer.Simulator.Paused;
             Activity.IsComplete = true;
-            if (Owner.Viewer.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.Off);
+            if (Owner.Viewer.Simulator.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.Off);
             Owner.Viewer.Game.PopState();
         }
 
@@ -113,9 +127,10 @@ namespace ORTS.Viewer3D.Popups
             this.Visible = false;
             this.Activity.IsActivityWindowOpen = this.Visible;
             this.Activity.TriggeredEvent = null;
+            Activity.NewMsgFromNewPlayer = false;
             Owner.Viewer.Simulator.Paused = false;   // Move to Viewer3D?
             this.Activity.IsActivityResumed = !Owner.Viewer.Simulator.Paused;
-            if (Owner.Viewer.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.On);
+            if (Owner.Viewer.Simulator.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.On);
         }
 
         public void ResumeActivity()
@@ -123,7 +138,7 @@ namespace ORTS.Viewer3D.Popups
             this.Activity.TriggeredEvent = null;
             Owner.Viewer.Simulator.Paused = false;   // Move to Viewer3D?
             Activity.IsActivityResumed = !Owner.Viewer.Simulator.Paused;
-            if (Owner.Viewer.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.On);
+            if (Owner.Viewer.Simulator.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.On);
             ResumeMenu();
         }
 
@@ -131,7 +146,7 @@ namespace ORTS.Viewer3D.Popups
         {
             Owner.Viewer.Simulator.Paused = true;   // Move to Viewer3D?
             Activity.IsActivityResumed = !Owner.Viewer.Simulator.Paused;
-            if (Owner.Viewer.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.On);
+            if (Owner.Viewer.Simulator.IsReplaying) Owner.Viewer.Simulator.Confirmer.Confirm(CabControl.Activity, CabSetting.On);
             ResumeMenu();
         }
 
@@ -179,7 +194,7 @@ namespace ORTS.Viewer3D.Popups
                                     // Only needs updating the first time through
                                     if (!Owner.Viewer.Simulator.Paused && Visible == false)
                                     {
-                                        Owner.Viewer.Simulator.Paused = e.ParsedObject.ORTSContinue < 0? true : false;
+                                        Owner.Viewer.Simulator.Paused = e.ParsedObject.ORTSContinue < 0 ? true : false;
                                         if (e.ParsedObject.ORTSContinue != 0)
                                         {
                                             ComposeMenu(e.ParsedObject.Name, text);
@@ -203,6 +218,56 @@ namespace ORTS.Viewer3D.Popups
                             }
                         }
                     }
+                    else if (Activity.NewMsgFromNewPlayer)
+                    {
+                        // Displays messages related to actual player train, when not coincident with initial player train
+                        var text = Activity.MsgFromNewPlayer;
+                        if (!String.IsNullOrEmpty(text))
+                        {
+                            if (Activity.ReopenActivityWindow)
+                            {
+                                ComposeActualPlayerTrainMenu(Owner.Viewer.PlayerTrain.Name, text);
+                                if (Activity.IsActivityResumed)
+                                {
+                                    ResumeActivity();
+                                    CloseMenu();
+                                }
+                                else
+                                {
+                                    Owner.Viewer.Simulator.Paused = true;
+                                    ResumeMenu();
+                                    PopupTime = DateTime.Now;
+                                }
+                            }
+                            else
+                            {
+                                // Only needs updating the first time through
+                                if (!Owner.Viewer.Simulator.Paused && Visible == false)
+                                {
+                                    ComposeActualPlayerTrainMenu(Owner.Viewer.PlayerTrain.Name, text);
+                                    NoPauseMenu();
+                                    PopupTime = DateTime.Now;
+                                }
+                                else if (Owner.Viewer.Simulator.Paused)
+                                {
+                                    ResumeMenu();
+                                }
+                            }
+                            Visible = true;
+                        }
+                        else
+                        {
+                            Activity.NewMsgFromNewPlayer = false;
+                        }
+                        TimeSpan diff1 = DateTime.Now - PopupTime;
+                        if (Visible && diff1.TotalSeconds >= 10 && !Owner.Viewer.Simulator.Paused)
+                        {
+                            CloseBox();
+                            Activity.NewMsgFromNewPlayer = false;
+                        }
+                    }
+
+
                     Activity.IsActivityResumed = !Owner.Viewer.Simulator.Paused;
                     Activity.IsActivityWindowOpen = Visible;
                     Activity.ReopenActivityWindow = false;
@@ -258,6 +323,25 @@ namespace ORTS.Viewer3D.Popups
             EventNameLabel.Text = Viewer.Catalog.GetStringFmt("Event: {0}", eventLabel);
             MessageScroller.SetScrollPosition(0);
             Message.Text = message;
+            ResizeDialog();
+        }
+
+        void ComposeActualPlayerTrainMenu(string trainName, string message)
+        {
+            EventNameLabel.Text = Viewer.Catalog.GetStringFmt("Train: {0}", trainName.Substring(0, Math.Min(trainName.Length, 20)));
+            MessageScroller.SetScrollPosition(0);
+            Message.Text = message;
+            ResizeDialog();
+        }
+
+        void ResizeDialog()
+        {
+            var desiredHeight = Location.Height + Message.Position.Height - MessageScroller.Position.Height;
+            var newHeight = (int)MathHelper.Clamp(desiredHeight, WindowHeightMin, WindowHeightMax);
+            // Move the dialog up if we're expanding it, or down if not; this keeps the center in the same place.
+            var newTop = Location.Y + (Location.Height - newHeight) / 2;
+            SizeTo(Location.Width, newHeight);
+            MoveTo(Location.X, newTop);
         }
     }
 }

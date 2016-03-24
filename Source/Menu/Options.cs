@@ -134,7 +134,8 @@ namespace ORTS
 
             // General tab
             checkAlerter.Checked = Settings.Alerter;
-            checkAlerterExternal.Checked = !Settings.AlerterDisableExternal;
+            checkAlerterExternal.Enabled = Settings.Alerter;
+            checkAlerterExternal.Checked = Settings.Alerter && !Settings.AlerterDisableExternal;
             checkConfirmations.Checked = !Settings.SuppressConfirmations;
             checkViewDispatcher.Checked = Settings.ViewDispatcher;
             checkUseLargeAddressAware.Checked = Settings.UseLargeAddressAware;
@@ -144,6 +145,7 @@ namespace ORTS
             comboLanguage.Text = Settings.Language;
             comboPressureUnit.Text = Settings.PressureUnit;
             comboBoxOtherUnits.Text = settings.Units;
+            checkDisableTCSScripts.Checked = Settings.DisableTCSScripts;
 
 
             // Audio tab
@@ -161,6 +163,8 @@ namespace ORTS
             numericCab2DStretch.Value = Settings.Cab2DStretch;
             numericViewingDistance.Value = Settings.ViewingDistance;
             checkDistantMountains.Checked = Settings.DistantMountains;
+            labelDistantMountainsViewingDistance.Enabled = checkDistantMountains.Checked;
+            numericDistantMountainsViewingDistance.Enabled = checkDistantMountains.Checked;
             numericDistantMountainsViewingDistance.Value = Settings.DistantMountainsViewingDistance / 1000;
             numericViewingFOV.Value = Settings.ViewingFOV;
             numericWorldObjectDensity.Value = Settings.WorldObjectDensity;
@@ -170,6 +174,8 @@ namespace ORTS
 
             // Simulation tab
             checkUseAdvancedAdhesion.Checked = Settings.UseAdvancedAdhesion;
+            labelAdhesionMovingAverageFilterSize.Enabled = checkUseAdvancedAdhesion.Checked;
+            numericAdhesionMovingAverageFilterSize.Enabled = checkUseAdvancedAdhesion.Checked; 
             numericAdhesionMovingAverageFilterSize.Value = Settings.AdhesionMovingAverageFilterSize;
             checkBreakCouplers.Checked = Settings.BreakCouplers;
             checkCurveResistanceSpeedDependent.Checked = Settings.CurveResistanceSpeedDependent;
@@ -207,6 +213,9 @@ namespace ORTS
 
             // Evaluation tab
             checkDataLogTrainSpeed.Checked = Settings.DataLogTrainSpeed;
+            labelDataLogTSInterval.Enabled = checkDataLogTrainSpeed.Checked;
+            numericDataLogTSInterval.Enabled = checkDataLogTrainSpeed.Checked;
+            checkListDataLogTSContents.Enabled = checkDataLogTrainSpeed.Checked;  
             numericDataLogTSInterval.Value = Settings.DataLogTSInterval;
             checkListDataLogTSContents.Items.AddRange(new object[] {
                 catalog.GetString("Time"),
@@ -258,7 +267,8 @@ namespace ORTS
             var top = labelUpdateChannel.Bottom + spacing.Height;
             foreach (var channel in UpdateManager.GetChannels())
             {
-                var radio = new RadioButton() {
+                var radio = new RadioButton()
+                {
                     Text = updateChannelNames[channel.ToLowerInvariant()],
                     Margin = labelUpdateChannel.Margin,
                     Left = spacing.Width,
@@ -269,7 +279,8 @@ namespace ORTS
                 };
                 tabPageUpdater.Controls.Add(radio);
                 top += radio.Height + spacing.Height;
-                var label = new Label() {
+                var label = new Label()
+                {
                     Text = updateChannelDescriptions[channel.ToLowerInvariant()],
                     Margin = labelUpdateChannel.Margin,
                     Left = spacing.Width + indent,
@@ -286,6 +297,8 @@ namespace ORTS
             numericSuperElevationMinLen.Value = Settings.SuperElevationMinLen;
             numericSuperElevationGauge.Value = Settings.SuperElevationGauge;
             checkPerformanceTuner.Checked = Settings.PerformanceTuner;
+            labelPerformanceTunerTarget.Enabled = checkPerformanceTuner.Checked;
+            numericPerformanceTunerTarget.Enabled = checkPerformanceTuner.Checked;
             numericPerformanceTunerTarget.Value = Settings.PerformanceTunerTarget;
             checkDoubleWire.Checked = Settings.DoubleWire;
             checkForcedRedAtStationStops.Checked = !Settings.NoForcedRedAtStationStops;
@@ -305,6 +318,10 @@ namespace ORTS
             trackAdhesionFactorChange.Value = Settings.AdhesionFactorChange;
             trackAdhesionFactor_ValueChanged(null, null);
             checkShapeWarnings.Checked = !Settings.SuppressShapeWarnings;
+            precipitationBoxHeight.Value = Settings.PrecipitationBoxHeight;
+            precipitationBoxWidth.Value = Settings.PrecipitationBoxWidth;
+            precipitationBoxLength.Value = Settings.PrecipitationBoxLength;
+            checkCorrectQuestionableBrakingParams.Checked = Settings.CorrectQuestionableBrakingParams;
         }
 
         static string ParseCategoryFrom(string name)
@@ -407,12 +424,13 @@ namespace ORTS
             Settings.Language = comboLanguage.SelectedValue.ToString();
             Settings.PressureUnit = comboPressureUnit.SelectedValue.ToString();
             Settings.Units = comboBoxOtherUnits.SelectedValue.ToString();
-            
+            Settings.DisableTCSScripts = checkDisableTCSScripts.Checked;
+
             // Audio tab
             Settings.MSTSBINSound = checkMSTSBINSound.Checked;
             Settings.SoundVolumePercent = (int)numericSoundVolumePercent.Value;
             Settings.SoundDetailLevel = (int)numericSoundDetailLevel.Value;
-            
+
             // Video tab
             Settings.DynamicShadows = checkDynamicShadows.Checked;
             Settings.FastFullScreenAltTab = checkFastFullScreenAltTab.Checked;
@@ -428,7 +446,7 @@ namespace ORTS
             Settings.WorldObjectDensity = (int)numericWorldObjectDensity.Value;
             Settings.WindowSize = comboWindowSize.Text;
             Settings.DayAmbientLight = (int)trackDayAmbientLight.Value;
-            
+
             // Simulation tab
             Settings.UseAdvancedAdhesion = checkUseAdvancedAdhesion.Checked;
             Settings.AdhesionMovingAverageFilterSize = (int)numericAdhesionMovingAverageFilterSize.Value;
@@ -438,10 +456,10 @@ namespace ORTS
             Settings.TunnelResistanceDependent = checkTunnelResistanceDependent.Checked;
             Settings.OverrideNonElectrifiedRoutes = checkOverrideNonElectrifiedRoutes.Checked;
             Settings.HotStart = checkHotStart.Checked;
-            
+
             // Keyboard tab
             // These are edited live.
-            
+
             // DataLogger tab
             Settings.DataLoggerSeparator = comboDataLoggerSeparator.SelectedValue.ToString();
             Settings.DataLogSpeedUnits = comboDataLogSpeedUnits.SelectedValue.ToString();
@@ -449,7 +467,7 @@ namespace ORTS
             Settings.DataLogPerformance = checkDataLogPerformance.Checked;
             Settings.DataLogPhysics = checkDataLogPhysics.Checked;
             Settings.DataLogMisc = checkDataLogMisc.Checked;
-            
+
             // Evaluation tab
             Settings.DataLogTrainSpeed = checkDataLogTrainSpeed.Checked;
             Settings.DataLogTSInterval = (int)numericDataLogTSInterval.Value;
@@ -489,6 +507,10 @@ namespace ORTS
             Settings.AdhesionProportionalToWeather = checkAdhesionPropToWeather.Checked;
             Settings.AdhesionFactorChange = (int)trackAdhesionFactorChange.Value;
             Settings.SuppressShapeWarnings = !checkShapeWarnings.Checked;
+            Settings.PrecipitationBoxHeight = (int)precipitationBoxHeight.Value;
+            Settings.PrecipitationBoxWidth = (int)precipitationBoxWidth.Value;
+            Settings.PrecipitationBoxLength = (int)precipitationBoxLength.Value;
+            Settings.CorrectQuestionableBrakingParams = checkCorrectQuestionableBrakingParams.Checked;
 
             Settings.Save();
         }
@@ -518,12 +540,13 @@ namespace ORTS
                 MessageBox.Show(catalog.GetString("No errors found."), Application.ProductName);
         }
 
-        private void comboBoxWindowSize_SelectedIndexChanged( object sender, EventArgs e ) {
-            var windowSizeParts = comboWindowSize.Text.Split( new[] { 'x' }, 2 );
-            double width = Convert.ToDouble( windowSizeParts[0] );
-            double height = Convert.ToDouble( windowSizeParts[1] );
+        private void comboBoxWindowSize_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            var windowSizeParts = comboWindowSize.Text.Split(new[] { 'x' }, 2);
+            double width = Convert.ToDouble(windowSizeParts[0]);
+            double height = Convert.ToDouble(windowSizeParts[1]);
             double aspectRatio = width / height;
-            bool wideScreen = aspectRatio > (4.0 / 3.0); 
+            bool wideScreen = aspectRatio > (4.0 / 3.0);
             numericCab2DStretch.Enabled = wideScreen;
         }
 
@@ -644,6 +667,45 @@ namespace ORTS
                 current.Name = textBoxContentName.Text;
                 bindingSourceContent.ResetCurrentItem();
             }
+        }
+
+        private void checkAlerter_CheckedChanged(object sender, EventArgs e)
+        {
+            //Disable checkAlerterExternal when checkAlerter is not checked
+            if (checkAlerter.Checked )
+            {
+                checkAlerterExternal.Enabled = true; 
+            }
+            else
+            {
+                checkAlerterExternal.Enabled = false;
+                checkAlerterExternal.Checked = false; 
+            }
+        }
+
+        private void checkDistantMountains_Click(object sender, EventArgs e)
+        {
+           labelDistantMountainsViewingDistance.Enabled = checkDistantMountains.Checked;
+           numericDistantMountainsViewingDistance.Enabled = checkDistantMountains.Checked;
+        }
+
+        private void checkUseAdvancedAdhesion_Click(object sender, EventArgs e)
+        {
+            labelAdhesionMovingAverageFilterSize.Enabled = checkUseAdvancedAdhesion.Checked;
+            numericAdhesionMovingAverageFilterSize.Enabled = checkUseAdvancedAdhesion.Checked;
+        }
+
+        private void checkDataLogTrainSpeed_Click(object sender, EventArgs e)
+        {
+            checkListDataLogTSContents.Enabled = checkDataLogTrainSpeed.Checked;
+            labelDataLogTSInterval.Enabled = checkDataLogTrainSpeed.Checked;
+            numericDataLogTSInterval.Enabled = checkDataLogTrainSpeed.Checked;
+        }
+
+        private void checkPerformanceTuner_Click(object sender, EventArgs e)
+        {
+            numericPerformanceTunerTarget.Enabled = checkPerformanceTuner.Checked;
+            labelPerformanceTunerTarget.Enabled = checkPerformanceTuner.Checked;
         }
     }
 }

@@ -21,7 +21,7 @@ using Microsoft.Xna.Framework.Input;
 using ORTS.Common;
 using System.Linq;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class ComposeMessage : Window
     {
@@ -37,7 +37,7 @@ namespace ORTS.Viewer3D.Popups
         public bool InitMessage()
         {
             this.Visible = true; UserInput.ComposingMessage = true;
-            if (MultiPlayer.MPManager.Instance().lastSender != "") Message.Text = MultiPlayer.MPManager.Instance().lastSender + ":";
+            if (Orts.MultiPlayer.MPManager.Instance().lastSender != "") Message.Text = Orts.MultiPlayer.MPManager.Instance().lastSender + ":";
             return true;
         }
         public void AppendMessage(Keys[] newKeys, Keys[] oldKeys)
@@ -96,12 +96,12 @@ namespace ORTS.Viewer3D.Popups
                 try
                 {
                     var user = "";
-                    if (MultiPlayer.MPManager.Instance().lastSender == "")
+                    if (Orts.MultiPlayer.MPManager.Instance().lastSender == "")
                     {
                         //server will broadcast the message to everyone
-                        if (MultiPlayer.MPManager.IsServer())
+                        if (Orts.MultiPlayer.MPManager.IsServer())
                         {
-                            foreach (var p in MultiPlayer.MPManager.OnlineTrains.Players)
+                            foreach (var p in Orts.MultiPlayer.MPManager.OnlineTrains.Players)
                             {
                                 user += p.Key + "\r";
                             }
@@ -120,7 +120,7 @@ namespace ORTS.Viewer3D.Popups
                         var first = true;
                         foreach (var n in names)
                         {
-                            if (MultiPlayer.MPManager.OnlineTrains.Players.ContainsKey(n.Trim()))
+                            if (Orts.MultiPlayer.MPManager.OnlineTrains.Players.ContainsKey(n.Trim()))
                             {
                                 if (first) { user = ""; first = false; }
                                 user += n.Trim() + "\r";
@@ -128,7 +128,7 @@ namespace ORTS.Viewer3D.Popups
                         }
                         user += "0END";
                     }
-                    MultiPlayer.MPManager.Notify((new MultiPlayer.MSGText(MultiPlayer.MPManager.GetUserName(), user, msg)).ToString());
+                    Orts.MultiPlayer.MPManager.Notify((new Orts.MultiPlayer.MSGText(Orts.MultiPlayer.MPManager.GetUserName(), user, msg)).ToString());
                     this.Visible = false;
                     UserInput.ComposingMessage = false; Message.Text = "";
                 }

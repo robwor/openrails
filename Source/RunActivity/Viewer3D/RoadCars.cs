@@ -17,15 +17,16 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using Microsoft.Xna.Framework;
+using Orts.Formats.Msts;
+using Orts.Simulation;
+using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using Microsoft.Xna.Framework;
-using Orts.Formats.Msts;
-using ORTS.Common;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     // TODO: Move to simulator!
     public class RoadCarSpawner
@@ -102,7 +103,7 @@ namespace ORTS.Viewer3D
                 Cars = cars = newCars;
 
                 LastSpawnedTime = 0;
-                NextSpawnTime = CarSpawnerObj.CarFrequency * (0.75f + (float)Program.Random.NextDouble() / 2);
+                NextSpawnTime = CarSpawnerObj.CarFrequency * (0.75f + (float)Viewer.Random.NextDouble() / 2);
             }
 
             if (cars.Any(car => car.Travelled > Length))
@@ -222,7 +223,7 @@ namespace ORTS.Viewer3D
         public RoadCar(Viewer viewer, RoadCarSpawner spawner, float averageSpeed)
         {
             Spawner = spawner;
-            Type = Program.Random.Next() % viewer.Simulator.CarSpawnerFile.shapeNames.Length;
+            Type = Viewer.Random.Next() % viewer.Simulator.CarSpawnerFile.shapeNames.Length;
             Length = viewer.Simulator.CarSpawnerFile.distanceFrom[Type];
             // Front and rear travellers approximate wheel positions at 25% and 75% along vehicle.
             FrontTraveller = new Traveller(spawner.Traveller);
@@ -231,7 +232,7 @@ namespace ORTS.Viewer3D
             RearTraveller.Move(Length * 0.85f);
             // Travelled is the center of the vehicle.
             Travelled = Length * 0.50f;
-            Speed = SpeedMax = averageSpeed * (0.75f + (float)Program.Random.NextDouble() / 2);
+            Speed = SpeedMax = averageSpeed * (0.75f + (float)Viewer.Random.NextDouble() / 2);
         }
 
         [CallOnThread("Updater")]
@@ -298,6 +299,7 @@ namespace ORTS.Viewer3D
         [CallOnThread("Loader")]
         public void Load()
         {
+            var cancellation = Viewer.LoaderProcess.CancellationToken;
             var visibleCars = VisibleCars;
             var cars = Cars;
             if (visibleCars.Any(c => !cars.ContainsKey(c)) || cars.Keys.Any(c => !visibleCars.Contains(c)))
@@ -305,7 +307,7 @@ namespace ORTS.Viewer3D
                 var newCars = new Dictionary<RoadCar, RoadCarPrimitive>();
                 foreach (var car in visibleCars)
                 {
-                    if (Viewer.LoaderProcess.Terminated)
+                    if (cancellation.IsCancellationRequested)
                         break;
                     if (cars.ContainsKey(car))
                         newCars.Add(car, cars[car]);

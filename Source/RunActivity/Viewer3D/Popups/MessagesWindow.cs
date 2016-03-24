@@ -19,15 +19,13 @@
 
 using Microsoft.Xna.Framework;
 using ORTS.Common;
-using ORTS.Viewer3D;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class MessagesWindow : LayeredWindow
     {
@@ -202,7 +200,7 @@ namespace ORTS.Viewer3D.Popups
                                select m).ToList();
 
                 // Add the new message.
-                newMessages.Add(new Message(key, String.Format("{0} {1}", InfoDisplay.FormattedTime(clockTime), text), existingMessage != null ? existingMessage.StartTime : gameTime, gameTime + duration));
+                newMessages.Add(new Message(key, String.Format("{0} {1}", FormatStrings.FormatTime(clockTime), text), existingMessage != null ? existingMessage.StartTime : gameTime, gameTime + duration));
 
                 // Sort the messages.
                 newMessages = (from m in newMessages

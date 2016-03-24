@@ -27,12 +27,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using Font = System.Drawing.Font;
 using FontStyle = System.Drawing.FontStyle;
 using GraphicsUnit = System.Drawing.GraphicsUnit;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public sealed class WindowTextManager
     {
@@ -626,10 +625,10 @@ namespace ORTS.Viewer3D.Popups
             MarkNonexistingGlyphs = 1,
         }
 
-        [DllImport("gdi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern uint GetGlyphIndices(IntPtr hdc, string text, int textLength, [Out] short[] indices, GgiFlags flags);
 
-        [DllImport("gdi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern bool GetCharABCWidthsFloat(IntPtr hdc, uint firstChar, uint lastChar, out NativeStructs.AbcFloatWidth abcFloatWidths);
     }
 }

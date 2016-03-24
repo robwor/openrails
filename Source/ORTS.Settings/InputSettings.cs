@@ -61,6 +61,7 @@ namespace ORTS.Settings
         [GetString("Game Reset Signal Forward")] GameResetSignalForward,
         [GetString("Game Reset Signal Backward")] GameResetSignalBackward,
         [GetString("Game Autopilot Mode")] GameAutopilotMode,
+        [GetString("Game Suspend Old Player")] GameSuspendOldPlayer,
 
         [GetString("Display Next Window Tab")] DisplayNextWindowTab,
         [GetString("Display Help Window")] DisplayHelpWindow,
@@ -73,6 +74,7 @@ namespace ORTS.Settings
         [GetString("Display Next Station Window")] DisplayNextStationWindow,
         [GetString("Display Compass Window")] DisplayCompassWindow,
         [GetString("Display Basic HUD Toggle")] DisplayBasicHUDToggle,
+        [GetString("Display Train List Window")] DisplayTrainListWindow,
 
         [GetString("Debug Speed Up")] DebugSpeedUp,
         [GetString("Debug Speed Down")] DebugSpeedDown,
@@ -130,16 +132,17 @@ namespace ORTS.Settings
         [GetString("Camera Jump Back Player")] CameraJumpBackPlayer,
         [GetString("Camera Jump See Switch")] CameraJumpSeeSwitch,
         [GetString("Camera Vibrate")] CameraVibrate,
-        [GetString("Camera Cab Rotate")] CameraCabRotate,
 
         [GetString("Control Forwards")] ControlForwards,
         [GetString("Control Backwards")] ControlBackwards,
         [GetString("Control Throttle Increase")] ControlThrottleIncrease,
         [GetString("Control Throttle Decrease")] ControlThrottleDecrease,
+        [GetString("Control Throttle Zero")] ControlThrottleZero,
         [GetString("Control Gear Up")] ControlGearUp,
         [GetString("Control Gear Down")] ControlGearDown,
         [GetString("Control Train Brake Increase")] ControlTrainBrakeIncrease,
         [GetString("Control Train Brake Decrease")] ControlTrainBrakeDecrease,
+        [GetString("Control Train Brake Zero")] ControlTrainBrakeZero,
         [GetString("Control Engine Brake Increase")] ControlEngineBrakeIncrease,
         [GetString("Control Engine Brake Decrease")] ControlEngineBrakeDecrease,
         [GetString("Control Dynamic Brake Increase")] ControlDynamicBrakeIncrease,
@@ -181,6 +184,8 @@ namespace ORTS.Settings
         [GetString("Control Injector 2")] ControlInjector2,
         [GetString("Control Blower Increase")] ControlBlowerIncrease,
         [GetString("Control Blower Decrease")] ControlBlowerDecrease,
+        [GetString("Control Steam Heat Increase")] ControlSteamHeatIncrease,
+        [GetString("Control Steam Heat Decrease")] ControlSteamHeatDecrease,
         [GetString("Control Damper Increase")] ControlDamperIncrease,
         [GetString("Control Damper Decrease")] ControlDamperDecrease,
         [GetString("Control Firebox Open")] ControlFireboxOpen,
@@ -192,6 +197,8 @@ namespace ORTS.Settings
         [GetString("Control Cylinder Compound")] ControlCylinderCompound,
         [GetString("Control Firing")] ControlFiring,
         [GetString("Control Refill")] ControlRefill,
+        [GetString("Control TroughRefill")] ControlTroughRefill,
+        [GetString("Control ImmediateRefill")]ControlImmediateRefill,
     }
 
     /// <summary>
@@ -307,7 +314,7 @@ namespace ORTS.Settings
         [DllImport("user32.dll")]
         static extern int MapVirtualKey(int code, MapVirtualKeyType type);
 
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern int GetKeyNameText(int scanCode, [Out] string name, int nameLength);
         #endregion
 
@@ -457,13 +464,13 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.GameSwitchWithMouse] = new UserCommandModifierInput(KeyModifiers.Alt);
             Commands[(int)UserCommands.DisplayNextWindowTab] = new UserCommandModifierInput(KeyModifiers.Shift);
             Commands[(int)UserCommands.CameraMoveFast] = new UserCommandModifierInput(KeyModifiers.Shift);
+            Commands[(int)UserCommands.GameSuspendOldPlayer] = new UserCommandModifierInput(KeyModifiers.Shift);
             Commands[(int)UserCommands.CameraMoveSlow] = new UserCommandModifierInput(KeyModifiers.Control);
 
             // Everything else goes here, sorted alphabetically please (and grouped by first word of name).
             Commands[(int)UserCommands.CameraBrakeman] = new UserCommandKeyInput(0x07);
 			Commands[(int)UserCommands.CameraCab] = new UserCommandKeyInput(0x02);
 			Commands[(int)UserCommands.CameraThreeDimensionalCab] = new UserCommandKeyInput(0x02, KeyModifiers.Alt);
-			Commands[(int)UserCommands.CameraCabRotate] = new UserCommandKeyInput(0x13, KeyModifiers.Alt);
             Commands[(int)UserCommands.CameraCarFirst] = new UserCommandKeyInput(0x47, KeyModifiers.Alt);
             Commands[(int)UserCommands.CameraCarLast] = new UserCommandKeyInput(0x4F, KeyModifiers.Alt);
             Commands[(int)UserCommands.CameraCarNext] = new UserCommandKeyInput(0x49, KeyModifiers.Alt);
@@ -500,14 +507,16 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.ControlBellToggle] = new UserCommandKeyInput(0x30, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlBlowerDecrease] = new UserCommandKeyInput(0x31, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlBlowerIncrease] = new UserCommandKeyInput(0x31);
+            Commands[(int)UserCommands.ControlSteamHeatDecrease] = new UserCommandKeyInput(0x20, KeyModifiers.Alt);
+            Commands[(int)UserCommands.ControlSteamHeatIncrease] = new UserCommandKeyInput(0x16, KeyModifiers.Alt);
             Commands[(int)UserCommands.ControlBrakeHoseConnect] = new UserCommandKeyInput(0x2B);
             Commands[(int)UserCommands.ControlBrakeHoseDisconnect] = new UserCommandKeyInput(0x2B, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlCylinderCocks] = new UserCommandKeyInput(0x2E);
             Commands[(int)UserCommands.ControlCylinderCompound] = new UserCommandKeyInput(0x19);
             Commands[(int)UserCommands.ControlDamperDecrease] = new UserCommandKeyInput(0x32, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlDamperIncrease] = new UserCommandKeyInput(0x32);
-            Commands[(int)UserCommands.ControlDieselHelper] = new UserCommandKeyInput(0x15, KeyModifiers.Shift);
-            Commands[(int)UserCommands.ControlDieselPlayer] = new UserCommandKeyInput(0x15);
+            Commands[(int)UserCommands.ControlDieselHelper] = new UserCommandKeyInput(0x15, KeyModifiers.Control);
+            Commands[(int)UserCommands.ControlDieselPlayer] = new UserCommandKeyInput(0x15, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlDoorLeft] = new UserCommandKeyInput(0x10);
             Commands[(int)UserCommands.ControlDoorRight] = new UserCommandKeyInput(0x10, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlDynamicBrakeDecrease] = new UserCommandKeyInput(0x33);
@@ -529,6 +538,7 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.ControlHeadlightDecrease] = new UserCommandKeyInput(0x23, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlHeadlightIncrease] = new UserCommandKeyInput(0x23);
             Commands[(int)UserCommands.ControlHorn] = new UserCommandKeyInput(0x39);
+            Commands[(int)UserCommands.ControlImmediateRefill] = new UserCommandKeyInput(0x14, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlInitializeBrakes] = new UserCommandKeyInput(0x35, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlInjector1] = new UserCommandKeyInput(0x17);
             Commands[(int)UserCommands.ControlInjector1Decrease] = new UserCommandKeyInput(0x25, KeyModifiers.Shift);
@@ -550,8 +560,11 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.ControlSanderToggle] = new UserCommandKeyInput(0x2D, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlThrottleDecrease] = new UserCommandKeyInput(0x1E);
             Commands[(int)UserCommands.ControlThrottleIncrease] = new UserCommandKeyInput(0x20);
+            Commands[(int)UserCommands.ControlThrottleZero] = new UserCommandKeyInput(0x1E, KeyModifiers.Control);
             Commands[(int)UserCommands.ControlTrainBrakeDecrease] = new UserCommandKeyInput(0x27);
             Commands[(int)UserCommands.ControlTrainBrakeIncrease] = new UserCommandKeyInput(0x28);
+            Commands[(int)UserCommands.ControlTrainBrakeZero] = new UserCommandKeyInput(0x27, KeyModifiers.Control);
+            Commands[(int)UserCommands.ControlTroughRefill] = new UserCommandKeyInput(0x15);
             Commands[(int)UserCommands.ControlWiper] = new UserCommandKeyInput(0x2F);
 
             Commands[(int)UserCommands.DebugClockBackwards] = new UserCommandKeyInput(0x0C);
@@ -577,6 +590,7 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.DebugTracks] = new UserCommandKeyInput(0x40, KeyModifiers.Control | KeyModifiers.Alt);
             Commands[(int)UserCommands.DebugWeatherChange] = new UserCommandKeyInput(0x19, KeyModifiers.Alt);
 
+            Commands[(int)UserCommands.DisplayTrainListWindow] = new UserCommandKeyInput(0x43, KeyModifiers.Alt);
             Commands[(int)UserCommands.DisplayBasicHUDToggle] = new UserCommandKeyInput(0x3F, KeyModifiers.Alt);
             Commands[(int)UserCommands.DisplayCarLabels] = new UserCommandModifiableKeyInput(0x41, Commands[(int)UserCommands.DisplayNextWindowTab]);
             Commands[(int)UserCommands.DisplayCompassWindow] = new UserCommandKeyInput(0x0B);

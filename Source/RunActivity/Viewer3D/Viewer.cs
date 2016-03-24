@@ -17,6 +17,22 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using GNU.Gettext;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
+using Orts.Common;
+using Orts.Formats.Msts;
+using Orts.MultiPlayer;
+using Orts.Simulation;
+using Orts.Simulation.AIs;
+using Orts.Simulation.Physics;
+using Orts.Simulation.RollingStocks;
+using Orts.Viewer3D.Popups;
+using Orts.Viewer3D.Processes;
+using Orts.Viewer3D.RollingStock;
+using ORTS.Common;
+using ORTS.Settings;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -24,22 +40,14 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Threading;
-using GNU.Gettext;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using Orts.Formats.Msts;
-using ORTS.Common;
-using ORTS.MultiPlayer;
-using ORTS.Processes;
-using ORTS.Settings;
-using ORTS.Viewer3D.Popups;
-using ORTS.Viewer3D.RollingStock;
+using Event = Orts.Common.Event;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class Viewer
     {
+        public static GettextResourceManager Catalog { get; private set; }
+        public static Random Random { get; private set; }
         // User setups.
         public UserSettings Settings { get; private set; }
         // Multi-threaded processes
@@ -55,7 +63,7 @@ namespace ORTS.Viewer3D
         public SharedShapeManager ShapeManager { get; private set; }
         public Point DisplaySize { get { return RenderProcess.DisplaySize; } }
         // Components
-        public ORTS.Processes.Game Game { get; private set; }
+        public Orts.Viewer3D.Processes.Game Game { get; private set; }
         public Simulator Simulator { get; private set; }
         public World World { get; private set; }
         /// <summary>
@@ -82,13 +90,14 @@ namespace ORTS.Viewer3D
         public TracksDebugWindow TracksDebugWindow { get; private set; } // Control-Alt-F6
         public SignallingDebugWindow SignallingDebugWindow { get; private set; } // Control-Alt-F11 window
         public ComposeMessage ComposeMessageWindow { get; private set; } // ??? window
-        public static GettextResourceManager Catalog { get; private set; } // Localization dictionary
+        public TrainListWindow TrainListWindow { get; private set; } // for switching driven train
         // Route Information
         public TileManager Tiles { get; private set; }
         public TileManager LoTiles { get; private set; }
-        public ENVFile ENVFile { get; private set; }
-        public SIGCFGFile SIGCFG { get; private set; }
-        public TTypeDatFile TrackTypes { get; private set; }
+        public EnvironmentFile ENVFile { get; private set; }
+        public SignalConfigurationFile SIGCFG { get; private set; }
+        public TrackTypesFile TrackTypes { get; private set; }
+        public SpeedpostDatFile SpeedpostDatFile;
         public bool MilepostUnitsMetric { get; private set; }
         // Cameras
         public Camera Camera { get; set; } // Current camera
@@ -138,6 +147,8 @@ namespace ORTS.Viewer3D
         public bool DebugViewerEnabled { get; set; }
         public bool SoundDebugFormEnabled { get; set; }
 
+        public TRPFile TRP; // Track profile file
+
         enum VisibilityState
         {
             Visible,
@@ -158,50 +169,34 @@ namespace ORTS.Viewer3D
         public int CabHeightPixels { get; private set; }
         public int CabYOffsetPixels { get; set; } // Note: Always -ve. Without it, the cab view is fixed to the top of the screen. -ve values pull it up the screen.
 
-        public CommandLog Log { get; set; }
-        public List<ICommand> ReplayCommandList { get; set; }
-        public bool CameraReplaySuspended { get; private set; }
-        public Camera SuspendedCamera { get; private set; }
-
-        /// <summary>
-        /// True if a replay is in progress.
-        /// Used to show some confirmations which are only valuable during replay (e.g. uncouple or resume activity).
-        /// Also used to show the replay countdown in the HUD.
-        /// </summary>
-        public bool IsReplaying
-        {
-            get
-            {
-                if (ReplayCommandList != null)
-                {
-                    return (ReplayCommandList.Count > 0);
-                }
-                return false;
-            }
-        }
+        public CommandLog Log { get { return Simulator.Log; } }
 
         public bool DontLoadNightTextures; // Checkbox set and time of day allows not to load textures
         public bool NightTexturesNotLoaded; // At least one night texture hasn't been loaded
         public long LoadMemoryThreshold; // Above this threshold loader doesn't bulk load night textures
         public bool tryLoadingNightTextures = false;
 
+        public Camera SuspendedCamera { get; private set; }
+
+        UserInputRailDriver RailDriver;
+
         /// <summary>
         /// Finds time of last entry to set ReplayEndsAt and provide the Replay started message.
         /// </summary>
         void InitReplay()
         {
-            if (ReplayCommandList != null)
+            if (Simulator.ReplayCommandList != null)
             {
                 // Get time of last entry
-                int lastEntry = ReplayCommandList.Count - 1;
+                int lastEntry = Simulator.ReplayCommandList.Count - 1;
                 if (lastEntry >= 0)
                 {
-                    double lastTime = ReplayCommandList[lastEntry].Time;
+                    double lastTime = Simulator.ReplayCommandList[lastEntry].Time;
                     Log.ReplayEndsAt = lastTime;
                     double duration = lastTime - Simulator.ClockTime;
                     MessagesWindow.AddMessage(String.Format("Replay started: ending at {0} after {1}",
-                        InfoDisplay.FormattedApproxTime(lastTime),
-                        InfoDisplay.FormattedTime(duration)),
+                        FormatStrings.FormatApproximateTime(lastTime),
+                        FormatStrings.FormatTime(duration)),
                         3.0);
                 }
             }
@@ -213,8 +208,10 @@ namespace ORTS.Viewer3D
         /// <param name="simulator">The <see cref="Simulator"/> with which the viewer runs.</param>
         /// <param name="game">The <see cref="Game"/> with which the viewer runs.</param>
         [CallOnThread("Loader")]
-        public Viewer(Simulator simulator, ORTS.Processes.Game game)
+        public Viewer(Simulator simulator, Orts.Viewer3D.Processes.Game game)
         {
+            Catalog = new GettextResourceManager("RunActivity");
+            Random = new Random();
             Simulator = simulator;
             Game = game;
             Settings = simulator.Settings;
@@ -239,26 +236,53 @@ namespace ORTS.Viewer3D
             string ORfilepath = System.IO.Path.Combine(Simulator.RoutePath, "OpenRails");
             ContentPath = Game.ContentPath;
             Trace.Write(" ENV");
-            ENVFile = new ENVFile(Simulator.RoutePath + @"\ENVFILES\" + Simulator.TRK.Tr_RouteFile.Environment.ENVFileName(Simulator.Season, Simulator.Weather));
+            ENVFile = new EnvironmentFile(Simulator.RoutePath + @"\ENVFILES\" + Simulator.TRK.Tr_RouteFile.Environment.ENVFileName(Simulator.Season, Simulator.WeatherType));
 
             Trace.Write(" SIGCFG");
             if (File.Exists(ORfilepath + @"\sigcfg.dat"))
             {
                 Trace.Write(" SIGCFG_OR");
-                SIGCFG = new SIGCFGFile(ORfilepath + @"\sigcfg.dat");
+                SIGCFG = new SignalConfigurationFile(ORfilepath + @"\sigcfg.dat", true);
             }
             else
             {
                 Trace.Write(" SIGCFG");
-                SIGCFG = new SIGCFGFile(Simulator.RoutePath + @"\sigcfg.dat");
+                SIGCFG = new SignalConfigurationFile(Simulator.RoutePath + @"\sigcfg.dat", false);
             }
 
             Trace.Write(" TTYPE");
-            TrackTypes = new TTypeDatFile(Simulator.RoutePath + @"\TTYPE.DAT");
+            TrackTypes = new TrackTypesFile(Simulator.RoutePath + @"\TTYPE.DAT");
 
             Tiles = new TileManager(Simulator.RoutePath + @"\TILES\", false);
             LoTiles = new TileManager(Simulator.RoutePath + @"\LO_TILES\", true);
             MilepostUnitsMetric = Simulator.TRK.Tr_RouteFile.MilepostUnitsMetric;
+
+            RailDriver = new UserInputRailDriver(Simulator.BasePath);
+
+            Simulator.AllowedSpeedRaised += (object sender, EventArgs e) =>
+            {
+                var train = sender as Train;
+                if (!TrackMonitorWindow.Visible && Simulator.Confirmer != null && train != null)
+                {
+                    var message = Catalog.GetStringFmt("Allowed speed raised to {0}", FormatStrings.FormatSpeedDisplay(train.AllowedMaxSpeedMpS, MilepostUnitsMetric));
+                    Simulator.Confirmer.Message(ConfirmLevel.Information, message);
+                }
+            };
+
+            Simulator.PlayerLocomotiveChanged += PlayerLocomotiveChanged;
+            Simulator.PlayerTrainChanged += PlayerTrainChanged;
+
+            // The speedpost.dat file is needed only to derive the shape names for the temporary speed restriction zones,
+            // so it is opened only in activity mode
+            if (Simulator.ActivityRun != null && Simulator.Activity.Tr_Activity.Tr_Activity_File.ActivityRestrictedSpeedZones != null)
+            {
+                var speedpostDatFile = Simulator.RoutePath + @"\speedpost.dat";
+                if (File.Exists(speedpostDatFile))
+                {
+                    Trace.Write(" SPEEDPOST");
+                    SpeedpostDatFile = new SpeedpostDatFile(Simulator.RoutePath + @"\speedpost.dat", Simulator.RoutePath + @"\shapes\");
+                }
+            }
 
             Initialize();
         }
@@ -338,8 +362,6 @@ namespace ORTS.Viewer3D
             MaterialManager = new SharedMaterialManager(this);
             ShapeManager = new SharedShapeManager(this);
 
-            Catalog = new GettextResourceManager("RunActivity");
-
             WindowManager = new WindowManager(this);
             MessagesWindow = new MessagesWindow(WindowManager);
             NoticeWindow = new NoticeWindow(WindowManager);
@@ -359,15 +381,22 @@ namespace ORTS.Viewer3D
             TracksDebugWindow = new TracksDebugWindow(WindowManager);
             SignallingDebugWindow = new SignallingDebugWindow(WindowManager);
             ComposeMessageWindow = new ComposeMessage(WindowManager);
+            TrainListWindow = new TrainListWindow(WindowManager);
             WindowManager.Initialize();
 
             InfoDisplay = new InfoDisplay(this);
 
             World = new World(this);
 
-            Simulator.Confirmer = new Confirmer(this, 1.5);
+            Simulator.Confirmer.PlayErrorSound += (s, e) =>
+            {
+                if (World.GameSounds != null)
+                    World.GameSounds.HandleEvent(Event.ControlError);
+            };
+            Simulator.Confirmer.DisplayMessage += (s, e) => MessagesWindow.AddMessage(e.Key, e.Text, e.Duration);
 
-            if (Simulator.PlayerLocomotive.HasFrontCab || Simulator.PlayerLocomotive.HasRearCab) CabCamera.Activate(); 
+            if (Simulator.PlayerLocomotive.HasFront3DCab || Simulator.PlayerLocomotive.HasRear3DCab) ThreeDimCabCamera.Activate();
+            else if (Simulator.PlayerLocomotive.HasFrontCab || Simulator.PlayerLocomotive.HasRearCab) CabCamera.Activate(); 
             else CameraActivate();
 
             // Prepare the world to be loaded and then load it from the correct thread for debugging/tracing purposes.
@@ -420,10 +449,10 @@ namespace ORTS.Viewer3D
                 ToggleCylinderCompoundCommand.Receiver = (MSTSSteamLocomotive)PlayerLocomotive;
                 FireShovelfullCommand.Receiver = (MSTSSteamLocomotive)PlayerLocomotive;
             }
-            if (PlayerLocomotive is MSTSElectricLocomotive)
-            {
-                PantographCommand.Receiver = (MSTSElectricLocomotive)PlayerLocomotive;
-            }
+
+            PantographCommand.Receiver = (MSTSLocomotive)PlayerLocomotive;
+
+            ImmediateRefillCommand.Receiver = (MSTSLocomotiveViewer)PlayerLocomotiveViewer;
             RefillCommand.Receiver = (MSTSLocomotiveViewer)PlayerLocomotiveViewer;
             ToggleOdometerCommand.Receiver = (MSTSLocomotive)PlayerLocomotive;
             ResetOdometerCommand.Receiver = (MSTSLocomotive)PlayerLocomotive;
@@ -447,7 +476,6 @@ namespace ORTS.Viewer3D
             ActivityCommand.Receiver = ActivityWindow;  // and therefore shared by all sub-classes
             UseCameraCommand.Receiver = this;
             MoveCameraCommand.Receiver = this;
-            SaveCommand.Receiver = this;
         }
 
         public void ChangeToPreviousFreeRoamCamera()
@@ -550,12 +578,26 @@ namespace ORTS.Viewer3D
             }
 
             Simulator.Update(elapsedTime.ClockSeconds);
+            if (MPManager.IsMultiPlayer())
+            {
+                MPManager.Instance().PreUpdate();
+                //get key strokes and determine if some messages should be sent
+                MultiPlayerViewer.HandleUserInput();
+                MPManager.Instance().Update(Simulator.GameTime);
+            }
+
+            RailDriver.Update(PlayerLocomotive);
             HandleUserInput(elapsedTime);
             UserInput.Handled();
 
-            if (ReplayCommandList != null)
+            // This has to be done also for stopped trains
+            var cars = World.Trains.Cars;
+            foreach (var car in cars)
+                car.Value.UpdateSoundPosition();
+
+            if (Simulator.ReplayCommandList != null)
             {
-                Log.Update(ReplayCommandList);
+                Log.Update(Simulator.ReplayCommandList);
 
                 if (Log.PauseState == ReplayPauseState.Due)
                 {
@@ -591,7 +633,11 @@ namespace ORTS.Viewer3D
 
                 if (Camera.AttachedCar != null) ViewingPlayer = Camera.AttachedCar.Train == Simulator.PlayerLocomotive.Train;
 
-                if ((Simulator.PlayerLocomotive.HasFrontCab || Simulator.PlayerLocomotive.HasRearCab) && ViewingPlayer)
+                if (Simulator.PlayerLocomotive.HasFront3DCab || Simulator.PlayerLocomotive.HasRear3DCab && ViewingPlayer)
+                {
+                    ThreeDimCabCamera.Activate();
+                }
+                else if ((Simulator.PlayerLocomotive.HasFrontCab || Simulator.PlayerLocomotive.HasRearCab) && ViewingPlayer)
                 {
                     CabCamera.Activate();
                 }
@@ -691,6 +737,7 @@ namespace ORTS.Viewer3D
             if (UserInput.IsPressed(UserCommands.DebugTracks)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) TracksDebugWindow.TabAction(); else TracksDebugWindow.Visible = !TracksDebugWindow.Visible;
             if (UserInput.IsPressed(UserCommands.DebugSignalling)) if (UserInput.IsDown(UserCommands.DisplayNextWindowTab)) SignallingDebugWindow.TabAction(); else SignallingDebugWindow.Visible = !SignallingDebugWindow.Visible;
             if (UserInput.IsPressed(UserCommands.DisplayBasicHUDToggle)) HUDWindow.ToggleBasicHUD();
+            if (UserInput.IsPressed(UserCommands.DisplayTrainListWindow)) TrainListWindow.Visible = !TrainListWindow.Visible;
 
 
             if (UserInput.IsPressed(UserCommands.GameChangeCab))
@@ -713,6 +760,10 @@ namespace ORTS.Viewer3D
                 {
                     new UseCabCameraCommand(Log);
                 }
+                else if (ThreeDimCabCamera.IsAvailable)
+                {
+                    new Use3DCabCameraCommand(Log);
+                }
                 else
                 {
                     Simulator.Confirmer.Warning(Viewer.Catalog.GetString("Cab view not available"));
@@ -720,7 +771,7 @@ namespace ORTS.Viewer3D
             }
             if (UserInput.IsPressed(UserCommands.CameraThreeDimensionalCab))
             {
-                if (this.ThreeDimCabCamera.IsAvailable)
+                if (ThreeDimCabCamera.IsAvailable)
                 {
                     new Use3DCabCameraCommand(Log);
                 }
@@ -749,12 +800,6 @@ namespace ORTS.Viewer3D
                 Settings.Save("CarVibratingLevel");
             }
 
-            if (UserInput.IsPressed(UserCommands.CameraCabRotate))
-            {
-                Simulator.CabRotating = (Simulator.CabRotating + 1) % 4; //cab rotation can be shared by cab and land, 1 means cab rotate 1/4, land rotate 3/4
-                if (Simulator.Confirmer != null && Simulator.CabRotating != 0) Simulator.Confirmer.Message(ConfirmLevel.Information, Catalog.GetStringFmt("Rotating cab {0}/4, rotating land {1}/4", Simulator.CabRotating, (4 - Simulator.CabRotating)));
-                else if (Simulator.Confirmer != null) Simulator.Confirmer.Message(ConfirmLevel.Information, Catalog.GetString("Will not rotate cab and land"));
-            }
             //hit 9 key, get back to player train
             if (UserInput.IsPressed(UserCommands.CameraJumpBackPlayer))
             {
@@ -893,8 +938,22 @@ namespace ORTS.Viewer3D
                 if (SelectedTrain != Program.DebugViewer.PickedTrain)
                 {
                     SelectedTrain = Program.DebugViewer.PickedTrain;
+                    Simulator.AI.aiListChanged = true;
 
                     if (SelectedTrain.Cars == null || SelectedTrain.Cars.Count == 0) SelectedTrain = PlayerTrain;
+
+                    CameraActivate();
+                }
+            }
+
+            //in TrainSwitcher, when one clicks a train, Viewer will jump to see that train
+            if (Simulator.TrainSwitcher.ClickedTrainFromList == true)
+            {
+                Simulator.TrainSwitcher.ClickedTrainFromList = false;
+                if (SelectedTrain != Simulator.TrainSwitcher.PickedTrainFromList && SelectedTrain.Cars != null || SelectedTrain.Cars.Count != 0)
+                {
+                    SelectedTrain = Simulator.TrainSwitcher.PickedTrainFromList;
+                    Simulator.AI.aiListChanged = true;
 
                     CameraActivate();
                 }
@@ -977,11 +1036,11 @@ namespace ORTS.Viewer3D
         /// </summary>
         public void CheckReplaying()
         {
-            if (IsReplaying)
+            if (Simulator.IsReplaying)
             {
-                if (!CameraReplaySuspended)
+                if (!Log.CameraReplaySuspended)
                 {
-                    CameraReplaySuspended = true;
+                    Log.CameraReplaySuspended = true;
                     SuspendedCamera = Camera;
                     Simulator.Confirmer.Confirm(CabControl.Replay, CabSetting.Warn1);
                 }
@@ -993,7 +1052,7 @@ namespace ORTS.Viewer3D
         /// </summary>
         public void ResumeReplaying()
         {
-            CameraReplaySuspended = false;
+            Log.CameraReplaySuspended = false;
             if (SuspendedCamera != null)
                 SuspendedCamera.Activate();
         }
@@ -1014,12 +1073,25 @@ namespace ORTS.Viewer3D
             Simulator.Confirmer.Confirm(CabControl.ChangeCab, CabSetting.On);
         }
 
-        // change reference to player train when switching train in Timetable mode
-        public void ChangeTrain(Train oldTrain, Train newTrain)
+        /// <summary>
+        /// Called when switching player train
+        /// </summary>
+        void PlayerLocomotiveChanged(object sender, EventArgs e)
         {
-            if (SelectedTrain == oldTrain)
+            PlayerLocomotiveViewer = World.Trains.GetViewer(Simulator.PlayerLocomotive);
+            CabCamera.Activate(); // If you need anything else here the cameras should check for it.
+            SetCommandReceivers();
+            ThreeDimCabCamera.ChangeCab(Simulator.PlayerLocomotive);
+            HeadOutForwardCamera.ChangeCab(Simulator.PlayerLocomotive);
+            HeadOutBackCamera.ChangeCab(Simulator.PlayerLocomotive);
+        }
+
+        // change reference to player train when switching train in Timetable mode
+        void PlayerTrainChanged(object sender, Simulator.PlayerTrainChangedEventArgs e)
+        {
+            if (SelectedTrain == e.OldTrain)
             {
-                SelectedTrain = newTrain;
+                SelectedTrain = e.NewTrain;
             }
         }
 
@@ -1033,6 +1105,7 @@ namespace ORTS.Viewer3D
         internal void Terminate()
         {
             InfoDisplay.Terminate();
+            RailDriver.Shutdown();
         }
 
         private int trainCount;
@@ -1045,7 +1118,7 @@ namespace ORTS.Viewer3D
                 {
                     if (t == null || t.Cars == null || t.Cars.Count == 0) continue;
                     var d = WorldLocation.GetDistanceSquared(t.RearTDBTraveller.WorldLocation, PlayerTrain.RearTDBTraveller.WorldLocation);
-                    users.Add(d + Program.Random.NextDouble(), t);
+                    users.Add(d + Viewer.Random.NextDouble(), t);
                 }
                 trainCount++;
                 if (trainCount >= users.Count) trainCount = 0;
@@ -1061,6 +1134,7 @@ namespace ORTS.Viewer3D
             {
                 SelectedTrain = PlayerTrain;
             }
+            Simulator.AI.aiListChanged = true;
             CameraActivate();
         }
 

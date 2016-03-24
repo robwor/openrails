@@ -19,8 +19,9 @@
 
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Viewer3D.Common;
+using Orts.Viewer3D.Popups;
 using ORTS.Common;
-using ORTS.Viewer3D.Popups;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -28,7 +29,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     [CallOnThread("Loader")]
     public class SharedTextureManager
@@ -78,7 +79,7 @@ namespace ORTS.Viewer3D
                         }
                         else if (File.Exists(path))
                         {
-                            texture = Orts.Formats.Msts.ACEFile.Texture2DFromFile(GraphicsDevice, path);
+                            texture = Orts.Formats.Msts.AceFile.Texture2DFromFile(GraphicsDevice, path);
                         }
                         else
                             return defaultTexture;
@@ -118,7 +119,7 @@ namespace ORTS.Viewer3D
             var ext = Path.GetExtension(path);
 
             if (ext == ".ace")
-                return Orts.Formats.Msts.ACEFile.Texture2DFromFile(graphicsDevice, path);
+                return Orts.Formats.Msts.AceFile.Texture2DFromFile(graphicsDevice, path);
 
             using (var stream = File.OpenRead(path))
             {
@@ -162,7 +163,7 @@ namespace ORTS.Viewer3D
         [CallOnThread("Updater")]
         public string GetStatus()
         {
-            return Viewer.Catalog.GetStringFmt("{0:F0} textures", Textures.Keys.Count);
+            return Viewer.Catalog.GetPluralStringFmt("{0:F0} texture", "{0:F0} textures", Textures.Keys.Count);
         }
     }
 
@@ -203,7 +204,7 @@ namespace ORTS.Viewer3D
             {
                 try
                 {
-                    SceneryShader.OverlayTexture = Orts.Formats.Msts.ACEFile.Texture2DFromFile(viewer.GraphicsDevice, microtexPath);
+                    SceneryShader.OverlayTexture = Orts.Formats.Msts.AceFile.Texture2DFromFile(viewer.GraphicsDevice, microtexPath);
                 }
                 catch (InvalidDataException error)
                 {
@@ -388,7 +389,7 @@ namespace ORTS.Viewer3D
         [CallOnThread("Updater")]
         public string GetStatus()
         {
-            return Viewer.Catalog.GetStringFmt("{0:F0} materials", Materials.Keys.Count);
+            return Viewer.Catalog.GetPluralStringFmt("{0:F0} material", "{0:F0} materials", Materials.Keys.Count);
         }
 
         public static Color FogColor = new Color(110, 110, 110, 255);
@@ -464,16 +465,16 @@ namespace ORTS.Viewer3D
             // End headlight illumination
             if (Viewer.Settings.UseMSTSEnv == false)
             {
-                SceneryShader.Overcast = Viewer.World.WeatherControl.overcastFactor;
-                SceneryShader.SetFog(Viewer.World.WeatherControl.fogDistance, ref SharedMaterialManager.FogColor);
-                ParticleEmitterShader.SetFog(Viewer.World.WeatherControl.fogDistance, ref SharedMaterialManager.FogColor);
+                SceneryShader.Overcast = Viewer.Simulator.Weather.OvercastFactor;
+                SceneryShader.SetFog(Viewer.Simulator.Weather.FogDistance, ref SharedMaterialManager.FogColor);
+                ParticleEmitterShader.SetFog(Viewer.Simulator.Weather.FogDistance, ref SharedMaterialManager.FogColor);
                 SceneryShader.ViewerPos = Viewer.Camera.XnaLocation(Viewer.Camera.CameraWorldLocation);
             }
             else
             {
                 SceneryShader.Overcast = Viewer.World.MSTSSky.mstsskyovercastFactor;
                 SceneryShader.SetFog(Viewer.World.MSTSSky.mstsskyfogDistance, ref SharedMaterialManager.FogColor);
-                ParticleEmitterShader.SetFog(Viewer.World.WeatherControl.fogDistance, ref SharedMaterialManager.FogColor);
+                ParticleEmitterShader.SetFog(Viewer.Simulator.Weather.FogDistance, ref SharedMaterialManager.FogColor);
                 SceneryShader.ViewerPos = Viewer.Camera.XnaLocation(Viewer.Camera.CameraWorldLocation);
             }
         }
@@ -767,6 +768,7 @@ namespace ORTS.Viewer3D
                     ShaderPasses = ShaderPassesFullBright;
                     break;
                 case SceneryMaterialOptions.ShaderVegetation:
+                case SceneryMaterialOptions.ShaderVegetation | SceneryMaterialOptions.ShaderFullBright:
                     shader.CurrentTechnique = shader.Techniques[Viewer.Settings.ShaderModel >= 3 ? "VegetationPS3" : "VegetationPS2"];
                     ShaderPasses = ShaderPassesVegetation;
                     break;

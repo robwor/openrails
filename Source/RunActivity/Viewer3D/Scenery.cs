@@ -51,7 +51,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class SceneryDrawer
     {
@@ -74,9 +74,10 @@ namespace ORTS.Viewer3D
         [CallOnThread("Loader")]
         public void Load()
         {
+            var cancellation = Viewer.LoaderProcess.CancellationToken;
             Viewer.DontLoadNightTextures = (Program.Simulator.Settings.ConditionalLoadOfNightTextures &&
-            ((Viewer.MaterialManager.sunDirection.Y > 0.05f && Program.Simulator.ClockTime%86400 < 43200) ||
-            (Viewer.MaterialManager.sunDirection.Y > 0.15f && Program.Simulator.ClockTime %86400 >= 43200))) ? true : false;            
+            ((Viewer.MaterialManager.sunDirection.Y > 0.05f && Program.Simulator.ClockTime % 86400 < 43200) ||
+            (Viewer.MaterialManager.sunDirection.Y > 0.15f && Program.Simulator.ClockTime % 86400 >= 43200))) ? true : false;
             if (TileX != VisibleTileX || TileZ != VisibleTileZ)
             {
                 TileX = VisibleTileX;
@@ -89,7 +90,7 @@ namespace ORTS.Viewer3D
                 {
                     for (var z = -needed; z <= needed; z++)
                     {
-                        if (Viewer.LoaderProcess.Terminated)
+                        if (cancellation.IsCancellationRequested)
                             break;
                         var tile = worldFiles.FirstOrDefault(t => t.TileX == TileX + x && t.TileZ == TileZ + z);
                         if (tile == null)
@@ -103,7 +104,7 @@ namespace ORTS.Viewer3D
                 WorldFiles = newWorldFiles;
                 Viewer.tryLoadingNightTextures = true; // when Tiles loaded change you can try
             }
-            else if (Viewer.NightTexturesNotLoaded && Program.Simulator.ClockTime%86400 >= 43200 && Viewer.tryLoadingNightTextures)
+            else if (Viewer.NightTexturesNotLoaded && Program.Simulator.ClockTime % 86400 >= 43200 && Viewer.tryLoadingNightTextures)
             {
                 var sunHeight = Viewer.MaterialManager.sunDirection.Y;
                 if (sunHeight < 0.10f && sunHeight > 0.01)
@@ -226,6 +227,8 @@ namespace ORTS.Viewer3D
             TileX = tileX;
             TileZ = tileZ;
 
+            var cancellation = Viewer.LoaderProcess.CancellationToken;
+
             // determine file path to the WFile at the specified tile coordinates
             var WFileName = WorldFileNameFromTileCoordinates(tileX, tileZ);
             var WFilePath = viewer.Simulator.RoutePath + @"\World\" + WFileName;
@@ -239,7 +242,7 @@ namespace ORTS.Viewer3D
             }
 
             // read the world file 
-            var WFile = new WFile(WFilePath);
+            var WFile = new Orts.Formats.Msts.WorldFile(WFilePath);
 
             // create all the individual scenery objects specified in the WFile
             foreach (var worldObject in WFile.Tr_Worldfile)
@@ -248,7 +251,7 @@ namespace ORTS.Viewer3D
                     continue;
 
                 // If the loader has been asked to temrinate, bail out early.
-                if (viewer.LoaderProcess.Terminated)
+                if (cancellation.IsCancellationRequested)
                     break;
 
                 // Get the position of the scenery object into ORTS coordinate space.
@@ -284,7 +287,7 @@ namespace ORTS.Viewer3D
 
                 if (shapeFilePath != null && File.Exists(shapeFilePath + "d"))
                 {
-                    var shape = new SDFile(shapeFilePath + "d");
+                    var shape = new ShapeDescriptorFile(shapeFilePath + "d");
                     if (shape.shape.ESD_Bounding_Box != null)
                     {
                         var min = shape.shape.ESD_Bounding_Box.Min;
@@ -308,14 +311,14 @@ namespace ORTS.Viewer3D
                         // We might not have found the junction node; if so, fall back to the static track shape.
                         if (trJunctionNode != null)
                         {
-                            if (viewer.Simulator.UseSuperElevation > 0) SuperElevation.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath);
+                            if (viewer.Simulator.UseSuperElevation > 0) SuperElevationManager.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath);
                             sceneryObjects.Add(new SwitchTrackShape(viewer, shapeFilePath, worldMatrix, trJunctionNode));
                         }
                         else
                         {
                             //if want to use super elevation, we will generate tracks using dynamic tracks
                             if (viewer.Simulator.UseSuperElevation > 0
-                                && SuperElevation.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath))
+                                && SuperElevationManager.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath))
                             {
                                 //var success = SuperElevation.DecomposeStaticSuperElevation(viewer, dTrackList, trackObj, worldMatrix, TileX, TileZ, shapeFilePath);
                                 //if (success == 0) sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
@@ -339,8 +342,8 @@ namespace ORTS.Viewer3D
                         if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true)
                             Wire.DecomposeDynamicWire(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
                         // Add DyntrackDrawers for individual subsections
-                        if (viewer.Simulator.UseSuperElevation > 0 && SuperElevation.UseSuperElevationDyn(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix))
-                            SuperElevation.DecomposeDynamicSuperElevation(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
+                        if (viewer.Simulator.UseSuperElevation > 0 && SuperElevationManager.UseSuperElevationDyn(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix))
+                            SuperElevationManager.DecomposeDynamicSuperElevation(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
                         else DynamicTrack.Decompose(viewer, dTrackList, (DyntrackObj)worldObject, worldMatrix);
 
                     } // end else if DyntrackObj
@@ -362,10 +365,10 @@ namespace ORTS.Viewer3D
                         sceneryObjects.Add(new LevelCrossingShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (LevelCrossingObj)worldObject));
                     }
                     else if (worldObject.GetType() == typeof(HazardObj))
-					{
-						var h = HazzardShape.CreateHazzard(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (HazardObj)worldObject);
-						if (h != null) sceneryObjects.Add(h);
-					}
+                    {
+                        var h = HazzardShape.CreateHazzard(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, (HazardObj)worldObject);
+                        if (h != null) sceneryObjects.Add(h);
+                    }
                     else if (worldObject.GetType() == typeof(SpeedPostObj))
                     {
                         sceneryObjects.Add(new SpeedPostShape(viewer, shapeFilePath, worldMatrix, (SpeedPostObj)worldObject));
@@ -408,6 +411,29 @@ namespace ORTS.Viewer3D
                 }
             }
 
+            // Check if there are activity restricted speedposts to be loaded
+
+            if (Viewer.Simulator.ActivityRun != null && Viewer.Simulator.Activity.Tr_Activity.Tr_Activity_File.ActivityRestrictedSpeedZones != null)
+            {
+                foreach (TempSpeedPostItem tempSpeedItem in Viewer.Simulator.ActivityRun.TempSpeedPostItems)
+                {
+                    if (tempSpeedItem.WorldPosition.TileX == TileX && tempSpeedItem.WorldPosition.TileZ == TileZ)
+                    {
+                        if (Viewer.SpeedpostDatFile == null)
+                        {
+                            Trace.TraceWarning(String.Format("{0} missing; speed posts for temporary speed restrictions in tile {1} {2} will not be visible.", Viewer.Simulator.RoutePath + @"\speedpost.dat", TileX, TileZ));
+                            break;
+                        }
+                        else
+                        {
+                            sceneryObjects.Add(new StaticShape(viewer,
+                                tempSpeedItem.IsWarning ? Viewer.SpeedpostDatFile.TempSpeedShapeNames[0] : (tempSpeedItem.IsResume ? Viewer.SpeedpostDatFile.TempSpeedShapeNames[2] : Viewer.SpeedpostDatFile.TempSpeedShapeNames[1]),
+                                tempSpeedItem.WorldPosition, ShapeFlags.None));
+                        }
+                    }
+                }
+            }
+
             // Model instancing requires shader model 3 or higher.
             if (Viewer.Settings.ModelInstancing && Viewer.Settings.ShaderModel >= 3)
             {
@@ -443,7 +469,7 @@ namespace ORTS.Viewer3D
                 }
             }
 
-            if (viewer.Simulator.UseSuperElevation > 0) SuperElevation.DecomposeStaticSuperElevation(Viewer, dTrackList, TileX, TileZ);
+            if (viewer.Simulator.UseSuperElevation > 0) SuperElevationManager.DecomposeStaticSuperElevation(Viewer, dTrackList, TileX, TileZ);
             if (Viewer.World.Sounds != null) Viewer.World.Sounds.AddByTile(TileX, TileZ);
         }
 

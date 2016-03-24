@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2014 by the Open Rails project.
+﻿// COPYRIGHT 2014, 2015 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -18,14 +18,13 @@
 using ORTS.Settings;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
 
 namespace ORTS.ContentManager
 {
+    [Serializable]
     public class ContentManager : Content
     {
+        [NonSerialized]
         readonly FolderSettings Settings;
 
         public override ContentType Type { get { return ContentType.Root; } }
@@ -40,8 +39,6 @@ namespace ORTS.ContentManager
 
         public override IEnumerable<Content> Get(ContentType type)
         {
-            var content = new List<Content>();
-
             if (type == ContentType.Package)
             {
                 // TODO: Support OR content folders.
@@ -55,7 +52,7 @@ namespace ORTS.ContentManager
             //        // TODO: Support OR content folders.
             //        var path = Path.Combine(folder.Value, "Routes");
             //        foreach (var route in Directory.GetDirectories(path))
-            //            content.Add(new ContentMSTSRoute(Path.Combine(path, route)));
+            //            yield return new ContentMSTSRoute(Path.Combine(path, route)));
             //    }
             //}
         }

@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2009, 2010, 2011, 2012, 2013, 2014, 2015 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -29,21 +29,16 @@
 // Analyse the data using a spreadsheet and graph with an XY chart.
 
 
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
+using Orts.Simulation.RollingStocks;
 using ORTS.Common;
 using ORTS.Settings;
-using ORTS.Viewer3D.Popups;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 
-
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     /// <summary>
     /// Displays Viewer frame rate and Viewer.Text debug messages in the upper left corner of the screen.
@@ -188,7 +183,7 @@ namespace ORTS.Viewer3D
                     }
                     if (Viewer.Settings.DataLogPhysics)
                     {
-                        Logger.Data(FormattedPreciseTime(Viewer.Simulator.ClockTime));
+                        Logger.Data(FormatStrings.FormatPreciseTime(Viewer.Simulator.ClockTime));
                         Logger.Data(Viewer.PlayerLocomotive.Direction.ToString());
                         Logger.Data(Viewer.PlayerTrain.MUReverserPercent.ToString("F0"));
                         Logger.Data(Viewer.PlayerLocomotive.ThrottlePercent.ToString("F0"));
@@ -196,9 +191,7 @@ namespace ORTS.Viewer3D
                         Logger.Data(Viewer.PlayerLocomotive.BrakeForceN.ToString("F0"));
                         Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).LocomotiveAxle.AxleForceN.ToString("F2"));
                         Logger.Data((Viewer.PlayerLocomotive as MSTSLocomotive).LocomotiveAxle.SlipSpeedPercent.ToString("F1"));
-#if !NEW_SIGNALLING
-                    Logger.Data(TrackMonitorWindow.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
-#else
+
                         switch (Viewer.Settings.DataLogSpeedUnits)
                         {
                             case "route":
@@ -217,7 +210,7 @@ namespace ORTS.Viewer3D
                                 Logger.Data(FormatStrings.FormatSpeed(Viewer.PlayerLocomotive.SpeedMpS, Viewer.MilepostUnitsMetric));
                                 break;
                         }
-#endif
+
                         Logger.Data((Viewer.PlayerLocomotive.DistanceM.ToString("F0")));
                         Logger.Data((Viewer.PlayerLocomotive.GravityForceN.ToString("F0")));
 
@@ -320,79 +313,6 @@ namespace ORTS.Viewer3D
             return memory;
         }
 
-        /// <summary>
-        /// Converts duration in seconds to hours, minutes and integer seconds
-        /// </summary>
-        /// <param name="clockTimeSeconds"></param>
-        /// <returns></returns>
-        public static string FormattedTime(double clockTimeSeconds) //some measure of time so it can be sorted.  Good enuf for now. Might add more later. Okay
-        {
-            int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
-            clockTimeSeconds -= hour * 60.0 * 60.0;
-            int minute = (int)(clockTimeSeconds / 60.0);
-            clockTimeSeconds -= minute * 60.0;
-            int seconds = (int)clockTimeSeconds;
-            // Reset clock before and after midnight
-            if (hour >= 24)
-                hour %= 24;
-            if (hour < 0)
-                hour += 24;
-            if (minute < 0)
-                minute += 60;
-            if (seconds < 0)
-                seconds += 60;
-
-            return string.Format("{0:D2}:{1:D2}:{2:D2}", hour, minute, seconds);
-        }
-
-        /// <summary>
-        /// Converts duration in seconds to hours, minutes and seconds to 2 decimal places.
-        /// </summary>
-        /// <param name="clockTimeSeconds"></param>
-        /// <returns></returns>
-        public static string FormattedPreciseTime(double clockTimeSeconds) //some measure of time so it can be sorted.  Good enuf for now. Might add more later. Okay
-        {
-            int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
-            clockTimeSeconds -= hour * 60.0 * 60.0;
-            int minute = (int)(clockTimeSeconds / 60.0);
-            clockTimeSeconds -= minute * 60.0;
-            double seconds = clockTimeSeconds;
-            // Reset clock before and after midnight
-            if (hour >= 24)
-                hour %= 24;
-            if (hour < 0)
-                hour += 24;
-            if (minute < 0)
-                minute += 60;
-            if (seconds < 0)
-                seconds += 60;
-
-            return string.Format("{0:D2}:{1:D2}:{2:00.00}", hour, minute, seconds);
-        }
-
-
-        /// <summary>
-        /// Converts duration from seconds to hours and minutes (to the nearest minute)
-        /// </summary>
-        /// <param name="clockTimeSeconds"></param>
-        /// <returns></returns>
-        public static string FormattedApproxTime(double clockTimeSeconds)
-        {
-            int hour = (int)(clockTimeSeconds / (60.0 * 60.0));
-            clockTimeSeconds -= hour * 60.0 * 60.0;
-            int minute = (int)((clockTimeSeconds / 60.0) + 0.5);    // + 0.5 to round to nearest minute
-            clockTimeSeconds -= minute * 60.0;
-            // Reset clock before and after midnight
-            if (hour >= 24)
-                hour %= 24;
-            if (hour < 0)
-                hour += 24;
-            if (minute < 0)
-                minute += 60;
-
-            return string.Format("{0:D2}:{1:D2}", hour, minute);
-        }
-
         static void DataLoggerStart(UserSettings settings)
         {
             using (StreamWriter file = File.AppendText(Path.Combine(settings.LoggingPath, "OpenRailsDump.csv")))
@@ -487,8 +407,6 @@ namespace ORTS.Viewer3D
                 }
 #endif
                 file.WriteLine(headerLine);
-
-                file.Close();
             }
         }
 

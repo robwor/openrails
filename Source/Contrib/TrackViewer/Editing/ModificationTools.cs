@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Orts.Simulation;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -196,8 +197,16 @@ namespace ORTS.TrackViewer.Editing
             prevNode.NextMainNode = null;
             prevNode.NextSidingNode = null; // should not be needed
             prevNode.NextSidingTvnIndex = 0;
-            // Since we already know the TVN, simply add a node (meaning removing the end will extend the path. 
-            AddAdditionalNode(prevNode, prevNode.NextMainTvnIndex, true);
+            if (prevNode.NextMainTvnIndex == -1)
+            {
+                AddAdditionalNode(prevNode, true);
+            }
+            else
+            {
+                // Since we already know the TVN, simply add a node (meaning removing the end will extend the path. 
+                AddAdditionalNode(prevNode, prevNode.NextMainTvnIndex, true);
+
+            }
         }
 
         /// <summary>

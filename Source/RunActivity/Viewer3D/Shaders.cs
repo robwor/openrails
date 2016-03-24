@@ -22,12 +22,12 @@
 
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Viewer3D.Processes;
 using ORTS.Common;
-using ORTS.Processes;
 using System;
 using System.IO;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public abstract class Shader : Effect
     {
@@ -142,6 +142,11 @@ namespace ORTS.Viewer3D
                 shadowMapTextures[i].SetValue(textures[i]);
             }
             shadowMapLimit.SetValue(new Vector4(limits[0], limits.Length > 1 ? limits[1] : 0, limits.Length > 2 ? limits[2] : 0, limits.Length > 3 ? limits[3] : 0));
+        }
+
+        public void ClearShadowMap()
+        {
+            shadowMapLimit.SetValue(Vector4.Zero);
         }
 
         public float ZBias { get { return _zBias_Lighting.X; } set { _zBias_Lighting.X = value; zBias_Lighting.SetValue(_zBias_Lighting); } }

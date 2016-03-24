@@ -18,10 +18,13 @@
 // This file is the responsibility of the 3D & Environment Team. 
 
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Simulation;
+using Orts.Simulation.Physics;
+using Orts.Simulation.Timetables;
 using ORTS.Common;
 using System;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class NextStationWindow : Window
     {
@@ -115,7 +118,7 @@ namespace ORTS.Viewer3D.Popups
 
             if (updateFull)
             {
-                CurrentTime.Text = InfoDisplay.FormattedTime(Owner.Viewer.Simulator.ClockTime);
+                CurrentTime.Text = FormatStrings.FormatTime(Owner.Viewer.Simulator.ClockTime);
                 Activity act = Owner.Viewer.Simulator.ActivityRun;
                 Train playerTrain = Owner.Viewer.Simulator.PlayerLocomotive.Train;
                 if (playerTrain.Delay.HasValue)
@@ -134,7 +137,7 @@ namespace ORTS.Viewer3D.Popups
                 ActivityTaskPassengerStopAt Current = null;
 
                 // timetable information
-                if (playerTrain.CheckStations)
+                if (playerTrain.CheckStations || (!Owner.Viewer.Simulator.TimetableMode && playerTrain != Owner.Viewer.Simulator.OriginalPlayerTrain))
                 {
                     // train name
                     StationPlatform.Text = String.Concat(playerTrain.Name.Substring(0, Math.Min(playerTrain.Name.Length, 20)));
@@ -262,7 +265,7 @@ namespace ORTS.Viewer3D.Popups
                 }
 
                 // activity information
-                if (act != null)
+                if (act != null && playerTrain == Owner.Viewer.Simulator.OriginalPlayerTrain)
                 {
                     Current = act.Current == null ? act.Last as ActivityTaskPassengerStopAt : act.Current as ActivityTaskPassengerStopAt;
 

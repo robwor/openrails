@@ -47,14 +47,14 @@ namespace ORTS.TrackViewer.Editing
         public TrainpathNode CurrentMainNode { get; private set; }
 
         private TrackDB trackDB;
-        private TSectionDatFile tsectionDat;
+        private TrackSectionsFile tsectionDat;
         internal ColorScheme colorSchemeSiding { get; set; }
         internal ColorScheme colorSchemeMain { get; set; }
 
         /// <summary>
         /// Constructor
         /// </summary>
-        public DrawPath (TrackDB trackDB, TSectionDatFile tsectionDat)
+        public DrawPath (TrackDB trackDB, TrackSectionsFile tsectionDat)
         {
             this.trackDB = trackDB;
             this.tsectionDat = tsectionDat;
@@ -295,7 +295,7 @@ namespace ORTS.TrackViewer.Editing
                 }
                 if (nextVectorNode != null)
                 {
-                    // Draw from a current mid-point node to next mid-point node. Not sure if this ever happens
+                    // Draw from a current vector node to the next vector node, e.g. for multiple wait points 
                     if (currentVectorNode.IsEarlierOnTrackThan(nextVectorNode))
                     {   // from current to next is in the direction of the vector node
                         tvsiStart = currentVectorNode.TrackVectorSectionIndex;

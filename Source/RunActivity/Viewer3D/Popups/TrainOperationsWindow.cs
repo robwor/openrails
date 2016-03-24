@@ -19,11 +19,13 @@
 
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Simulation.Physics;
+using Orts.Simulation.RollingStocks;
 using ORTS.Common;
 using System;
 using System.Linq;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class TrainOperationsWindow : Window
     {
@@ -31,6 +33,7 @@ namespace ORTS.Viewer3D.Popups
         internal static Texture2D CouplerTexture;
         Train PlayerTrain;
         int LastPlayerTrainCars;
+        bool LastPlayerLocomotiveFlippedState;
 
         public TrainOperationsWindow(WindowManager owner)
             : base(owner, Window.DecorationSize.X + owner.TextFontDefault.Height * 37, Window.DecorationSize.Y + CarListPadding + owner.TextFontDefault.Height * 2, Viewer.Catalog.GetString("Train Operations"))
@@ -58,9 +61,9 @@ namespace ORTS.Viewer3D.Popups
                 {
                     var carLabel = new TrainOperationsLabel(textHeight * 6, textHeight, Owner.Viewer, car, carPosition, LabelAlignment.Center);
                     carLabel.Click += new Action<Control, Point>(carLabel_Click);
-#if NEW_SIGNALLING
+
                     if (car == PlayerTrain.LeadLocomotive) carLabel.Color = Color.Red;
-#endif
+
                     scrollbox.Add(carLabel);
                     if (car != PlayerTrain.Cars.Last())
                         scrollbox.Add(new TrainOperationsCoupler(0, 0, textHeight, Owner.Viewer, car, carPosition));
@@ -81,10 +84,12 @@ namespace ORTS.Viewer3D.Popups
 
             if (updateFull)
             {
-                if ((PlayerTrain != Owner.Viewer.PlayerTrain) || (Owner.Viewer.PlayerTrain.Cars.Count != LastPlayerTrainCars))
+                if (PlayerTrain != Owner.Viewer.PlayerTrain || Owner.Viewer.PlayerTrain.Cars.Count != LastPlayerTrainCars || (Owner.Viewer.PlayerLocomotive != null &&
+                    LastPlayerLocomotiveFlippedState != Owner.Viewer.PlayerLocomotive.Flipped))
                 {
                     PlayerTrain = Owner.Viewer.PlayerTrain;
                     LastPlayerTrainCars = Owner.Viewer.PlayerTrain.Cars.Count;
+                    if (Owner.Viewer.PlayerLocomotive != null) LastPlayerLocomotiveFlippedState = Owner.Viewer.PlayerLocomotive.Flipped;
                     Layout();
                 }
             }

@@ -16,12 +16,11 @@
 // along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using Orts.Formats.Msts;
+using Orts.Parsers.OR;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
-using System.Text;
 
 namespace ORTS.ContentManager.Models
 {
@@ -31,7 +30,7 @@ namespace ORTS.ContentManager.Models
         public readonly string Description;
         public readonly string Briefing;
 
-        public readonly string PlayerService;
+        public readonly IEnumerable<string> PlayerServices;
         public readonly IEnumerable<string> Services;
 
         public Activity(Content content)
@@ -39,16 +38,34 @@ namespace ORTS.ContentManager.Models
             Debug.Assert(content.Type == ContentType.Activity);
             if (System.IO.Path.GetExtension(content.PathName).Equals(".act", StringComparison.OrdinalIgnoreCase))
             {
-                var file = new ACTFile(content.PathName);
+                var file = new ActivityFile(content.PathName);
                 Name = file.Tr_Activity.Tr_Activity_Header.Name;
                 Description = file.Tr_Activity.Tr_Activity_Header.Description;
                 Briefing = file.Tr_Activity.Tr_Activity_Header.Briefing;
-                PlayerService = String.Format("Player|{0}", file.Tr_Activity.Tr_Activity_File.Player_Service_Definition.Name);
+                PlayerServices = new[] { String.Format("Player|{0}", file.Tr_Activity.Tr_Activity_File.Player_Service_Definition.Name) };
                 if (file.Tr_Activity.Tr_Activity_File.Traffic_Definition != null)
-                    Services = from service in file.Tr_Activity.Tr_Activity_File.Traffic_Definition.ServiceDefinitionList
-                               select String.Format("AI|{0}|{1}", service.Name, file.Tr_Activity.Tr_Activity_File.Traffic_Definition.Name);
+                    Services = file.Tr_Activity.Tr_Activity_File.Traffic_Definition.ServiceDefinitionList.Select((service, index) =>
+                        String.Format("AI|{0}|{1}|{2}", service.Name, file.Tr_Activity.Tr_Activity_File.Traffic_Definition.Name, index)
+                    );
                 else
                     Services = new string[0];
+            }
+            else if (System.IO.Path.GetExtension(content.PathName).Equals(".timetable_or", StringComparison.OrdinalIgnoreCase))
+            {
+                // TODO: Make common timetable parser.
+                var file = new TimetableReader(content.PathName);
+                Name = content.Name;
+
+                var services = new List<string>();
+                for (var column = 0; column < file.Strings[0].Length; column++)
+                {
+                    if (String.IsNullOrEmpty(file.Strings[0][column]) || file.Strings[0][column].StartsWith("#"))
+                        continue;
+
+                    services.Add(file.Strings[0][column]);
+                }
+                PlayerServices = services;
+                Services = new string[0];
             }
         }
     }

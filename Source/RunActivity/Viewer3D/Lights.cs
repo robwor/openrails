@@ -26,16 +26,16 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Orts.Formats.Msts;
-using Orts.Parsers.Msts;
+using Orts.Simulation.Physics;
+using Orts.Simulation.RollingStocks;
+using Orts.Viewer3D.Processes;
 using ORTS.Common;
-using ORTS.Processes;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class LightViewer
     {
@@ -226,8 +226,8 @@ namespace ORTS.Viewer3D
 			var newPenalty = mstsLocomotive != null && mstsLocomotive.TrainBrakeController.EmergencyBraking;
             // Control
             var newCarIsPlayer = (Car.Train != null && Car.Train == Viewer.PlayerTrain) || (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.REMOTE);
-            // Service
-            var newCarInService = Car.Train != null;
+            // Service - if a player or AI train, then will considered to be in servie, loose consists will not be considered to be in service.
+            var newCarInService = (Car.Train != null && Car.Train == Viewer.PlayerTrain) || (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.REMOTE) || (Car.Train != null && Car.Train.TrainType == Train.TRAINTYPE.AI);
             // Time of day
             bool newIsDay = false;
             if (Viewer.Settings.UseMSTSEnv == false)
@@ -235,7 +235,7 @@ namespace ORTS.Viewer3D
             else
                 newIsDay = Viewer.World.MSTSSky.mstsskysolarDirection.Y > 0;
             // Weather
-            var newWeather = Viewer.Simulator.Weather;
+            var newWeather = Viewer.Simulator.WeatherType;
             // Coupling
             var newCarCoupledFront = Car.Train != null && (Car.Train.Cars.Count > 1) && ((Car.Flipped ? Car.Train.LastCar : Car.Train.FirstCar) != Car);
             var newCarCoupledRear = Car.Train != null && (Car.Train.Cars.Count > 1) && ((Car.Flipped ? Car.Train.FirstCar : Car.Train.LastCar) != Car);
@@ -307,6 +307,7 @@ namespace ORTS.Viewer3D
         protected int StateCount;
         protected float StateTime;
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2214:DoNotCallOverridableMethodsInConstructors")]
         public LightPrimitive(Light light)
         {
             Light = light;

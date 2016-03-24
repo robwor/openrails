@@ -17,15 +17,17 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using Orts.Simulation;
+using Orts.Simulation.RollingStocks;
+using Orts.Viewer3D.RollingStock;
+using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using ORTS.Common;
-using ORTS.Viewer3D.RollingStock;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class TrainDrawer
     {
@@ -41,11 +43,20 @@ namespace ORTS.Viewer3D
         public TrainDrawer(Viewer viewer)
         {
             Viewer = viewer;
+            Viewer.Simulator.QueryCarViewerLoaded += Simulator_QueryCarViewerLoaded;
+        }
+
+        void Simulator_QueryCarViewerLoaded(object sender, Simulator.QueryCarViewerLoadedEventArgs e)
+        {
+            var cars = Cars;
+            if (cars.ContainsKey(e.Car))
+                e.Loaded = true;
         }
 
         [CallOnThread("Loader")]
         public void Load()
         {
+            var cancellation = Viewer.LoaderProcess.CancellationToken;
             var visibleCars = VisibleCars;
             var cars = Cars;
             if (visibleCars.Any(c => !cars.ContainsKey(c)) || cars.Keys.Any(c => !visibleCars.Contains(c)))
@@ -53,7 +64,7 @@ namespace ORTS.Viewer3D
                 var newCars = new Dictionary<TrainCar, TrainCarViewer>();
                 foreach (var car in visibleCars)
                 {
-                    if (Viewer.LoaderProcess.Terminated)
+                    if (cancellation.IsCancellationRequested)
                         break;
                     try
 					{

@@ -18,7 +18,7 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>..\..\..\..\Program\</OutputPath>
-    <DefineConstants>DEBUG;TRACE;WINDOWS;NEW_SIGNALLING;ACTIVITY_EDITOR</DefineConstants>
+    <DefineConstants>TRACE;DEBUG;WINDOWS;ACTIVITY_EDITOR</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <PlatformTarget>x86</PlatformTarget>
@@ -27,7 +27,7 @@
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>..\..\..\..\Program\</OutputPath>
-    <DefineConstants>TRACE;WINDOWS;NEW_SIGNALLING;ACTIVITY_EDITOR</DefineConstants>
+    <DefineConstants>TRACE;WINDOWS;ACTIVITY_EDITOR</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <PlatformTarget>x86</PlatformTarget>
@@ -374,6 +374,10 @@
     <ProjectReference Include="..\..\..\Orts.Formats.Msts\Orts.Formats.Msts.csproj">
       <Project>{570709fa-0c8a-4b1d-ba2d-d9455afd9b5c}</Project>
       <Name>Orts.Formats.Msts</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\..\Orts.Formats.OR\Orts.Formats.OR.csproj">
+      <Project>{0d8d312b-2c02-4b77-a795-566394a9db95}</Project>
+      <Name>Orts.Formats.OR</Name>
     </ProjectReference>
     <ProjectReference Include="..\..\..\Orts.Parsers.Msts\Orts.Parsers.Msts.csproj">
       <Project>{8a84696c-3559-49b8-b27f-bb6932d8a1c6}</Project>

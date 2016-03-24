@@ -17,11 +17,9 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
-using System;
-using System.IO;
 using System.Threading;
 
-namespace ORTS
+namespace Orts.Processes
 {
     public class ProcessState
     {

@@ -23,13 +23,17 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Orts.Formats.Msts;
+using Orts.Simulation.Signalling;
+using Orts.Viewer3D.Common;
 using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using Event = Orts.Common.Event;
+using Events = Orts.Common.Events;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class SignalShape : PoseableShape
     {

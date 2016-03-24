@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2010, 2011, 2012, 2013, 2014 by the Open Rails project.
+﻿// COPYRIGHT 2010, 2011, 2012, 2013, 2014, 2015 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -21,14 +21,14 @@
 // Note:  the SBR classes are more general in that they are capable of reading
 //        both unicode and binary compressed data files.
 
+using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Text;
-using Microsoft.Xna.Framework;
 using System.Linq;
+using System.Text;
 
 #region Original STFreader
 #if !NEW_READER
@@ -162,13 +162,13 @@ namespace Orts.Parsers.Msts
     /// </list>
     /// </exception>
     public class STFReader : IDisposable
-	{
+    {
         /// <summary>Open a file, reader the header line, and prepare for STF parsing
         /// </summary>
         /// <param name="filename">Filename of the STF file to be opened and parsed.</param>
         /// <param name="useTree"><para>true - if the consumer is going to use the Tree Property as it's parsing method (MSTS wagons &amp; engines)</para>
         /// <para>false - if Tree is not used which signicantly reduces GC</para></param>
-		public STFReader(string filename, bool useTree)
+        public STFReader(string filename, bool useTree)
         {
             var path = Path.GetDirectoryName(filename);
             if (Directory.Exists(path))
@@ -195,7 +195,7 @@ namespace Orts.Parsers.Msts
         {
             // TODO RESTORE Debug.Assert(inputStream.CanSeek);
             FileName = fileName;
-            streamSTF = new StreamReader(inputStream , encoding);
+            streamSTF = new StreamReader(inputStream, encoding);
             LineNumber = 1;
             if (useTree) tree = new List<string>();
         }
@@ -223,6 +223,8 @@ namespace Orts.Parsers.Msts
             {
                 if (!IsEof(PeekPastWhitespace()))
                     STFException.TraceWarning(this, "Expected end of file");
+                else if (block_depth != 0)
+                    STFException.TraceWarning(this, string.Format("Expected depth 0; got depth {0} at end of file (missing ')'?)", block_depth));
                 streamSTF.Close(); streamSTF = null;
                 if (includeReader != null)
                     includeReader.Dispose();
@@ -285,7 +287,7 @@ namespace Orts.Parsers.Msts
         /// </remarks>
         /// <param name="string_mode">When true normal comment processing is disabled.</param>
         /// <returns>The next {item} from the STF file, any surrounding quotations will be not be returned.</returns>
-        private string ReadItem( bool string_mode)
+        private string ReadItem(bool string_mode)
         {
             #region If StepBackOneItem() has been called then return the previous output from ReadItem() rather than reading a new token
             if (stepbackoneitemFlag)
@@ -395,7 +397,7 @@ namespace Orts.Parsers.Msts
         //        #endregion
         //    } 
         //    #endregion
-            
+
         //    #region Parse next item
         //    string item = "";
         //    for (; ; )
@@ -414,7 +416,7 @@ namespace Orts.Parsers.Msts
 
         //    return item;
         //}
-        
+
         /// <summary>Returns true if the next character is the end of block, or end of file. Consuming the closing ")" all other values are not consumed.
         /// </summary>
         /// <remarks>
@@ -429,6 +431,7 @@ namespace Orts.Parsers.Msts
             if (includeReader != null)
             {
                 var eob = includeReader.EndOfBlock();
+                if (eob) UpdateTreeAndStepBack(")");
                 if (includeReader.Eof)
                 {
                     includeReader.Dispose();
@@ -436,7 +439,6 @@ namespace Orts.Parsers.Msts
                 }
                 else
                 {
-                    if (eob) UpdateTreeAndStepBack(")");
                     return eob;
                 }
             }
@@ -461,8 +463,8 @@ namespace Orts.Parsers.Msts
         /// If we find an immediate close ), then produce a warning, and return without consuming the parenthesis.
         /// </summary>
         public void SkipBlock()
-		{
-			string token = ReadItem(true, false);  // read the leading bracket ( 
+        {
+            string token = ReadItem(true, false);  // read the leading bracket ( 
             if (token == ")")   // just in case we are not where we think we are
             {
                 STFException.TraceWarning(this, "Found a close parenthesis, rather than the expected block of data");
@@ -472,7 +474,7 @@ namespace Orts.Parsers.Msts
             else if (token != "(")
                 throw new STFException(this, "SkipBlock() expected an open block but found a token instead: " + token);
             SkipRestOfBlock();
-		}
+        }
         /// <summary>Skip to the end of this block, ignoring any nested blocks
         /// </summary>
         public void SkipRestOfBlock()
@@ -481,11 +483,11 @@ namespace Orts.Parsers.Msts
             {
                 // Consume the step-back end-of-block
                 stepbackoneitemFlag = false;
-                
+
                 //<CJComment> Following statement commented out until we know why it might be needed.
                 // E.g. "engine ( numwheels ( )" warns of missing number correctly and replaces with default.
                 // However UpdateTreeAndStepBack() then skips the rest of the "engine (" block which is not the required behaviour. </CJComment>
-                
+
                 //UpdateTreeAndStepBack(")");
                 return;
             }
@@ -561,7 +563,7 @@ namespace Orts.Parsers.Msts
         /// <param name="defaultValue">the default value if an unexpected ')' token is found</param>
         /// <returns>The next {constant_item} from the STF file.</returns>
         public uint ReadUInt(uint? defaultValue)
-		{
+        {
             string item = ReadItem();
 
             if ((defaultValue.HasValue) && (item == ")"))
@@ -586,7 +588,7 @@ namespace Orts.Parsers.Msts
         /// <param name="defaultValue">the default value if an unexpected ')' token is found</param>
         /// <returns>The next {constant_item} from the STF file, with the suffix normalized to OR units.</returns>
         public float ReadFloat(UNITS validUnits, float? defaultValue)
-		{
+        {
             string item = ReadItem();
 
             if ((defaultValue.HasValue) && (item == ")"))
@@ -599,7 +601,7 @@ namespace Orts.Parsers.Msts
             // <CJComment> Considered reading ahead to accommodate units written with a space such as "60 kph" as well as "60kph".
             // However, some values (mostly "time" ones) may be followed by text. Therefore that approach cannot be used consistently 
             // and has been abandoned. </CJComment> 
-            
+
             float val;
             double scale = ParseUnitSuffix(ref item, validUnits);
             if (item.Length == 0) return 0.0f;
@@ -632,7 +634,7 @@ namespace Orts.Parsers.Msts
             STFException.TraceWarning(this, "Cannot parse the constant number " + item);
             if (item == ")") StepBackOneItem();
             return defaultValue.GetValueOrDefault(0);
-		}
+        }
 
         /// <summary>Enumeration specifying which units are valid when parsing a numeric constant.
         /// </summary>
@@ -788,7 +790,7 @@ namespace Orts.Parsers.Msts
             /// </summary>            
             RotationalInertia = 1 << 25,
 
-              /// <summary>
+            /// <summary>
             /// Valid Units: Nm/s^2, lbf/mph^2
             /// <para>Scaled to N/m/s^2.</para>
             /// </summary>            
@@ -922,7 +924,7 @@ namespace Orts.Parsers.Msts
                     case "g-us": return 0.133680556f;
                     case "gal": return 0.133680556f;  // US gallons
                     case "gals": return 0.133680556f; // US gallons
-                 }
+                }
             if ((validUnits & UNITS.Time) > 0)
                 switch (suffix)
                 {
@@ -937,7 +939,7 @@ namespace Orts.Parsers.Msts
                 {
                     case "": return 60.0;
                     case "s": return 1;
-                    case "m": return 60; 
+                    case "m": return 60;
                     case "h": return 3600;
                 }
             if ((validUnits & UNITS.TimeDefaultH) > 0)
@@ -947,7 +949,7 @@ namespace Orts.Parsers.Msts
                     case "s": return 1;
                     case "m": return 60;
                     case "h": return 3600;
-                } 
+                }
             if ((validUnits & UNITS.Current) > 0)
                 switch (suffix)
                 {
@@ -961,7 +963,7 @@ namespace Orts.Parsers.Msts
                     case "": return 1.0;
                     case "v": return 1;
                     case "kv": return 1000;
-                } 
+                }
             if ((validUnits & UNITS.MassRateDefaultLBpH) > 0)
                 switch (suffix)
                 {
@@ -980,7 +982,7 @@ namespace Orts.Parsers.Msts
                     case "km/h": return 0.27777778;
                     case "kmph": return 0.27777778;
                     case "kmh": return 0.27777778; // Misspelled unit accepted by MSTS, documented in Richter-Realmuto's 
-                    // "Manual for .eng- and .wag-files of the MS Train Simulator 1.0". and used in Bernina
+                                                   // "Manual for .eng- and .wag-files of the MS Train Simulator 1.0". and used in Bernina
                 }
             if ((validUnits & UNITS.SpeedDefaultMPH) > 0)
                 switch (suffix)
@@ -992,7 +994,7 @@ namespace Orts.Parsers.Msts
                     case "km/h": return 0.27777778;
                     case "kmph": return 0.27777778;
                     case "kmh": return 0.27777778; // Misspelled unit accepted by MSTS, documented in Richter-Realmuto's 
-                    // "Manual for .eng- and .wag-files of the MS Train Simulator 1.0". and used in Bernina
+                                                   // "Manual for .eng- and .wag-files of the MS Train Simulator 1.0". and used in Bernina
                 }
             if ((validUnits & UNITS.Frequency) > 0)
                 switch (suffix)
@@ -1082,7 +1084,7 @@ namespace Orts.Parsers.Msts
                 {
                     case "": return 1.0;
                     case "degc": return 1;
-                    case "degf": return 100.0/180;
+                    case "degf": return 100.0 / 180;
                 }
             if ((validUnits & UNITS.RotationalInertia) > 0)
                 switch (suffix)
@@ -1092,10 +1094,10 @@ namespace Orts.Parsers.Msts
             if ((validUnits & UNITS.ResistanceDavisC) > 0)
                 switch (suffix)
                 {
-                    case "": return 1.0;        
+                    case "": return 1.0;
                     case "Nm/s^2": return 1;
                     case "lbf/mph^2": return 22.42849;  // 1 lbf = 4.4822162, 1 mph = 0.44704 mps +> 4.4822162 / (0.44704 * 0.44704) = 22.42849
-                }            
+                }
 
             STFException.TraceWarning(this, "Found a suffix '" + suffix + "' which could not be parsed as a " + validUnits.ToString() + " unit");
             return 1;
@@ -1106,7 +1108,7 @@ namespace Orts.Parsers.Msts
         /// <param name="defaultValue">the default value if the item is not found in the block.</param>
         /// <returns>The first item inside the STF block.</returns>
         public string ReadStringBlock(string defaultValue)
-		{
+        {
             if (Eof)
             {
                 STFException.TraceWarning(this, "Unexpected end of file");
@@ -1136,14 +1138,14 @@ namespace Orts.Parsers.Msts
             }
             STFException.TraceWarning(this, "Block Not Found - instead found " + s);
             return defaultValue;
-		}
+        }
 
-		/// <summary>Read an hexidecimal encoded number from the STF format '( {int_constant} ... )'
+        /// <summary>Read an hexidecimal encoded number from the STF format '( {int_constant} ... )'
         /// </summary>
         /// <param name="defaultValue">the default value if the constant is not found in the block.</param>
         /// <returns>The STF block with the first {item} converted to a integer constant.</returns>
         public uint ReadHexBlock(uint? defaultValue)
-		{
+        {
             if (Eof)
             {
                 STFException.TraceWarning(this, "Unexpected end of file");
@@ -1165,34 +1167,34 @@ namespace Orts.Parsers.Msts
             return defaultValue.GetValueOrDefault(0);
         }
 
-		/// <summary>Read an integer constant from the STF format '( {int_constant} ... )'
-		/// </summary>
+        /// <summary>Read an integer constant from the STF format '( {int_constant} ... )'
+        /// </summary>
         /// <param name="defaultValue">the default value if the constant is not found in the block.</param>
-		/// <returns>The STF block with the first {item} converted to a integer.</returns>
+        /// <returns>The STF block with the first {item} converted to a integer.</returns>
         public int ReadIntBlock(int? defaultValue)
-		{
-			if (Eof)
-			{
-				STFException.TraceWarning(this, "Unexpected end of file");
-				return defaultValue.GetValueOrDefault(0);
-			}
-			string s = ReadItem();
-			if (s == ")" && defaultValue.HasValue)
-			{
-				StepBackOneItem();
-				return defaultValue.Value;
-			}
-			if (s == "(")
-			{
+        {
+            if (Eof)
+            {
+                STFException.TraceWarning(this, "Unexpected end of file");
+                return defaultValue.GetValueOrDefault(0);
+            }
+            string s = ReadItem();
+            if (s == ")" && defaultValue.HasValue)
+            {
+                StepBackOneItem();
+                return defaultValue.Value;
+            }
+            if (s == "(")
+            {
                 int result = ReadInt(defaultValue);
                 SkipRestOfBlock(); // <CJComment> This call seems poor practice as it discards any tokens _including mistakes_ up to the matching ")". </CJComment>  
-				return result;
-			}
-			STFException.TraceWarning(this, "Block Not Found - instead found " + s);
-			return defaultValue.GetValueOrDefault(0);
-		}
+                return result;
+            }
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
+            return defaultValue.GetValueOrDefault(0);
+        }
 
-		/// <summary>Read an unsigned integer constant from the STF format '( {uint_constant} ... )'
+        /// <summary>Read an unsigned integer constant from the STF format '( {uint_constant} ... )'
         /// </summary>
         /// <param name="defaultValue">the default value if the constant is not found in the block.</param>
         /// <returns>The STF block with the first {item} converted to a unsigned integer.</returns>
@@ -1253,7 +1255,7 @@ namespace Orts.Parsers.Msts
         /// <param name="defaultValue">the default value if the constant is not found in the block.</param>
         /// <returns>The STF block with the first {item} converted to a double precision value.</returns>
         public double ReadDoubleBlock(double? defaultValue)
-		{
+        {
             if (Eof)
             {
                 STFException.TraceWarning(this, "Unexpected end of file");
@@ -1344,36 +1346,36 @@ namespace Orts.Parsers.Msts
             return defaultValue;
         }
 
-		/// <summary>Read a Vector3 object in the STF format '( {X} {Y} ... )'
-		/// </summary>
-		/// <param name="validUnits">Any combination of the UNITS enumeration, to limit the available suffixes to reasonable values.</param>
-		/// <param name="defaultValue">The default vector if any of the values are not specified</param>
-		/// <returns>The STF block as a Vector2</returns>
-		public Vector2 ReadVector2Block(UNITS validUnits, Vector2 defaultValue)
-		{
-			if (Eof)
-			{
-				STFException.TraceWarning(this, "Unexpected end of file");
-				return defaultValue;
-			}
-			string s = ReadItem();
-			if (s == ")")
-			{
-				StepBackOneItem();
-				return defaultValue;
-			}
-			if (s == "(")
-			{
-				defaultValue.X = ReadFloat(validUnits, defaultValue.X);
-				defaultValue.Y = ReadFloat(validUnits, defaultValue.Y);
-				SkipRestOfBlock(); // <CJComment> This call seems poor practice as it discards any tokens _including mistakes_ up to the matching ")". </CJComment>  
-				return defaultValue;
-			}
-			STFException.TraceWarning(this, "Block Not Found - instead found " + s);
-			return defaultValue;
-		}
+        /// <summary>Read a Vector3 object in the STF format '( {X} {Y} ... )'
+        /// </summary>
+        /// <param name="validUnits">Any combination of the UNITS enumeration, to limit the available suffixes to reasonable values.</param>
+        /// <param name="defaultValue">The default vector if any of the values are not specified</param>
+        /// <returns>The STF block as a Vector2</returns>
+        public Vector2 ReadVector2Block(UNITS validUnits, Vector2 defaultValue)
+        {
+            if (Eof)
+            {
+                STFException.TraceWarning(this, "Unexpected end of file");
+                return defaultValue;
+            }
+            string s = ReadItem();
+            if (s == ")")
+            {
+                StepBackOneItem();
+                return defaultValue;
+            }
+            if (s == "(")
+            {
+                defaultValue.X = ReadFloat(validUnits, defaultValue.X);
+                defaultValue.Y = ReadFloat(validUnits, defaultValue.Y);
+                SkipRestOfBlock(); // <CJComment> This call seems poor practice as it discards any tokens _including mistakes_ up to the matching ")". </CJComment>  
+                return defaultValue;
+            }
+            STFException.TraceWarning(this, "Block Not Found - instead found " + s);
+            return defaultValue;
+        }
 
-		/// <summary>Read a Vector4 object in the STF format '( {X} {Y} {Z} {W} ... )'
+        /// <summary>Read a Vector4 object in the STF format '( {X} {Y} {Z} {W} ... )'
         /// </summary>
         /// <param name="validUnits">Any combination of the UNITS enumeration, to limit the available suffixes to reasonable values.</param>
         /// <param name="defaultValue">The default vector if any of the values are not specified</param>
@@ -1523,7 +1525,7 @@ namespace Orts.Parsers.Msts
         /// </summary>
         private string tree_cache;
 
-        private static NumberStyles parseHex = NumberStyles.AllowLeadingWhite|NumberStyles.AllowHexSpecifier|NumberStyles.AllowTrailingWhite;
+        private static NumberStyles parseHex = NumberStyles.AllowLeadingWhite | NumberStyles.AllowHexSpecifier | NumberStyles.AllowTrailingWhite;
         private static NumberStyles parseNum = NumberStyles.AllowLeadingWhite | NumberStyles.AllowLeadingSign | NumberStyles.AllowThousands | NumberStyles.AllowDecimalPoint | NumberStyles.AllowExponent | NumberStyles.AllowTrailingWhite;
         private static IFormatProvider parseNFI = NumberFormatInfo.InvariantInfo;
         #region *** StepBack Variables - It is important that all state variables in this STFReader class have a equivalent in the STEPBACK structure
@@ -1579,7 +1581,7 @@ namespace Orts.Parsers.Msts
             if (c == '\n') ++LineNumber;
             return c;
         }
-        
+
         public void VerifyStartOfBlock()
         {
             MustMatch("(");
@@ -1602,7 +1604,7 @@ namespace Orts.Parsers.Msts
             #region If includeReader exists, then recurse down to get the next token from the included STF file
             if (includeReader != null)
             {
-                string item = includeReader.ReadItem( skip_mode, string_mode);
+                string item = includeReader.ReadItem(skip_mode, string_mode);
                 UpdateTreeAndStepBack(item);
                 if ((!includeReader.Eof) || (item.Length > 0)) return item;
                 includeReader.Dispose();
@@ -1612,7 +1614,7 @@ namespace Orts.Parsers.Msts
 
             int c;
             #region Skip past any leading whitespace characters
-            for (; ; )
+            for (;;)
             {
                 c = ReadChar();
                 if (IsEof(c)) return UpdateTreeAndStepBack("");
@@ -1635,7 +1637,7 @@ namespace Orts.Parsers.Msts
             else if ((!skip_mode && !string_mode) && ((c == '#') || (c == '_')))
             {
                 #region Move on to a whitespace so we can pick up any token starting with a #
-                for (; ; )
+                for (;;)
                 {
                     c = PeekChar();
                     if ((c == '(') || (c == ')')) break;
@@ -1649,7 +1651,7 @@ namespace Orts.Parsers.Msts
                 }
                 #endregion
                 #region Skip the comment item or block
-                string comment = ReadItem( skip_mode, string_mode);
+                string comment = ReadItem(skip_mode, string_mode);
                 if (comment == ")") return comment;
                 if (comment == "(") SkipRestOfBlock();
                 #endregion
@@ -1661,14 +1663,14 @@ namespace Orts.Parsers.Msts
                 {
                     return "#\u00b6";
                 }
-                string item = ReadItem( skip_mode, string_mode);
+                string item = ReadItem(skip_mode, string_mode);
                 return item; // Now move on to the next token after the commented area
             }
             #endregion
             #region Build Quoted Items - including append operations
             else if (c == '"')
             {
-                for (; ; )
+                for (;;)
                 {
                     c = ReadChar();
                     if (IsEof(c))
@@ -1717,7 +1719,7 @@ namespace Orts.Parsers.Msts
             else if (c != -1)
             {
                 itemBuilder.Append((char)c);
-                for (; ; )
+                for (;;)
                 {
                     c = PeekChar();
                     if ((c == '(') || (c == ')')) break;
@@ -1758,7 +1760,10 @@ namespace Orts.Parsers.Msts
                             filename = ReadItem(skip_mode, string_mode);
                             SkipRestOfBlock();
                         }
-                        includeReader = new STFReader(Path.GetDirectoryName(FileName) + @"\" + filename, false);
+                        var includeFileName = Path.GetDirectoryName(FileName) + @"\" + filename;
+                        if (!File.Exists(includeFileName))
+                            STFException.TraceWarning(this, string.Format("'{0}' not found", includeFileName));
+                        includeReader = new STFReader(includeFileName, false);
                         return ReadItem(skip_mode, string_mode); // Which will recurse down when includeReader is tested
                     #endregion
                     #region Process special token - skip and comment
@@ -1779,7 +1784,7 @@ namespace Orts.Parsers.Msts
                             string item = ReadItem(skip_mode, string_mode);
                             return item; // Now move on to the next token after the commented area
                         }
-                    #endregion
+                        #endregion
                 }
             }
 
@@ -1811,7 +1816,7 @@ namespace Orts.Parsers.Msts
             else if (token == ")")
             {
                 if (tree != null)
-                    {
+                {
                     stepback.Tree = new List<string>(tree);
                     if (tree.Count > 0)
                     {
@@ -1832,7 +1837,7 @@ namespace Orts.Parsers.Msts
             return stepback.Item;
         }
         #endregion
-	}
+    }
 
     public class STFException : Exception
     {
@@ -1845,7 +1850,7 @@ namespace Orts.Parsers.Msts
         {
             Trace.TraceInformation("{2} in {0}:line {1}", stf.FileName, stf.LineNumber, message);
         }
-        
+
         public STFException(STFReader stf, string message)
             : base(String.Format("{2} in {0}:line {1}\n", stf.FileName, stf.LineNumber, message))
         {

@@ -130,6 +130,9 @@ namespace ORTS.TrackViewer.UserInterface
             menuStatusShowVectorSection.IsChecked = Properties.Settings.Default.statusShowVectorSections;
             menuStatusShowPATfile.IsChecked = Properties.Settings.Default.statusShowPATfile;
             menuStatusShowTrainpath.IsChecked = Properties.Settings.Default.statusShowTrainpath;
+            menuStatusShowTerrain.IsChecked = Properties.Settings.Default.statusShowTerrain;
+            menuStatusShowSignal.IsChecked = Properties.Settings.Default.statusShowSignal;
+
 
             menuDrawRoads.IsChecked = Properties.Settings.Default.drawRoads;
             menuShowCarSpawners.IsChecked = Properties.Settings.Default.showCarSpawners;
@@ -140,6 +143,11 @@ namespace ORTS.TrackViewer.UserInterface
             menuUseMilesNotMeters.IsChecked = Properties.Settings.Default.useMilesNotMeters;
 
             menuZoomIsCenteredOnMouse.IsChecked = Properties.Settings.Default.zoomIsCenteredOnMouse;
+
+            // Terrain should be off by default. We do not want to burden people with having this load always
+            menuShowTerrain.IsChecked = false;
+            menuShowDMTerrain.IsChecked = false;
+            menuShowPatchLines.IsChecked = false;
 
             UpdateMenuSettings();  // to be sure some other settings are done correctly
 
@@ -162,6 +170,18 @@ namespace ORTS.TrackViewer.UserInterface
             if (menuShowStationNames.IsChecked)
             {
                 menuShowPlatformNames.IsChecked = false;
+            }
+
+            if (menuShowTerrain.IsChecked || menuShowDMTerrain.IsChecked)
+            {
+                menuShowWorldTiles.IsChecked = false;
+                menuShowWorldTiles.IsEnabled = false;
+                menuShowPatchLines.IsEnabled = true;
+            }
+            else
+            {
+                menuShowWorldTiles.IsEnabled = true;
+                menuShowPatchLines.IsEnabled = false;
             }
 
             Properties.Settings.Default.showInset = menuShowInset.IsChecked;
@@ -194,6 +214,8 @@ namespace ORTS.TrackViewer.UserInterface
             Properties.Settings.Default.statusShowVectorSections = menuStatusShowVectorSection.IsChecked;
             Properties.Settings.Default.statusShowPATfile = menuStatusShowPATfile.IsChecked && menuShowPATfile.IsChecked;
             Properties.Settings.Default.statusShowTrainpath = menuStatusShowTrainpath.IsChecked && menuShowTrainpath.IsChecked;
+            Properties.Settings.Default.statusShowTerrain = menuStatusShowTerrain.IsChecked && (menuShowTerrain.IsChecked || menuShowDMTerrain.IsChecked);
+            Properties.Settings.Default.statusShowSignal = menuStatusShowSignal.IsChecked && menuShowSignals.IsChecked;
 
             Properties.Settings.Default.drawRoads = menuDrawRoads.IsChecked;
             Properties.Settings.Default.showCarSpawners = menuShowCarSpawners.IsChecked;
@@ -207,16 +229,20 @@ namespace ORTS.TrackViewer.UserInterface
 
             Properties.Settings.Default.Save();
 
-            DrawColors.SetColoursFromOptions(menuColorTracks.IsChecked, menuShowWorldTiles.IsChecked);
+            DrawColors.SetColoursFromOptions(menuColorTracks.IsChecked, menuShowWorldTiles.IsChecked, menuShowTerrain.IsChecked || menuShowDMTerrain.IsChecked);
 
             menuStatusShowPATfile.IsEnabled = menuShowPATfile.IsChecked;
             menuStatusShowTrainpath.IsEnabled = menuShowTrainpath.IsChecked;
+            menuStatusShowTerrain.IsEnabled = menuShowTerrain.IsChecked || menuShowDMTerrain.IsChecked;
+            menuStatusShowSignal.IsEnabled = menuShowSignals.IsChecked;
+
 
             menuSelectPath.IsEnabled = (trackViewer.CurrentRoute != null);
             menuNewPath.IsEnabled = (trackViewer.CurrentRoute != null);
             menuShowOtherPaths.IsEnabled = (trackViewer.CurrentRoute != null);
             menuSavePath.IsEnabled = (trackViewer.PathEditor != null);
             menuSaveStations.IsEnabled = (trackViewer.PathEditor != null);
+            menuShowChart.IsEnabled = (trackViewer.PathEditor != null);
             menuEnableEditing.IsEnabled = (trackViewer.PathEditor != null);
             menuEditMetadata.IsEnabled = menuEnableEditing.IsChecked;
             menuReversePath.IsEnabled = menuEnableEditing.IsChecked;
@@ -660,6 +686,81 @@ namespace ORTS.TrackViewer.UserInterface
             UpdateMenuSettings();
         }
 
+        #region Terrain
+        /// <summary>
+        /// Toggle whether the terrain is shown or not
+        /// </summary>
+        public void MenuToggleShowTerrain()
+        {
+            menuShowTerrain.IsChecked = !menuShowTerrain.IsChecked;
+            menuShowTerrain_Click(null, null);
+        }
+
+        /// <summary>
+        /// Toggle whether the Distance Mountain terrain is shown or not
+        /// </summary>
+        public void MenuToggleShowDMTerrain()
+        {
+            menuShowDMTerrain.IsChecked = !menuShowDMTerrain.IsChecked;
+            menuShowTerrain_Click(null, null);
+        }
+
+        /// <summary>
+        /// Set whether the terrain is shown or not
+        /// </summary>
+        /// <param name="show">Set to true if you want to show the terrain</param>
+        public void MenuSetShowTerrain(bool show)
+        {
+            menuShowTerrain.IsChecked = show;
+            if (!show)
+            {
+                menuShowPatchLines.IsChecked = false;
+            }
+            menuShowTerrain_Click(null, null);
+        }
+
+        /// <summary>
+        /// Set whether the Distance Mountain terrain is shown or not
+        /// </summary>
+        /// <param name="show">Set to true if you want to show the terrain</param>
+        public void MenuSetShowDMTerrain(bool show)
+        {
+            menuShowDMTerrain.IsChecked = show;
+            menuShowTerrain_Click(null, null);
+        }
+
+        private void menuShowTerrain_Click(object sender, RoutedEventArgs e)
+        {
+            UpdateMenuSettings();
+            bool succeeded = trackViewer.SetTerrainVisibility(menuShowTerrain.IsChecked, menuShowDMTerrain.IsChecked);
+            if (!succeeded)
+            {
+                if (menuShowTerrain.IsChecked == true)
+                {
+                    MenuSetShowTerrain(false);
+                }
+                if (menuShowDMTerrain.IsChecked == true)
+                {
+                    MenuSetShowDMTerrain(false);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Toggle whether the patchlines of the terrain are shown or not
+        /// </summary>
+        public void MenuToggleShowPatchLines()
+        {
+            menuShowPatchLines.IsChecked = !menuShowPatchLines.IsChecked;
+            menuShowPatchLines_Click(null, null);
+        }
+
+        private void menuShowPatchLines_Click(object sender, RoutedEventArgs e)
+        {
+            UpdateMenuSettings();
+            trackViewer.SetPatchLineVisibility(menuShowPatchLines.IsChecked);
+        }
+        #endregion
 
         private void menuSearchTrackNode_Click(object sender, RoutedEventArgs e)
         {
@@ -772,25 +873,6 @@ namespace ORTS.TrackViewer.UserInterface
             trackViewer.PathEditor.EditMetaData();
         }
 
-        private void menuKnownLimitations_Click(object sender, RoutedEventArgs e)
-        {
-            StringBuilder limitations = new StringBuilder();
-            limitations.Append(TrackViewer.catalog.GetString("Currently all intended and planned editor features have been implemented."));
-            limitations.Append("\n");
-            limitations.Append(TrackViewer.catalog.GetString("Documentation is available") + ": http://openrails.org/learn/manual-and-tutorials/ (" +
-                   TrackViewer.catalog.GetString("Right column → OR_Trackviewer") + ")");
-            limitations.Append("\n\n");
-            limitations.Append(TrackViewer.catalog.GetString("Known limitations"));
-            limitations.Append("\n");
-            limitations.Append(TrackViewer.catalog.GetString("* The saved-paths have not been tested with MSTS or ORTS."));
-            limitations.Append("\n");
-            limitations.Append(TrackViewer.catalog.GetString("* Possibly non-standard junctions (> 1 incoming or > 2 outgoing tracks) might not work."));
-            limitations.Append("\n\n");
-            limitations.Append(TrackViewer.catalog.GetString("Feedback is appreciated."));
-            limitations.Append("\n\n");
-            MessageBox.Show(limitations.ToString());
-        }
-
         #region IDisposable
         private bool disposed;
         /// <summary>
@@ -890,6 +972,11 @@ namespace ORTS.TrackViewer.UserInterface
             {
                 otherPathsWindow.Close();
             }
+        }
+
+        private void menuShowChart_Click(object sender, RoutedEventArgs e)
+        {
+            this.trackViewer.ShowPathChart();
         }
 
     }

@@ -1,4 +1,4 @@
-﻿// COPYRIGHT 2011, 2012, 2013 by the Open Rails project.
+﻿// COPYRIGHT 2011, 2012, 2013, 2014, 2015 by the Open Rails project.
 // 
 // This file is part of Open Rails.
 // 
@@ -17,32 +17,29 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Orts.Formats.Msts;
-using Orts.Parsers.Msts;
+using Orts.Simulation;
+using Orts.Simulation.Physics;
+using Orts.Simulation.Signalling;
 using ORTS.Common;
-using ORTS.Viewer3D;
-using ORTS.Viewer3D.Popups;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     [CallOnThread("Updater")]
     public class SignallingDebugWindow : LayeredWindow
     {
 
-#if NEW_SIGNALLING
         public enum DebugWindowSignalAspect
         {
             Clear,
             Warning,
             Stop,
         }
-#endif
 
         const float SignalErrorDistance = 100;
         const float SignalWarningDistance = 500;
@@ -148,11 +145,7 @@ namespace ORTS.Viewer3D.Popups
                             }
                             else if (signalObj != null)
                             {
-#if !NEW_SIGNALLING
-                                if (GetAspect(signalObj.Signal) == TrackMonitorSignalAspect.Stop)
-#else
                                 if (GetAspect(signalObj.Signal) == DebugWindowSignalAspect.Stop)
-#endif
                                 {
                                     signalErrorDistance = objDistance;
                                     break;
@@ -221,16 +214,12 @@ namespace ORTS.Viewer3D.Popups
                             }
                             else if (signalObj != null)
                             {
-#if !NEW_SIGNALLING
-                                primitives.Add(new DispatcherLabel(currentPosition.WorldLocation, GetAspect(signalObj.Signal) == TrackMonitorSignalAspect.Stop ? Color.Red : GetAspect(signalObj.Signal) == TrackMonitorSignalAspect.Warning ? Color.Yellow : Color.White, String.Format("Signal ({0}, {1})", signalObj.Signal.nextSigRef, signalObj.Signal.GetAspect()), Owner.TextFontDefaultOutlined));
-#else
                                 primitives.Add(new DispatcherLabel(currentPosition.WorldLocation,
                                            GetAspect(signalObj.Signal) == DebugWindowSignalAspect.Stop ? Color.Red :
                                                GetAspect(signalObj.Signal) == DebugWindowSignalAspect.Warning ? Color.Yellow :
                                                Color.Green,
                                            String.Format("Signal ({0})", signalObj.Signal.this_sig_lr(MstsSignalFunction.NORMAL)),
                                            Owner.TextFontDefaultOutlined));
-#endif
                             }
 
                             if (objDistance >= switchErrorDistance || objDistance >= signalErrorDistance)
@@ -292,12 +281,6 @@ namespace ORTS.Viewer3D.Popups
             var distance = 0f;
             while (true)
             {
-#if !NEW_SIGNALLING
-                var signal = Owner.Viewer.Simulator.Signals.FindNearestSignal(trackNode);
-                if (signal.GetAspect() == SignalHead.SIGASP.UNKNOWN)
-                    break;
-                var signalDistance = signal.DistanceToSignal(trackNode);
-#else
                 Train.TCPosition thisPosition = new Train.TCPosition();
                 TrackNode tn = trackNode.TN;
                 float offset = trackNode.TrackNodeOffset;
@@ -315,36 +298,23 @@ namespace ORTS.Viewer3D.Popups
                 if (signal.this_sig_lr(MstsSignalFunction.NORMAL) == MstsSignalAspect.UNKNOWN)
                     break;
                 var signalDistance = thisInfo.distance_found;
-#endif
 
                 if (signalDistance > 0)
                 {
+                    var oldDistance = distance;
                     distance += signalDistance;
+                    if (oldDistance == distance || distance >= 10000)
+                        break;
                     trackNode.Move(signalDistance);
                     if (trackNode.TrackNodeIndex != nodeIndex)
                         break;
                     rv.Objects.Add(new TrackSectionSignal() { Distance = distance, Signal = signal });
                 }
-#if !NEW_SIGNALLING
-                // TODO: This is a massive hack because the current signalling code is useless at finding the next signal in the face of changing switches.
-                trackNode.Move(0.001f);
-#endif
             }
             rv.Objects = rv.Objects.OrderBy(tso => tso.Distance).ToList();
             return rv;
         }
 
-#if !NEW_SIGNALLING
-        TrackMonitorSignalAspect GetAspect(Signal signal)
-        {
-            var aspect = signal.GetAspect();
-            if (aspect >= SignalHead.SIGASP.CLEAR_1)
-                return TrackMonitorSignalAspect.Clear;
-            if (aspect >= SignalHead.SIGASP.STOP_AND_PROCEED)
-                return TrackMonitorSignalAspect.Warning;
-            return TrackMonitorSignalAspect.Stop;
-        }
-#else
         static DebugWindowSignalAspect GetAspect(SignalObject signal)
         {
             var aspect = signal.this_sig_lr(MstsSignalFunction.NORMAL);
@@ -355,7 +325,6 @@ namespace ORTS.Viewer3D.Popups
                 return DebugWindowSignalAspect.Warning;
             return DebugWindowSignalAspect.Stop;
         }
-#endif
 
         enum DistanceToType
         {
@@ -389,23 +358,19 @@ namespace ORTS.Viewer3D.Popups
 
         public class TrackSectionSignal : TrackSectionObject
         {
-#if !NEW_SIGNALLING
-            public Signal Signal;
-#else
             public SignalObject Signal;
-#endif
         }
     }
 
     [CallOnThread("Updater")]
     public abstract class DispatcherPrimitive
     {
-        protected static Vector3 Normalize(WorldLocation location, ORTS.Viewer3D.Camera camera)
+        protected static Vector3 Normalize(WorldLocation location, Orts.Viewer3D.Camera camera)
         {
             return new Vector3(location.Location.X + (location.TileX - camera.TileX) * 2048, location.Location.Y, -location.Location.Z - (location.TileZ - camera.TileZ) * 2048);
         }
 
-        protected static Vector3 Project3D(Vector3 position, Viewport viewport, ORTS.Viewer3D.Camera camera)
+        protected static Vector3 Project3D(Vector3 position, Viewport viewport, Orts.Viewer3D.Camera camera)
         {
             return viewport.Project(position, camera.XnaProjection, camera.XnaView, Matrix.Identity);
         }
@@ -415,7 +380,7 @@ namespace ORTS.Viewer3D.Popups
             return new Vector2(position.X, position.Y);
         }
 
-        public abstract void PrepareFrame(List<Rectangle> labels, Viewport viewport, ORTS.Viewer3D.Camera camera);
+        public abstract void PrepareFrame(List<Rectangle> labels, Viewport viewport, Orts.Viewer3D.Camera camera);
 
         [CallOnThread("Render")]
         public abstract void Draw(SpriteBatch spriteBatch);
@@ -442,7 +407,7 @@ namespace ORTS.Viewer3D.Popups
             Width = width;
         }
 
-        public override void PrepareFrame(List<Rectangle> labels, Viewport viewport, ORTS.Viewer3D.Camera camera)
+        public override void PrepareFrame(List<Rectangle> labels, Viewport viewport, Orts.Viewer3D.Camera camera)
         {
             var start2d = Project3D(Normalize(Start, camera), viewport, camera);
             var end2d = Project3D(Normalize(End, camera), viewport, camera);
@@ -490,7 +455,7 @@ namespace ORTS.Viewer3D.Popups
             TextSize = new Vector2(Font.MeasureString(text), Font.Height);
         }
 
-        public override void PrepareFrame(List<Rectangle> labels, Viewport viewport, ORTS.Viewer3D.Camera camera)
+        public override void PrepareFrame(List<Rectangle> labels, Viewport viewport, Orts.Viewer3D.Camera camera)
         {
             var position2D = Project3D(Normalize(Position, camera), viewport, camera);
 

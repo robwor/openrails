@@ -18,7 +18,7 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>..\..\..\Program\</OutputPath>
-    <DefineConstants>DEBUG;TRACE;WINDOWS;NEW_SIGNALLING</DefineConstants>
+    <DefineConstants>TRACE;DEBUG;WINDOWS</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <PlatformTarget>x86</PlatformTarget>
@@ -27,7 +27,7 @@
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>..\..\..\Program\</OutputPath>
-    <DefineConstants>TRACE;WINDOWS;NEW_SIGNALLING</DefineConstants>
+    <DefineConstants>TRACE;WINDOWS</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <PlatformTarget>x86</PlatformTarget>
@@ -43,6 +43,10 @@
     <Reference Include="Microsoft.Xna.Framework, Version=3.1.0.0, Culture=neutral, PublicKeyToken=6d5c3888ef60e27d, processorArchitecture=x86" />
     <Reference Include="Microsoft.Xna.Framework.Game, Version=3.1.0.0, Culture=neutral, PublicKeyToken=6d5c3888ef60e27d, processorArchitecture=x86" />
     <Reference Include="mscorlib" />
+    <Reference Include="Newtonsoft.Json, Version=4.5.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\3rdPartyLibs\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="PresentationCore">
       <RequiredTargetFramework>3.0</RequiredTargetFramework>
     </Reference>
@@ -78,15 +82,19 @@
     <Compile Include="Drawing\DrawScaleRuler.cs" />
     <Compile Include="Drawing\DrawTerrain.cs" />
     <Compile Include="Drawing\DrawTrackDB.cs" />
-    <Compile Include="Drawing\DrawTrains.cs" />
     <Compile Include="Drawing\DrawWorldTiles.cs" />
     <Compile Include="Drawing\ShadowDrawArea.cs" />
     <Compile Include="Editing\AutoConnectTools.cs" />
+    <Compile Include="Editing\Charts\PathChartWindow.xaml.cs">
+      <DependentUpon>PathChartWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Editing\DrawPATfile.cs" />
     <Compile Include="Editing\DrawPath.cs" />
+    <Compile Include="Editing\Charts\DrawPathChart.cs" />
     <Compile Include="Editing\EditorActions.cs" />
     <Compile Include="Editing\ModificationTools.cs" />
     <Compile Include="Editing\PathEditor.cs" />
+    <Compile Include="Editing\Charts\PathChartData.cs" />
     <Compile Include="Editing\PathMetadataDialog.xaml.cs">
       <DependentUpon>PathMetadataDialog.xaml</DependentUpon>
     </Compile>
@@ -124,11 +132,14 @@
     <Compile Include="UserInterface\StatusBarControl.xaml.cs">
       <DependentUpon>StatusBarControl.xaml</DependentUpon>
     </Compile>
-    <Compile Include="UserInterface\TrackviewerIPC.cs" />
     <Compile Include="UserInterface\TVInputSettings.cs" />
     <Compile Include="UserInterface\TVUserInput.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Page Include="Editing\Charts\PathChartWindow.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Editing\PathMetadataDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -235,9 +246,17 @@
       <Project>{1C5B0B41-2FE9-41C9-8B21-CCDCBEB3DDA5}</Project>
       <Name>ORTS.Menu</Name>
     </ProjectReference>
+    <ProjectReference Include="..\..\Orts.Parsers.Msts\Orts.Parsers.Msts.csproj">
+      <Project>{8a84696c-3559-49b8-b27f-bb6932d8a1c6}</Project>
+      <Name>Orts.Parsers.Msts</Name>
+    </ProjectReference>
     <ProjectReference Include="..\..\ORTS.Settings\ORTS.Settings.csproj">
       <Project>{67F84996-8769-4FD8-819B-464AF269037B}</Project>
       <Name>ORTS.Settings</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\Orts.Simulation\Orts.Simulation.csproj">
+      <Project>{333c4378-d82e-4b47-b561-6ba923b8fdfd}</Project>
+      <Name>Orts.Simulation</Name>
     </ProjectReference>
     <ProjectReference Include="..\..\RunActivity\RunActivity.csproj">
       <Project>{9BE44F64-417D-4AA6-AF4D-2A6A0CBC814D}</Project>

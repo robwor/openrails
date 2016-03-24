@@ -17,21 +17,21 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
-using System;
-using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using ORTS.Processes;
-using ORTS.Settings;
+using Orts.Common;
+using Orts.Viewer3D.Common;
+using Orts.Viewer3D.Processes;
 using ORTS.Common;
+using ORTS.Settings;
+using System;
+using System.Collections.Generic;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     #region MSTSSkyVariables
     public class MSTSSkyConstants
     {
-        Viewer viewer;
-
         // Sky dome constants
         public static int skyRadius = 6000;
         public const int skySides = 24;
@@ -61,7 +61,7 @@ namespace ORTS.Viewer3D
         public double mstsskylatitude, mstsskylongitude;
         // Date of activity
 
-        public ORTS.Viewer3D.SkyViewer.Date date;
+        public Orts.Viewer3D.SkyViewer.Date date;
 
         // Size of the sun- and moon-position lookup table arrays.
         // Must be an integral divisor of 1440 (which is the number of minutes in a day).
@@ -149,34 +149,33 @@ namespace ORTS.Viewer3D
                     mstsskylunarPosArray[i] = SunMoonPos.LunarAngle(mstsskylatitude, mstsskylongitude, ((float)i / maxSteps), date);
                 }
                 // Phase of the moon is generated at random
-                Random random = new Random();
-                mstsskymoonPhase = random.Next(8);
+                mstsskymoonPhase = Viewer.Random.Next(8);
                 if (mstsskymoonPhase == 6 && date.ordinalDate > 45 && date.ordinalDate < 330)
                     mstsskymoonPhase = 3; // Moon dog only occurs in winter
                 // Overcast factor: 0.0=almost no clouds; 0.1=wispy clouds; 1.0=total overcast
                 //mstsskyovercastFactor = MSTSSkyViewer.World.WeatherControl.overcastFactor;
-                mstsskyfogDistance = MSTSSkyViewer.World.WeatherControl.fogDistance;
+                mstsskyfogDistance = MSTSSkyViewer.Simulator.Weather.FogDistance;
             }
 
-            if (MultiPlayer.MPManager.IsClient() && MultiPlayer.MPManager.Instance().weatherChanged)
+            if (Orts.MultiPlayer.MPManager.IsClient() && Orts.MultiPlayer.MPManager.Instance().weatherChanged)
             {
                 //received message about weather change
-                if (MultiPlayer.MPManager.Instance().overcastFactor >= 0)
+                if (Orts.MultiPlayer.MPManager.Instance().overcastFactor >= 0)
                 {
-                    mstsskyovercastFactor = MultiPlayer.MPManager.Instance().overcastFactor;
+                    mstsskyovercastFactor = Orts.MultiPlayer.MPManager.Instance().overcastFactor;
                 }
                 //received message about weather change
-                if (MultiPlayer.MPManager.Instance().fogDistance > 0)
+                if (Orts.MultiPlayer.MPManager.Instance().fogDistance > 0)
                 {
-                    mstsskyfogDistance = MultiPlayer.MPManager.Instance().fogDistance;
+                    mstsskyfogDistance = Orts.MultiPlayer.MPManager.Instance().fogDistance;
                 }
                 try
                 {
-                    if (MultiPlayer.MPManager.Instance().overcastFactor >= 0 || MultiPlayer.MPManager.Instance().fogDistance > 0)
+                    if (Orts.MultiPlayer.MPManager.Instance().overcastFactor >= 0 || Orts.MultiPlayer.MPManager.Instance().fogDistance > 0)
                     {
-                        MultiPlayer.MPManager.Instance().weatherChanged = false;
-                        MultiPlayer.MPManager.Instance().overcastFactor = -1;
-                        MultiPlayer.MPManager.Instance().fogDistance = -1;
+                        Orts.MultiPlayer.MPManager.Instance().weatherChanged = false;
+                        Orts.MultiPlayer.MPManager.Instance().overcastFactor = -1;
+                        Orts.MultiPlayer.MPManager.Instance().fogDistance = -1;
                     }
                 }
                 catch { }
@@ -189,7 +188,7 @@ namespace ORTS.Viewer3D
             // Control- and Control+ for overcast, Shift- and Shift+ for fog and - and + for time.
 
             // Don't let multiplayer clients adjust the weather.
-            if (!MultiPlayer.MPManager.IsClient())
+            if (!Orts.MultiPlayer.MPManager.IsClient())
             {
                 // Overcast ranges from 0 (completely clear) to 1 (completely overcast).
                 if (UserInput.IsDown(UserCommands.DebugOvercastIncrease)) mstsskyovercastFactor = MathHelper.Clamp(mstsskyovercastFactor + elapsedTime.RealSeconds / 10, 0, 1);
@@ -199,19 +198,19 @@ namespace ORTS.Viewer3D
                 if (UserInput.IsDown(UserCommands.DebugFogDecrease)) mstsskyfogDistance = MathHelper.Clamp(mstsskyfogDistance + elapsedTime.RealSeconds * mstsskyfogDistance, 10, 100000);
             }
             // Don't let clock shift if multiplayer.
-            if (!MultiPlayer.MPManager.IsMultiPlayer())
+            if (!Orts.MultiPlayer.MPManager.IsMultiPlayer())
             {
                 // Shift the clock forwards or backwards at 1h-per-second.
                 if (UserInput.IsDown(UserCommands.DebugClockForwards)) MSTSSkyViewer.Simulator.ClockTime += elapsedTime.RealSeconds * 3600;
                 if (UserInput.IsDown(UserCommands.DebugClockBackwards)) MSTSSkyViewer.Simulator.ClockTime -= elapsedTime.RealSeconds * 3600;
             }
             // Server needs to notify clients of weather changes.
-            if (MultiPlayer.MPManager.IsServer())
+            if (Orts.MultiPlayer.MPManager.IsServer())
             {
                 if (UserInput.IsReleased(UserCommands.DebugOvercastIncrease) || UserInput.IsReleased(UserCommands.DebugOvercastDecrease) || UserInput.IsReleased(UserCommands.DebugFogIncrease) || UserInput.IsReleased(UserCommands.DebugFogDecrease))
                 {
-                    MultiPlayer.MPManager.Instance().SetEnvInfo(mstsskyovercastFactor, mstsskyfogDistance);
-                    MultiPlayer.MPManager.Notify((new MultiPlayer.MSGWeather(-1, mstsskyovercastFactor, -1, mstsskyfogDistance)).ToString());
+                    Orts.MultiPlayer.MPManager.Instance().SetEnvInfo(mstsskyovercastFactor, mstsskyfogDistance);
+                    Orts.MultiPlayer.MPManager.Notify((new Orts.MultiPlayer.MSGWeather(-1, mstsskyovercastFactor, -1, mstsskyfogDistance)).ToString());
                 }
             }
 
@@ -316,7 +315,6 @@ namespace ORTS.Viewer3D
         // plus 24 triangles at the zenith)
         // plus six more for the moon quad
         private static short indexCount = 6 + 2 * ((MSTSSkyConstants.skySides * 6 * ((MSTSSkyConstants.skyLevels + 3)) + 3 * MSTSSkyConstants.skySides));
-        Viewer viewer;
         /// <summary>
         /// Constructor.
         /// </summary>
@@ -566,7 +564,7 @@ namespace ORTS.Viewer3D
                 for (int i = 0; i < Viewer.ENVFile.SkyLayers.Count; i++)
                 {
                     mstsSkyTexture[i] = Viewer.Simulator.RoutePath + @"\envfiles\textures\" + mstsskytexture[i].TextureName.ToString();
-                    MSTSSkyTexture.Add(Orts.Formats.Msts.ACEFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkyTexture[i]));
+                    MSTSSkyTexture.Add(Orts.Formats.Msts.AceFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkyTexture[i]));
                     if( i == 0 )
                     {
                         MSTSDayTexture = MSTSSkyTexture[i];
@@ -577,7 +575,7 @@ namespace ORTS.Viewer3D
                     }
                     else
                     {
-                        MSTSSkyCloudTexture.Add(Orts.Formats.Msts.ACEFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkyTexture[i]));
+                        MSTSSkyCloudTexture.Add(Orts.Formats.Msts.AceFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkyTexture[i]));
                     }
                 }
                 
@@ -595,8 +593,8 @@ namespace ORTS.Viewer3D
                 string mstsSkySunTexture = Viewer.Simulator.RoutePath + @"\envfiles\textures\" + mstsskysatellitetexture[0].TextureName.ToString();
                 string mstsSkyMoonTexture = Viewer.Simulator.RoutePath + @"\envfiles\textures\" + mstsskysatellitetexture[1].TextureName.ToString();
 
-                MSTSSkySunTexture = Orts.Formats.Msts.ACEFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkySunTexture);
-                MSTSSkyMoonTexture = Orts.Formats.Msts.ACEFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkyMoonTexture);
+                MSTSSkySunTexture = Orts.Formats.Msts.AceFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkySunTexture);
+                MSTSSkyMoonTexture = Orts.Formats.Msts.AceFile.Texture2DFromFile(Viewer.RenderProcess.GraphicsDevice, mstsSkyMoonTexture);
             }
             else
                 MSTSSkyMoonTexture = SharedTextureManager.Get(Viewer.RenderProcess.GraphicsDevice, System.IO.Path.Combine(Viewer.ContentPath, "MoonMap.png"));

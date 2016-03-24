@@ -23,13 +23,13 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Graphics.PackedVector;
+using Orts.Simulation.RollingStocks;
 using ORTS.Common;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class ParticleEmitterViewer
     {
@@ -63,7 +63,7 @@ namespace ORTS.Viewer3D
             Emitter = new ParticleEmitterPrimitive(viewer, data, worldPosition);
 #if DEBUG_EMITTER_INPUT
             EmitterID = ++EmitterIDIndex;
-            InputCycle = Program.Random.Next(InputCycleLimit);
+            InputCycle = Viewer.Random.Next(InputCycleLimit);
 #endif
         }
 
@@ -98,10 +98,11 @@ namespace ORTS.Viewer3D
         }
 
         // Called for steam locomotive emissions (non-main stack)
-        public void SetOutput(float initialVelocityMpS, float volumeM3pS)
+        public void SetOutput(float initialVelocityMpS, float volumeM3pS, float durationS)
         {
             Emitter.XNAInitialVelocity = Emitter.EmitterData.XNADirection * initialVelocityMpS / 10; // FIXME: Temporary hack until we can improve the particle emitter's ability to cope with high-velocity, quick-deceleration emissions.
             Emitter.ParticlesPerSecond = volumeM3pS / Rate * 0.2f;
+            Emitter.ParticleDuration = durationS;
 
 #if DEBUG_EMITTER_INPUT
             if (InputCycle == 0)
@@ -112,7 +113,8 @@ namespace ORTS.Viewer3D
         // Called for steam locomotive emissions (main stack)
         public void SetOutput(float initialVelocityMpS, float volumeM3pS, float durationS, Color color)
         {
-            SetOutput(initialVelocityMpS, volumeM3pS);
+            Emitter.XNAInitialVelocity = Emitter.EmitterData.XNADirection * initialVelocityMpS / 10; // FIXME: Temporary hack until we can improve the particle emitter's ability to cope with high-velocity, quick-deceleration emissions.
+            Emitter.ParticlesPerSecond = volumeM3pS / Rate * 0.2f;
             Emitter.ParticleDuration = durationS;
             Emitter.ParticleColor = color;
 
@@ -237,10 +239,10 @@ namespace ORTS.Viewer3D
             TimeParticlesLastEmitted = (float)viewer.Simulator.GameTime;
 
             PerlinStart = new float[] {
-                (float)Program.Random.NextDouble() * 30000f,
-                (float)Program.Random.NextDouble() * 30000f,
-                (float)Program.Random.NextDouble() * 30000f,
-                (float)Program.Random.NextDouble() * 30000f,
+                (float)Viewer.Random.NextDouble() * 30000f,
+                (float)Viewer.Random.NextDouble() * 30000f,
+                (float)Viewer.Random.NextDouble() * 30000f,
+                (float)Viewer.Random.NextDouble() * 30000f,
             };
         }
 
@@ -319,8 +321,8 @@ namespace ORTS.Viewer3D
 
         public void Update(float currentTime, ElapsedTime elapsedTime)
         {
-            windDisplacementX = viewer.World.WeatherControl.WindSpeedMpS.X * 0.25f;
-            windDisplacementZ = viewer.World.WeatherControl.WindSpeedMpS.Y * 0.25f;
+            windDisplacementX = viewer.Simulator.Weather.WindSpeedMpS.X * 0.25f;
+            windDisplacementZ = viewer.Simulator.Weather.WindSpeedMpS.Y * 0.25f;
 
             var velocity = WorldPosition.Location - LastWorldPosition.Location;
             velocity.X += (WorldPosition.TileX - LastWorldPosition.TileX) * 2048;
@@ -359,13 +361,13 @@ namespace ORTS.Viewer3D
 
                     var particle = (FirstFreeParticle + 1) % MaxParticles;
                     var vertex = particle * VerticiesPerParticle;
-                    var texture = Program.Random.Next(16); // Randomizes emissions.
-                    var color_Random = new Color(ParticleColor, (float)Program.Random.NextDouble());
+                    var texture = Viewer.Random.Next(16); // Randomizes emissions.
+                    var color_Random = new Color(ParticleColor, (float)Viewer.Random.NextDouble());
 
                     // Initial velocity varies in X and Z only.
                     var initialVelocity = globalInitialVelocity;
-                    initialVelocity.X += (float)(Program.Random.NextDouble() - 0.5f) * ParticleEmitterViewer.InitialSpreadRate;
-                    initialVelocity.Z += (float)(Program.Random.NextDouble() - 0.5f) * ParticleEmitterViewer.InitialSpreadRate;
+                    initialVelocity.X += (float)(Viewer.Random.NextDouble() - 0.5f) * ParticleEmitterViewer.InitialSpreadRate;
+                    initialVelocity.Z += (float)(Viewer.Random.NextDouble() - 0.5f) * ParticleEmitterViewer.InitialSpreadRate;
 
                     // Target/final velocity vaies in X, Y and Z.
                     var targetVelocity = globalTargetVelocity;

@@ -26,16 +26,16 @@
 
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Orts.Viewer3D.Processes;
 using ORTS.Common;
-using ORTS.Processes;
 using ORTS.Settings;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using Game = ORTS.Processes.Game;
+using Game = Orts.Viewer3D.Processes.Game;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public enum RenderPrimitiveSequence
     {
@@ -849,6 +849,9 @@ namespace ORTS.Viewer3D
                 }
                 if (logging) Console.WriteLine("    }");
             }
+
+            if (Game.Settings.DynamicShadows && (RenderProcess.ShadowMapCount > 0) && SceneryShader != null)
+                SceneryShader.ClearShadowMap();
         }
 
         void DrawSequencesDistantMountains(GraphicsDevice graphicsDevice, bool logging)

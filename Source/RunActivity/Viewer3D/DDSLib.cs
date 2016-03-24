@@ -56,11 +56,11 @@
 //coment this if you want to save color textures as ABGR.
 #define COLOR_SAVE_TO_ARGB
 
+using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.IO;
-using Microsoft.Xna.Framework.Graphics;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     /// <summary>
     /// Read/Write dds files from/to files or from streams.

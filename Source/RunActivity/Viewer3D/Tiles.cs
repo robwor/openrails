@@ -17,17 +17,17 @@
 
 // This file is the responsibility of the 3D & Environment Team. 
 
+using Microsoft.Xna.Framework;
+using Orts.Formats.Msts;
+using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using Microsoft.Xna.Framework;
-using Orts.Formats.Msts;
-using ORTS.Common;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     /// <summary>
     /// Provides a MRU cache of tile data for a given resolution.
@@ -347,11 +347,11 @@ namespace ORTS.Viewer3D
             return TFile.terrain.terrain_patchsets[0].terrain_patchset_patches[z * PatchCount + x];
         }
 
-        readonly TFile TFile;
-        readonly YFile YFile;
-        readonly FFile FFile;
+        readonly TerrainFile TFile;
+        readonly TerrainAltitudeFile YFile;
+        readonly TerrainFlagsFile FFile;
 
-        internal Tile(string filePath, int tileX, int tileZ, TileName.Zoom zoom, bool visible)
+        public Tile(string filePath, int tileX, int tileZ, TileName.Zoom zoom, bool visible)
         {
             TileX = tileX;
             TileZ = tileZ;
@@ -370,7 +370,7 @@ namespace ORTS.Viewer3D
             // T and Y files are expected to exist; F files are optional.
             try
             {
-                TFile = new TFile(fileName + ".t");
+                TFile = new TerrainFile(fileName + ".t");
             }
             catch (Exception error)
             {
@@ -378,7 +378,7 @@ namespace ORTS.Viewer3D
             }
             try
             {
-                YFile = new YFile(fileName + "_y.raw", SampleCount);
+                YFile = new TerrainAltitudeFile(fileName + "_y.raw", SampleCount);
             }
             catch (Exception error)
             {
@@ -387,7 +387,7 @@ namespace ORTS.Viewer3D
             try
             {
                 if (File.Exists(fileName + "_f.raw"))
-                    FFile = new FFile(fileName + "_f.raw", SampleCount);
+                    FFile = new TerrainFlagsFile(fileName + "_f.raw", SampleCount);
             }
             catch (Exception error)
             {

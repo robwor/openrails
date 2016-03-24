@@ -6,7 +6,8 @@
     <div class="container"><!-- Centres content and sets fixed width to suit device -->
       <div class="row">
         <div class="col-md-9 header">
-          <img class="totally_free_software" src="totally_free_software3.png" alt="Totally free software"/>
+          <!-- <img class="totally_free_software" src="shared/totally_free_software3.png" alt="Totally free software"/> -->
+          <img class="totally_free_software" src="shared/now_at_version_1_0b.png" alt="Now at Version 1.0"/>
           <a href="/">
             <img class="logo" src='shared/logos/or_logo.png' alt='logo for Open Rails'/>
             <div class="logo_text">Open Rails</div>
@@ -21,7 +22,7 @@
       </div>
 <?php include "shared/menu.php" ?>
 <?php
-  $download_stable = 'OpenRailsSetup.exe';
+  $download_stable = 'OpenRails-1.0-Setup.exe';
   $file_path = "files";
 ?>
       <div class="row">
@@ -39,7 +40,7 @@
             <!-- Button to trigger modal -->
             <a href="#modal1" role="button" class='btn download_button' data-toggle="modal">
               <span class='glyphicon glyphicon-download'></span>&nbsp; Download the installer 
-              <?php echo(date('d-M-Y', filemtime("$file_path/$download_stable"))); ?>
+              <?php echo '(' . date('d F Y', filemtime("$file_path/$download_stable")) . ', ' . round(filesize("$file_path/$download_stable") / 1024 / 1024) . 'MB)'; ?>
             </a>
           </div>
         </div>
@@ -64,6 +65,20 @@
             <h4>News</h4>
           </div>
           <p>
+            <strong>Dec 2015</strong>
+            The Elvas Tower forum plays a major role in developing Open Rails but has been closed to non-members following a dispute.
+            We can now report that some of the <a href="http://www.elvastower.com/forums/">Open Rails sub-forums</a> 
+            are open again.
+          </p>
+          <p>
+            <strong>Jun 2015</strong>
+            The Australian <a href="http://www.zigzag.coalstonewcastle.com.au/">Great Zig Zag Railway</a> released for Open Rails v1.0
+          </p>
+          <p>
+            <strong>May 2015</strong>
+            <a href="/discover/version-1-0/">Open Rails 1.0</a> released! <a href="/download/program/">Download it here</a>.
+          </p>
+          <p>
             <strong>Apr 2015</strong>
             Open Rails first demonstration route <a href="/download/content">Demo Model 1</a> has been published.
           </p>
@@ -71,13 +86,6 @@
             <strong>Dec 2014</strong>
             <a href="http://www.dekosoft.com">Dekosoft Trains</a> has added locos exclusively for Open Rails to its range.
             These are GP30 diesels taking advantage of our 3D cab feature.
-          </p>
-          <p>
-            <strong>July 2014</strong>
-            The legacy graphics-heavy web site has been replaced by one based on Bootstrap which is both easier to maintain and
-            suitable for phones and tablets as well as PCs.
-          </p><p>
-          You can still <a href="/web1/index.html">see an archive of the old site</a>.
           </p>
         </div>
         <div class="col-md-4 divider">

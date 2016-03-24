@@ -23,18 +23,18 @@
  * 
  */
 
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Orts.Formats.Msts;
+using Orts.Simulation;
+using ORTS.Common;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-using Orts.Formats.Msts;
-using ORTS.Common;
-using ORTS.Processes;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class Wire
     {

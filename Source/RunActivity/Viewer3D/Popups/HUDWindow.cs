@@ -18,20 +18,22 @@
 // This file is the responsibility of the 3D & Environment Team. 
 #define SHOW_PHYSICS_GRAPHS     //Matej Pacha - if commented, the physics graphs are not ready for public release
 
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Orts.Simulation.AIs;
+using Orts.Simulation.Physics;
+using Orts.Simulation.RollingStocks;
+using Orts.Simulation.RollingStocks.SubSystems.Brakes;
+using Orts.Viewer3D.Processes;
+using ORTS.Common;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-using ORTS.Common;
-using ORTS.Processes;
-using ORTS.Viewer3D;
 
-namespace ORTS.Viewer3D.Popups
+namespace Orts.Viewer3D.Popups
 {
     public class HUDWindow : LayeredWindow
     {
@@ -49,7 +51,7 @@ namespace ORTS.Viewer3D.Popups
         readonly Viewer Viewer;
         readonly Action<TableData>[] TextPages;
         readonly WindowTextFont TextFont;
-		readonly HUDGraphMaterial HUDGraphMaterial;
+        readonly HUDGraphMaterial HUDGraphMaterial;
 
         int TextPage;
         int LocomotivePage = 2;
@@ -119,19 +121,19 @@ namespace ORTS.Viewer3D.Popups
             TextFont = owner.TextFontDefaultOutlined;
             ColumnWidth *= TextFont.Height;
 
-			HUDGraphMaterial = (HUDGraphMaterial)Viewer.MaterialManager.Load("Debug");
+            HUDGraphMaterial = (HUDGraphMaterial)Viewer.MaterialManager.Load("Debug");
 
-			LocomotiveGraphs = new HUDGraphSet(Viewer, HUDGraphMaterial);
+            LocomotiveGraphs = new HUDGraphSet(Viewer, HUDGraphMaterial);
             LocomotiveGraphsThrottle = LocomotiveGraphs.Add(Viewer.Catalog.GetString("Throttle"), "0", "100%", Color.Blue, 50);
             LocomotiveGraphsInputPower = LocomotiveGraphs.Add(Viewer.Catalog.GetString("Power In/Out"), "0", "100%", Color.Yellow, 50);
             LocomotiveGraphsOutputPower = LocomotiveGraphs.AddOverlapped(Color.Green, 50);
 
-			ForceGraphs = new HUDGraphSet(Viewer, HUDGraphMaterial);
+            ForceGraphs = new HUDGraphSet(Viewer, HUDGraphMaterial);
             ForceGraphMotiveForce = ForceGraphs.Add(Viewer.Catalog.GetString("Motive force"), "0%", "100%", Color.Green, 75);
             ForceGraphDynamicForce = ForceGraphs.AddOverlapped(Color.Red, 75);
             ForceGraphNumOfSubsteps = ForceGraphs.Add(Viewer.Catalog.GetString("Num of substeps"), "0", "300", Color.Blue, 25);
 
-			DebugGraphs = new HUDGraphSet(Viewer, HUDGraphMaterial);
+            DebugGraphs = new HUDGraphSet(Viewer, HUDGraphMaterial);
             DebugGraphMemory = DebugGraphs.Add(Viewer.Catalog.GetString("Memory"), "0GB", String.Format("{0:F0}GB", (float)ProcessVirtualAddressLimit / 1024 / 1024 / 1024), Color.Orange, 50);
             DebugGraphGCs = DebugGraphs.Add(Viewer.Catalog.GetString("GCs"), "0", "2", Color.Magenta, 20); // Multiple of 4
             DebugGraphFrameTime = DebugGraphs.Add(Viewer.Catalog.GetString("Frame time"), "0.0s", "0.1s", Color.LightGreen, 50);
@@ -163,11 +165,11 @@ namespace ORTS.Viewer3D.Popups
             else LastTextPage = LocomotivePage;
         }
 
-		public override void Mark()
-		{
-			base.Mark();
-			HUDGraphMaterial.Mark();
-		}
+        public override void Mark()
+        {
+            base.Mark();
+            HUDGraphMaterial.Mark();
+        }
 
         public override bool Interactive
         {
@@ -183,9 +185,9 @@ namespace ORTS.Viewer3D.Popups
             if (TextPage != 0) LastTextPage = TextPage;
         }
 
-        public  void ToggleBasicHUD()
+        public void ToggleBasicHUD()
         {
-            TextPage = TextPage == 0? LastTextPage : 0;
+            TextPage = TextPage == 0 ? LastTextPage : 0;
         }
 
         int[] lastGCCounts = new int[3];
@@ -330,7 +332,7 @@ namespace ORTS.Viewer3D.Popups
         {
             table.CurrentRow++;
         }
-        
+
         static void TableAddLine(TableData table, string format, params object[] args)
         {
             TableSetCell(table, table.CurrentRow, 0, format, args);
@@ -380,13 +382,13 @@ namespace ORTS.Viewer3D.Popups
             TableAddLabelValue(table, Viewer.Catalog.GetString("Version"), VersionInfo.VersionOrBuild);
 
             // Client and server may have a time difference.
-            if (MultiPlayer.MPManager.IsClient())
-                TableAddLabelValue(table, Viewer.Catalog.GetString("Time"), InfoDisplay.FormattedTime(Viewer.Simulator.ClockTime + MultiPlayer.MPManager.Instance().serverTimeDifference));
+            if (Orts.MultiPlayer.MPManager.IsClient())
+                TableAddLabelValue(table, Viewer.Catalog.GetString("Time"), FormatStrings.FormatTime(Viewer.Simulator.ClockTime + Orts.MultiPlayer.MPManager.Instance().serverTimeDifference));
             else
-                TableAddLabelValue(table, Viewer.Catalog.GetString("Time"), InfoDisplay.FormattedTime(Viewer.Simulator.ClockTime));
+                TableAddLabelValue(table, Viewer.Catalog.GetString("Time"), FormatStrings.FormatTime(Viewer.Simulator.ClockTime));
 
-            if (Viewer.IsReplaying)
-                TableAddLabelValue(table, Viewer.Catalog.GetString("Replay"), InfoDisplay.FormattedTime(Viewer.Log.ReplayEndsAt - Viewer.Simulator.ClockTime));
+            if (Viewer.Simulator.IsReplaying)
+                TableAddLabelValue(table, Viewer.Catalog.GetString("Replay"), FormatStrings.FormatTime(Viewer.Log.ReplayEndsAt - Viewer.Simulator.ClockTime));
 
             TableAddLabelValue(table, Viewer.Catalog.GetString("Speed"), FormatStrings.FormatSpeedDisplay(Viewer.PlayerLocomotive.SpeedMpS, Viewer.PlayerLocomotive.IsMetric));
             TableAddLabelValue(table, Viewer.Catalog.GetString("Gradient"), "{0:F1}%", -Viewer.PlayerLocomotive.CurrentElevationPercent);
@@ -437,20 +439,20 @@ namespace ORTS.Viewer3D.Popups
                 var color = Math.Abs(Viewer.PlayerLocomotive.SpeedMpS) > 0.1f ? "!!!" : "???";
                 var status = "";
                 if ((Viewer.PlayerLocomotive as MSTSWagon).DoorLeftOpen)
-                    status += Viewer.Catalog.GetString("Left");
+                    status += Viewer.Catalog.GetString((Viewer.PlayerLocomotive as MSTSLocomotive).GetCabFlipped()? "Right" : "Left");
                 if ((Viewer.PlayerLocomotive as MSTSWagon).DoorRightOpen)
-                    status += string.Format(status == "" ? "{0}" : " {0}", Viewer.Catalog.GetString("Right"));
+                    status += string.Format(status == "" ? "{0}" : " {0}", Viewer.Catalog.GetString((Viewer.PlayerLocomotive as MSTSLocomotive).GetCabFlipped() ? "Left" : "Right"));
                 status += color;
 
                 TableAddLabelValue(table, Viewer.Catalog.GetString("Doors open") + color, status);
             }
-            if (MultiPlayer.MPManager.IsMultiPlayer())
+            if (Orts.MultiPlayer.MPManager.IsMultiPlayer())
             {
-                var text = MultiPlayer.MPManager.Instance().GetOnlineUsersInfo();
+                var text = Orts.MultiPlayer.MPManager.Instance().GetOnlineUsersInfo();
 
-                TableAddLabelValue(table, Viewer.Catalog.GetString("MultiPlayerStatus: "), "{0}", MultiPlayer.MPManager.IsServer()
-                    ? Viewer.Catalog.GetString("Dispatcher") : MultiPlayer.MPManager.Instance().AmAider
-                    ? Viewer.Catalog.GetString("Helper") : MultiPlayer.MPManager.IsClient()
+                TableAddLabelValue(table, Viewer.Catalog.GetString("MultiPlayerStatus: "), "{0}", Orts.MultiPlayer.MPManager.IsServer()
+                    ? Viewer.Catalog.GetString("Dispatcher") : Orts.MultiPlayer.MPManager.Instance().AmAider
+                    ? Viewer.Catalog.GetString("Helper") : Orts.MultiPlayer.MPManager.IsClient()
                     ? Viewer.Catalog.GetString("Client") : "");
                 TableAddLine(table);
                 foreach (var t in text.Split('\t'))
@@ -477,7 +479,7 @@ namespace ORTS.Viewer3D.Popups
                 Viewer.Catalog.GetString("Cab Aspect"));
             TableAddLine(table);
             TableSetCells(table, 0, locomotive.UiD + " " + (mstsLocomotive == null ? "" : mstsLocomotive.UsingRearCab ? Viewer.Catalog.GetString("R") : Viewer.Catalog.GetString("F")),
-                train.tilted ? Viewer.Catalog.GetString("Yes") : Viewer.Catalog.GetString("No"),
+                train.IsTilting ? Viewer.Catalog.GetString("Yes") : Viewer.Catalog.GetString("No"),
                 train.IsFreight ? Viewer.Catalog.GetString("Freight") : Viewer.Catalog.GetString("Pass"),
                 FormatStrings.FormatShortDistanceDisplay(train.Length, locomotive.IsMetric),
                 FormatStrings.FormatLargeMass(train.MassKg, locomotive.IsMetric, locomotive.IsUK), "",
@@ -502,7 +504,7 @@ namespace ORTS.Viewer3D.Popups
                     train.IsFreight ? Viewer.Catalog.GetString("Freight") : Viewer.Catalog.GetString("Pass"),
                     FormatStrings.FormatShortDistanceDisplay(car.CarLengthM, locomotive.IsMetric),
                     FormatStrings.FormatLargeMass(car.MassKG, locomotive.IsMetric, locomotive.IsUK),
-                    (car.IsDriveable ? "D" : "") + (car.HasFrontCab ? "F" : "") + (car.HasRearCab ? "R" : ""),
+                    (car.IsDriveable ? "D" : "") + (car.HasFrontCab || car.HasFront3DCab ? "F" : "") + (car.HasRearCab || car.HasRear3DCab ? "R" : ""),
                     GetCarWhyteLikeNotation(car));
                 TableAddLine(table);
             }
@@ -557,7 +559,28 @@ namespace ORTS.Viewer3D.Popups
             TextPageHeading(table, Viewer.Catalog.GetString("BRAKE INFORMATION"));
 
             var train = Viewer.PlayerLocomotive.Train;
-            TableAddLabelValue(table, Viewer.Catalog.GetString("Main reservoir"), "{0}", FormatStrings.FormatPressure(train.BrakeLine2PressurePSI, PressureUnit.PSI, (Viewer.PlayerLocomotive as MSTSLocomotive).PressureUnit, true));
+            TableAddLines(table, String.Format("{0}\t\t{1}\t\t{2}\t{3}\t\t{4}",
+                Viewer.Catalog.GetString("PlayerLoco"),
+                Viewer.Catalog.GetString("Main reservoir"),
+                FormatStrings.FormatPressure((Viewer.PlayerLocomotive as MSTSLocomotive).MainResPressurePSI, PressureUnit.PSI, (Viewer.PlayerLocomotive as MSTSLocomotive).BrakeSystemPressureUnits[BrakeSystemComponent.MainReservoir], true),
+                Viewer.Catalog.GetString("Compressor"),
+                (Viewer.PlayerLocomotive as MSTSLocomotive).CompressorIsOn ? Viewer.Catalog.GetString("on") : Viewer.Catalog.GetString("off")));
+            // Display data for other locomotives
+            for (var i = 0; i < train.Cars.Count; i++)
+            {
+                var car = train.Cars[i];
+                if (car is MSTSLocomotive && car != Viewer.PlayerLocomotive)
+                {
+                    TableAddLines(table, String.Format("{0}\t{1}\t{2}\t\t{3}\t{4}\t\t{5}",
+                        Viewer.Catalog.GetString("Loco"),
+                        train.Cars[i].CarID.ToString(),
+                        Viewer.Catalog.GetString("Main reservoir"),
+                        FormatStrings.FormatPressure((car as MSTSLocomotive).MainResPressurePSI, PressureUnit.PSI, (car as MSTSLocomotive).BrakeSystemPressureUnits[BrakeSystemComponent.MainReservoir], true),
+                        Viewer.Catalog.GetString("Compressor"),
+                        (car as MSTSLocomotive).CompressorIsOn ? Viewer.Catalog.GetString("on") : Viewer.Catalog.GetString("off")));
+                }
+            }
+            TableAddLine(table);
 
             TableSetCells(table, 0,
                 Viewer.Catalog.GetString("Car"),
@@ -582,7 +605,7 @@ namespace ORTS.Viewer3D.Popups
                 var j = i < 2 ? i : i * (train.Cars.Count - 1) / (n - 1);
                 var car = train.Cars[j];
                 TableSetCell(table, 0, "{0}", train.Cars[j].CarID);
-                TableSetCells(table, 1, car.BrakeSystem.GetDebugStatus((Viewer.PlayerLocomotive as MSTSLocomotive).PressureUnit));
+                TableSetCells(table, 1, car.BrakeSystem.GetDebugStatus((Viewer.PlayerLocomotive as MSTSLocomotive).BrakeSystemPressureUnits));
                 TableAddLine(table);
             }
         }
@@ -593,7 +616,7 @@ namespace ORTS.Viewer3D.Popups
 
             var train = Viewer.PlayerLocomotive.Train;
             var mstsLocomotive = Viewer.PlayerLocomotive as MSTSLocomotive;
-            
+
             if (mstsLocomotive != null)
             {
                 if ((mstsLocomotive.Simulator.UseAdvancedAdhesion) && (!mstsLocomotive.AntiSlip))
@@ -677,11 +700,14 @@ namespace ORTS.Viewer3D.Popups
             // first is player train
             foreach (var thisTrain in Viewer.Simulator.Trains)
             {
-                if (thisTrain.TrainType == Train.TRAINTYPE.PLAYER || (thisTrain.TrainType == Train.TRAINTYPE.REMOTE && MultiPlayer.MPManager.IsServer())
-                    ||(thisTrain.Number == 0 && thisTrain.IsActualPlayerTrain))
+                if (thisTrain.TrainType == Train.TRAINTYPE.PLAYER || (thisTrain.TrainType == Train.TRAINTYPE.REMOTE && Orts.MultiPlayer.MPManager.IsServer())
+                    || thisTrain.IsActualPlayerTrain)
                 {
                     var status = thisTrain.GetStatus(Viewer.MilepostUnitsMetric);
                     if (thisTrain.TrainType == Train.TRAINTYPE.AI_PLAYERHOSTING) status = ((AITrain)thisTrain).AddMovementState(status, Viewer.MilepostUnitsMetric);
+                    else if (thisTrain == Program.Simulator.OriginalPlayerTrain && Program.Simulator.Activity != null) status = thisTrain.AddRestartTime(status);
+                    else if (thisTrain.IsActualPlayerTrain && Program.Simulator.Activity != null && thisTrain.ControlMode != Train.TRAIN_CONTROL.EXPLORER && !thisTrain.IsPathless)
+                        status = thisTrain.AddRestartTime(status);
                     for (var iCell = 0; iCell < status.Length; iCell++)
                         TableSetCell(table, table.CurrentRow, iCell, status[iCell]);
                     TableAddLine(table);
@@ -915,7 +941,7 @@ namespace ORTS.Viewer3D.Popups
         public void PrepareFrame(RenderFrame frame)
         {
             var matrix = Matrix.Identity;
-            for (var i = 0; i < Graphs.Count ; i++)
+            for (var i = 0; i < Graphs.Count; i++)
             {
                 Graphs[i].Mesh.GraphPos.X = Viewer.DisplaySize.X - Margin.X - Graphs[i].Mesh.GraphPos.Z;
                 Graphs[i].Mesh.GraphPos.Y = Margin.Y + Graphs[i].YOffset;

@@ -34,6 +34,7 @@ using LibAE.Formats;
 using Orts.Formats.Msts;
 using Orts.Parsers.Msts;
 using ORTS;
+using Orts.Formats.OR;
 
 namespace ActivityEditor.Engine
 {
@@ -51,7 +52,7 @@ namespace ActivityEditor.Engine
         public TrackNode[] nodes { get { return simulator.nodes; } set { } }
         AEConfig Parent;
                 
-        public TSectionDatFile TSectionDat { get { return Viewer.Simulator.TSectionDat; } protected set { } }
+        public TrackSectionsFile TSectionDat { get { return Viewer.Simulator.TSectionDat; } protected set { } }
         public Viewer2D Viewer { get { return Parent.Viewer; } protected set { } }
         public PseudoSim simulator { get { return Viewer.Simulator; } protected set { } }
 

@@ -18,10 +18,11 @@
 // This file is the responsibility of the 3D & Environment Team. 
 
 using Microsoft.Xna.Framework;
+using Orts.Common;
 using ORTS.Common;
 using System.Collections.Generic;
 
-namespace ORTS.Viewer3D
+namespace Orts.Viewer3D
 {
     public class World
     {
