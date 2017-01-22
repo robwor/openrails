@@ -35,6 +35,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Event = Orts.Common.Event;
 
 namespace Orts.Viewer3D.RollingStock
@@ -163,7 +164,7 @@ namespace Orts.Viewer3D.RollingStock
             UserInputCommands.Add(UserCommands.ControlHeadlightDecrease, new Action[] { Noop, () => new HeadlightCommand(Viewer.Log, false) });
             UserInputCommands.Add(UserCommands.ControlLight, new Action[] { Noop, () => new ToggleCabLightCommand(Viewer.Log) });
             UserInputCommands.Add(UserCommands.ControlRefill, new Action[] { () => StopRefillingOrUnloading(Viewer.Log), () => AttemptToRefillOrUnload() });
-            UserInputCommands.Add(UserCommands.ControlImmediateRefill, new Action[] { () => StopRefillingOrUnloading(Viewer.Log), () => ImmediateRefill() });
+            UserInputCommands.Add(UserCommands.ControlImmediateRefill, new Action[] { () => StopImmediateRefilling(Viewer.Log), () => ImmediateRefill() });
             UserInputCommands.Add(UserCommands.ControlOdoMeterShowHide, new Action[] { Noop, () => new ToggleOdometerCommand(Viewer.Log) });
             UserInputCommands.Add(UserCommands.ControlOdoMeterReset, new Action[] { Noop, () => new ResetOdometerCommand(Viewer.Log) });
             UserInputCommands.Add(UserCommands.ControlOdoMeterDirection, new Action[] { Noop, () => new ToggleOdometerDirectionCommand(Viewer.Log) });
@@ -347,7 +348,9 @@ namespace Orts.Viewer3D.RollingStock
         {
             public PickupObj Pickup;
             public MSTSWagon Wagon;
+            public MSTSLocomotive SteamLocomotiveWithTender;
             public IntakePoint IntakePoint;
+
         }
 
         /// <summary>
@@ -364,6 +367,7 @@ namespace Orts.Viewer3D.RollingStock
             var shortestD2 = float.MaxValue;
             WagonAndMatchingPickup nearestPickup = null;
             float distanceFromFrontOfTrainM = 0f;
+            int index = 0;
             foreach (var car in train.Cars)
             {
                 if (car is MSTSWagon)
@@ -388,11 +392,12 @@ namespace Orts.Viewer3D.RollingStock
                                     (uint)intake.Type == pickup.PickupType)
                                  || ((uint)intake.Type == pickup.PickupType && (uint)intake.Type > (uint)MSTSWagon.PickupType.FreightSand && (wagon.WagonType == TrainCar.WagonTypes.Tender || wagon is MSTSLocomotive)))
                                 {
-                                    var intakePosition = car.WorldPosition; //TODO Convert this into the position of the intake.
+                                    var intakePosition = new Vector3(0, 0, -intake.OffsetM);
+                                    Vector3.Transform(ref intakePosition, ref car.WorldPosition.XNAMatrix, out intakePosition);
 
                                     var intakeLocation = new WorldLocation(
                                         car.WorldPosition.TileX, car.WorldPosition.TileZ,
-                                        car.WorldPosition.Location.X, car.WorldPosition.Location.Y, car.WorldPosition.Location.Z);
+                                        intakePosition.X, intakePosition.Y, -intakePosition.Z);
 
                                     var d2 = WorldLocation.GetDistanceSquared(intakeLocation, pickup.Location);
                                     if (d2 < shortestD2)
@@ -401,6 +406,19 @@ namespace Orts.Viewer3D.RollingStock
                                         nearestPickup = new WagonAndMatchingPickup();
                                         nearestPickup.Pickup = pickup;
                                         nearestPickup.Wagon = wagon;
+                                        if (wagon.WagonType == TrainCar.WagonTypes.Tender)
+                                        {
+                                            // Normal arrangement would be steam locomotive followed by the tender car.
+                                            if (index > 0 && train.Cars[index - 1] is MSTSSteamLocomotive && !wagon.Flipped && !train.Cars[index - 1].Flipped)
+                                                nearestPickup.SteamLocomotiveWithTender = train.Cars[index - 1] as MSTSLocomotive;
+                                            // but after reversal point or turntable reversal order of cars is reversed too!
+                                            else if (index < train.Cars.Count && train.Cars[index + 1] is MSTSSteamLocomotive && wagon.Flipped && train.Cars[index + 1].Flipped)
+                                                nearestPickup.SteamLocomotiveWithTender = train.Cars[index + 1] as MSTSLocomotive;
+                                            else if (index > 0 && train.Cars[index - 1] is MSTSSteamLocomotive)
+                                                nearestPickup.SteamLocomotiveWithTender = train.Cars[index - 1] as MSTSLocomotive;
+                                            else if (index < train.Cars.Count && train.Cars[index + 1] is MSTSSteamLocomotive)
+                                                nearestPickup.SteamLocomotiveWithTender = train.Cars[index + 1] as MSTSLocomotive;
+                                        }
                                         nearestPickup.IntakePoint = intake;
                                     }
                                 }
@@ -409,6 +427,7 @@ namespace Orts.Viewer3D.RollingStock
                     }
                     distanceFromFrontOfTrainM += wagon.CarLengthM;
                 }
+                index++;
             }
             return nearestPickup;
         }
@@ -431,31 +450,25 @@ namespace Orts.Viewer3D.RollingStock
             return (float)Math.Sqrt(WorldLocation.GetDistanceSquared(intakeLocation, match.Pickup.Location));
         }
 
+        /// <summary>
         // This process is tied to the Shift T key combination
         // The purpose of is to perform immediate refueling without having to pull up alongside the fueling station.
+        /// </summary>
         public void ImmediateRefill()
         {
-            MatchedWagonAndPickup = null;   // Ensures that releasing the Shift T key doesn't do anything unless there is something to do.
-
             var loco = this.Locomotive;
-            var match = GetMatchingPickup(loco.Train);
-
-            if (match == null && !(loco is MSTSElectricLocomotive))
-            {
-                Viewer.Simulator.Confirmer.Message(ConfirmLevel.None, Viewer.Catalog.GetString("Refill: Immediate refill process selected, refilling immediately."));
-                loco.RefillImmediately();
+            
+            if (loco == null)
                 return;
-            }
-            if (match == null)
+            
+            foreach(var car in loco.Train.Cars)
             {
-                Viewer.Simulator.Confirmer.Message(ConfirmLevel.None, Viewer.Catalog.GetString("Refill: Electric loco and no pickup. Command rejected"));
-                return;
-            }
-            if (match.Wagon is MSTSDieselLocomotive || match.Wagon is MSTSSteamLocomotive || (match.Wagon.WagonType == TrainCar.WagonTypes.Tender && loco is MSTSSteamLocomotive))
-            {
-                Viewer.Simulator.Confirmer.Message(ConfirmLevel.None, Viewer.Catalog.GetString("Refill: Immediate refill process selected, refilling immediately."));
-                loco.RefillImmediately();
-                return;
+                // There is no need to check for the tender.  The MSTSSteamLocomotive is the primary key in the refueling process when using immediate refueling.
+                if (car is MSTSDieselLocomotive || car is MSTSSteamLocomotive)
+                {
+                    Viewer.Simulator.Confirmer.Message(ConfirmLevel.None, Viewer.Catalog.GetString("Refill: Immediate refill process selected, refilling immediately."));
+                    (car as MSTSLocomotive).RefillImmediately();
+                }
             }
         }
 
@@ -506,10 +519,18 @@ namespace Orts.Viewer3D.RollingStock
                     FormatStrings.FormatSpeedLimit(match.Pickup.SpeedRange.MaxMpS, Viewer.MilepostUnitsMetric)));
                 return;
             }
-            if (match.Wagon is MSTSDieselLocomotive || match.Wagon is MSTSSteamLocomotive || (match.Wagon.WagonType == TrainCar.WagonTypes.Tender && loco is MSTSSteamLocomotive))
+            if (match.Wagon is MSTSDieselLocomotive || match.Wagon is MSTSSteamLocomotive || (match.Wagon.WagonType == TrainCar.WagonTypes.Tender && match.SteamLocomotiveWithTender != null))
             {
+                // Note: The tender contains the intake information, but the steam locomotive includes the controller information that is needed for the refueling process.
+
+                float fraction = 0;
+
                 // classical MSTS Freightanim, handled as usual
-                var fraction = loco.GetFilledFraction(match.Pickup.PickupType);
+                if(match.SteamLocomotiveWithTender != null)
+                    fraction = match.SteamLocomotiveWithTender.GetFilledFraction(match.Pickup.PickupType);
+                else
+                    fraction = match.Wagon.GetFilledFraction(match.Pickup.PickupType);
+                                
                 if (fraction > 0.99)
                 {
                     Viewer.Simulator.Confirmer.Message(ConfirmLevel.None, Viewer.Catalog.GetStringFmt("Refill: {0} supply now replenished.",
@@ -519,7 +540,11 @@ namespace Orts.Viewer3D.RollingStock
                 else
                 {
                     MSTSWagon.RefillProcess.OkToRefill = true;
-                    StartRefilling(match.Pickup.PickupType, fraction);
+                    if (match.SteamLocomotiveWithTender != null)
+                        StartRefilling(match.Pickup.PickupType, fraction, match.SteamLocomotiveWithTender);
+                    else
+                        StartRefilling(match.Pickup.PickupType, fraction, match.Wagon);
+
                     MatchedWagonAndPickup = match;  // Save away for HandleUserInput() to use when key is released.
                 }
             }
@@ -554,12 +579,37 @@ namespace Orts.Viewer3D.RollingStock
         /// </summary>
         public void RefillChangeTo(float? target)
         {
-            var matchedWagonAndPickup = GetMatchingPickup(Locomotive.Train);   // Save away for RefillCommand to use.
+            MSTSNotchController controller = new MSTSNotchController();
+            var loco = this.Locomotive;
+
+            var matchedWagonAndPickup = GetMatchingPickup(loco.Train);   // Save away for RefillCommand to use.
             if (matchedWagonAndPickup != null)
             {
-                var controller = Locomotive.GetRefillController((uint)matchedWagonAndPickup.Pickup.PickupType);
+                if (matchedWagonAndPickup.SteamLocomotiveWithTender != null)
+                    controller = matchedWagonAndPickup.SteamLocomotiveWithTender.GetRefillController((uint)matchedWagonAndPickup.Pickup.PickupType);
+                else
+                    controller = (matchedWagonAndPickup.Wagon as MSTSLocomotive).GetRefillController((uint)matchedWagonAndPickup.Pickup.PickupType);
                 controller.StartIncrease(target);
             }
+        }
+
+        /// <summary>
+        /// Starts a continuous increase in controlled value. This method also receives TrainCar car to process individual locomotives for refueling.
+        /// </summary>
+        /// <param name="type">Pickup point</param>
+        public void StartRefilling(uint type, float fraction, TrainCar car)
+        {
+            var controller = (car as MSTSLocomotive).GetRefillController(type);
+
+            if (controller == null)
+            {
+                Viewer.Simulator.Confirmer.Message(ConfirmLevel.Error, Viewer.Catalog.GetString("Incompatible pickup type"));
+                return;
+            }
+            controller.SetValue(fraction);
+            controller.CommandStartTime = Viewer.Simulator.ClockTime;  // for Replay to use 
+            Viewer.Simulator.Confirmer.Message(ConfirmLevel.Information, Viewer.Catalog.GetString("Starting refill"));
+            controller.StartIncrease(controller.MaximumValue);
         }
 
         /// <summary>
@@ -581,6 +631,14 @@ namespace Orts.Viewer3D.RollingStock
         }
 
         /// <summary>
+        // Immediate refueling process is different from the process of refueling individual locomotives.
+        /// </summary> 
+        public void StopImmediateRefilling(CommandLog log)
+        {
+            new ImmediateRefillCommand(log);  // for Replay to use
+        }
+
+        /// <summary>
         /// Ends a continuous increase in controlled value.
         /// </summary>
         public void StopRefillingOrUnloading(CommandLog log)
@@ -591,8 +649,13 @@ namespace Orts.Viewer3D.RollingStock
             MSTSWagon.RefillProcess.ActivePickupObjectUID = 0;
             var match = MatchedWagonAndPickup;
             var controller = new MSTSNotchController();
-            if (match.Wagon is MSTSDieselLocomotive || match.Wagon is MSTSSteamLocomotive || (match.Wagon.WagonType == TrainCar.WagonTypes.Tender && Locomotive is MSTSSteamLocomotive))
-                controller = Locomotive.GetRefillController(MatchedWagonAndPickup.Pickup.PickupType);
+            if (match.Wagon is MSTSDieselLocomotive || match.Wagon is MSTSSteamLocomotive || (match.Wagon.WagonType == TrainCar.WagonTypes.Tender && match.SteamLocomotiveWithTender != null))
+            {
+                if (match.SteamLocomotiveWithTender != null)
+                    controller = match.SteamLocomotiveWithTender.GetRefillController(MatchedWagonAndPickup.Pickup.PickupType);
+                else
+                    controller = (match.Wagon as MSTSLocomotive).GetRefillController(MatchedWagonAndPickup.Pickup.PickupType);
+            }
             else
             {
                 controller = match.Wagon.WeightLoadController;
@@ -604,7 +667,6 @@ namespace Orts.Viewer3D.RollingStock
                 controller.StopIncrease();
             else controller.StopDecrease();
         }
-
         #endregion
     } // Class LocomotiveViewer
 
@@ -634,7 +696,7 @@ namespace Orts.Viewer3D.RollingStock
             if (DayTextures.Keys.Contains(FileName))
                 return;
 
-            DayTextures.Add(FileName, viewer.TextureManager.Get(FileName));
+            DayTextures.Add(FileName, viewer.TextureManager.Get(FileName, true));
 
             var nightpath = Path.Combine(Path.Combine(Path.GetDirectoryName(FileName), "night"), Path.GetFileName(FileName));
             NightTextures.Add(FileName, viewer.TextureManager.Get(nightpath));
@@ -1135,7 +1197,7 @@ namespace Orts.Viewer3D.RollingStock
             if (!_Locomotive.ShowCab)
                 return;
 
-            bool Dark = _Viewer.MaterialManager.sunDirection.Y <= 0f || _Viewer.Camera.IsUnderground;
+            bool Dark = _Viewer.MaterialManager.sunDirection.Y <= -0.085f || _Viewer.Camera.IsUnderground;
             bool CabLight = _Locomotive.CabLightOn;
 
             CabCamera cbc = _Viewer.Camera as CabCamera;
@@ -1186,7 +1248,7 @@ namespace Orts.Viewer3D.RollingStock
             else
                 stretchedCab = new Rectangle(_CabRect.Left, _CabRect.Top + _Viewer.CabYOffsetPixels, _CabRect.Width, _CabRect.Height);
 
-            if (_Location == 0 && _Shader != null)
+            if (_Shader != null)
             {
                 // TODO: Readd ability to control night time lighting.
                 if (_Viewer.Settings.UseMSTSEnv == false)
@@ -1215,7 +1277,7 @@ namespace Orts.Viewer3D.RollingStock
             }
             //Materials.SpriteBatchMaterial.SpriteBatch.Draw(_CabTexture, _CabRect, Color.White);
 
-            if (_Location == 0 && _Shader != null)
+            if (_Shader != null)
             {
                 _Shader.CurrentTechnique.Passes[0].End();
                 _Shader.End();
@@ -1334,7 +1396,7 @@ namespace Orts.Viewer3D.RollingStock
 
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
-            var dark = Viewer.MaterialManager.sunDirection.Y <= 0f || Viewer.Camera.IsUnderground;
+            var dark = Viewer.MaterialManager.sunDirection.Y <= -0.085f || Viewer.Camera.IsUnderground;
 
             Texture = CABTextureManager.GetTexture(Control.ACEFile, dark, Locomotive.CabLightOn, out IsNightTexture);
             if (Texture == SharedMaterialManager.MissingTexture)
@@ -1430,7 +1492,7 @@ namespace Orts.Viewer3D.RollingStock
         {
             if (!(Gauge is CVCFirebox))
             {
-                var dark = Viewer.MaterialManager.sunDirection.Y <= 0f || Viewer.Camera.IsUnderground;
+                var dark = Viewer.MaterialManager.sunDirection.Y <= -0.085f || Viewer.Camera.IsUnderground;
                 Texture = CABTextureManager.GetTexture(Control.ACEFile, dark, Locomotive.CabLightOn, out IsNightTexture);
             }
             if (Texture == SharedMaterialManager.MissingTexture)
@@ -1475,6 +1537,9 @@ namespace Orts.Viewer3D.RollingStock
                     else
                     {
                         DestinationRectangle.X = (int)(xratio * Control.PositionX);
+                        if (Gauge.Direction != 1 && !IsFire)
+                        DestinationRectangle.Y = (int)(yratio * (Control.PositionY + (zeropos > ypos ? zeropos : 2 * zeropos - ypos))) + Viewer.CabYOffsetPixels;
+                        else
                         DestinationRectangle.Y = (int)(yratio * (Control.PositionY + (zeropos < ypos ? zeropos : ypos))) + Viewer.CabYOffsetPixels;
                         DestinationRectangle.Width = (int)(xratio * xpos);
                         DestinationRectangle.Height = (int)(yratio * (ypos > zeropos ? ypos - zeropos : zeropos - ypos));
@@ -1617,7 +1682,7 @@ namespace Orts.Viewer3D.RollingStock
                 if ((mS.MSStyles.Count > index) && (mS.MSStyles[index] == 1) && (CumulativeTime > CVCFlashTimeOn))
                     return;
             }
-            var dark = Viewer.MaterialManager.sunDirection.Y <= 0f || Viewer.Camera.IsUnderground;
+            var dark = Viewer.MaterialManager.sunDirection.Y <= -0.085f || Viewer.Camera.IsUnderground;
 
             Texture = CABTextureManager.GetTextureByIndexes(Control.ACEFile, index, dark, Locomotive.CabLightOn, out IsNightTexture);
             if (Texture == SharedMaterialManager.MissingTexture)
@@ -1675,10 +1740,7 @@ namespace Orts.Viewer3D.RollingStock
                     break;
                 case CABViewControlTypes.THROTTLE:
                 case CABViewControlTypes.THROTTLE_DISPLAY:
-                    if (Locomotive.ThrottleController.SmoothMax() == null)
-                        index = Locomotive.ThrottleController.CurrentNotch;
-                    else
-                        index = PercentToIndex(data);
+                    index = PercentToIndex(data);
                     break;
                 case CABViewControlTypes.FRICTION_BRAKING:
                     index = data > 0.001 ? 1 : 0;
@@ -1700,6 +1762,15 @@ namespace Orts.Viewer3D.RollingStock
                     }
                     break;
                 case CABViewControlTypes.CPH_DISPLAY:
+                    if (Locomotive.CombinedControlType == MSTSLocomotive.CombinedControl.ThrottleDynamic && Locomotive.DynamicBrakePercent >= 0)
+                        // TODO <CSComment> This is a sort of hack to allow MSTS-compliant operation of Dynamic brake indications in the standard USA case with 8 steps (e.g. Dash9)
+                        // This hack returns to code of previous OR versions (e.g. release 1.0).
+                        // The clean solution for MSTS compliance would be not to increment the percentage of the dynamic brake at first dynamic brake key pression, so that
+                        // subsequent steps become of 12.5% as in MSTS instead of 11.11% as in OR. This requires changes in the physics logic </CSComment>
+                        index = (int)((ControlDiscrete.FramesCount) * Locomotive.GetCombinedHandleValue(false));
+                    else
+                        index = PercentToIndex(Locomotive.GetCombinedHandleValue(false));
+                    break;
                 case CABViewControlTypes.CP_HANDLE:
                     if (Locomotive.CombinedControlType == MSTSLocomotive.CombinedControl.ThrottleDynamic && Locomotive.DynamicBrakePercent >= 0
                         || Locomotive.CombinedControlType == MSTSLocomotive.CombinedControl.ThrottleAir && Locomotive.TrainBrakeController.CurrentValue > 0)
@@ -1727,6 +1798,14 @@ namespace Orts.Viewer3D.RollingStock
                 case CABViewControlTypes.PANTOGRAPHS_4C:
                 case CABViewControlTypes.PANTOGRAPHS_5:
                 case CABViewControlTypes.PANTO_DISPLAY:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_DRIVER_CLOSING_ORDER:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_DRIVER_OPENING_ORDER:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_DRIVER_CLOSING_AUTHORIZATION:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_STATE:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_CLOSED:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_OPEN:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_AUTHORIZED:
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_OPEN_AND_AUTHORIZED:
                 case CABViewControlTypes.DIRECTION:
                 case CABViewControlTypes.DIRECTION_DISPLAY:
                 case CABViewControlTypes.ASPECT_DISPLAY:
@@ -1744,6 +1823,9 @@ namespace Orts.Viewer3D.RollingStock
                     index = (int)data;
                     break;
             }
+            // If it is a control with NumPositions and NumValues, the index becomes the reference to the Positions entry, which in turn is the frame index within the .ace file
+            if (ControlDiscrete is CVCDiscrete && (ControlDiscrete as CVCDiscrete).Positions.Count > index && (ControlDiscrete as CVCDiscrete).Positions.Count == ControlDiscrete.Values.Count && index >= 0)
+                index = (ControlDiscrete as CVCDiscrete).Positions[index];
 
             if (index >= ControlDiscrete.FramesCount) index = ControlDiscrete.FramesCount - 1;
             if (index < 0) index = 0;
@@ -1786,8 +1868,14 @@ namespace Orts.Viewer3D.RollingStock
                 case CABViewControlTypes.BELL: new BellCommand(Viewer.Log, ChangedValue(Locomotive.Bell ? 1 : 0) > 0); break;
                 case CABViewControlTypes.SANDERS:
                 case CABViewControlTypes.SANDING: new SanderCommand(Viewer.Log, ChangedValue(Locomotive.Sander ? 1 : 0) > 0); break;
-                case CABViewControlTypes.PANTOGRAPH: new PantographCommand(Viewer.Log, 1, ChangedValue(Locomotive.Pantographs[1].State == PantographState.Up ? 1 : 0) > 0); break;
-                case CABViewControlTypes.PANTOGRAPH2: new PantographCommand(Viewer.Log, 2, ChangedValue(Locomotive.Pantographs[2].State == PantographState.Up ? 1 : 0) > 0); break;
+                case CABViewControlTypes.PANTOGRAPH: new PantographCommand(Viewer.Log, 1, ChangedValue(Locomotive.Pantographs[1].CommandUp ? 1 : 0) > 0); break;
+                case CABViewControlTypes.PANTOGRAPH2: new PantographCommand(Viewer.Log, 2, ChangedValue(Locomotive.Pantographs[2].CommandUp ? 1 : 0) > 0); break;
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_DRIVER_CLOSING_ORDER:
+                    new CircuitBreakerClosingOrderCommand(Viewer.Log, ChangedValue((Locomotive as MSTSElectricLocomotive).PowerSupply.CircuitBreaker.DriverClosingOrder ? 1 : 0) > 0);
+                    new CircuitBreakerClosingOrderButtonCommand(Viewer.Log, ChangedValue(UserInput.IsMouseLeftButtonPressed ? 1 : 0) > 0);
+                    break;
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_DRIVER_OPENING_ORDER: new CircuitBreakerOpeningOrderButtonCommand(Viewer.Log, ChangedValue(UserInput.IsMouseLeftButtonPressed ? 1 : 0) > 0); break;
+                case CABViewControlTypes.ORTS_CIRCUIT_BREAKER_DRIVER_CLOSING_AUTHORIZATION: new CircuitBreakerClosingAuthorizationCommand(Viewer.Log, ChangedValue((Locomotive as MSTSElectricLocomotive).PowerSupply.CircuitBreaker.DriverClosingAuthorization ? 1 : 0) > 0); break;
                 case CABViewControlTypes.EMERGENCY_BRAKE: if ((Locomotive.EmergencyButtonPressed ? 1 : 0) != ChangedValue(Locomotive.EmergencyButtonPressed ? 1 : 0)) new EmergencyPushButtonCommand(Viewer.Log); break;
                 case CABViewControlTypes.RESET: new AlerterCommand(Viewer.Log, ChangedValue(Locomotive.TrainControlSystem.AlerterButtonPressed ? 1 : 0) > 0); break;
                 case CABViewControlTypes.CP_HANDLE: Locomotive.SetCombinedHandleValue(ChangedValue(Locomotive.GetCombinedHandleValue(true))); break;
@@ -1803,7 +1891,7 @@ namespace Orts.Viewer3D.RollingStock
                 case CABViewControlTypes.ORTS_CYL_COMP: if (((Locomotive as MSTSSteamLocomotive).CylinderCompoundOn ? 1 : 0) != ChangedValue((Locomotive as MSTSSteamLocomotive).CylinderCompoundOn ? 1 : 0)) new ToggleCylinderCompoundCommand(Viewer.Log); break;
                 case CABViewControlTypes.STEAM_INJ1: if (((Locomotive as MSTSSteamLocomotive).Injector1IsOn ? 1 : 0) != ChangedValue((Locomotive as MSTSSteamLocomotive).Injector1IsOn ? 1 : 0)) new ToggleInjectorCommand(Viewer.Log, 1); break;
                 case CABViewControlTypes.STEAM_INJ2: if (((Locomotive as MSTSSteamLocomotive).Injector2IsOn ? 1 : 0) != ChangedValue((Locomotive as MSTSSteamLocomotive).Injector2IsOn ? 1 : 0)) new ToggleInjectorCommand(Viewer.Log, 2); break;
-                case CABViewControlTypes.SMALL_EJECTOR: break; // TODO: Unimplemented
+                case CABViewControlTypes.SMALL_EJECTOR: (Locomotive as MSTSSteamLocomotive).SetSmallEjectorValue(ChangedValue((Locomotive as MSTSSteamLocomotive).SmallEjectorController.IntermediateValue)); break;
             }
 
         }
@@ -1828,7 +1916,7 @@ namespace Orts.Viewer3D.RollingStock
                 try
                 {
                     var val = ControlDiscrete.Values[0] <= ControlDiscrete.Values[ControlDiscrete.Values.Count - 1] ?
-                        ControlDiscrete.Values.Where(v => (float)v <= percent).Last() : ControlDiscrete.Values.Where(v => (float)v <= percent).First();
+                        ControlDiscrete.Values.Where(v => (float)v <= percent + 0.00001).Last() : ControlDiscrete.Values.Where(v => (float)v <= percent + 0.00001).First();
                     index = ControlDiscrete.Values.IndexOf(val);
                 }
                 catch
@@ -2428,6 +2516,9 @@ namespace Orts.Viewer3D.RollingStock
                         break;
                 }
             }
+
+            SceneryMaterialOptions options = SceneryMaterialOptions.ShaderFullBright | SceneryMaterialOptions.AlphaBlendingAdd;
+
             if (String.IsNullOrEmpty(TrainCarShape.SharedShape.ReferencePath))
             {
                 if (!File.Exists(globalText + imageName))
@@ -2435,7 +2526,7 @@ namespace Orts.Viewer3D.RollingStock
                     Trace.TraceInformation("Ignored missing " + imageName + " using default. You can copy the " + imageName + " from OR\'s AddOns folder to " + globalText +
                         ", or place it under " + TrainCarShape.SharedShape.ReferencePath);
                 }
-                material = Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(Viewer.Simulator, Helpers.TextureFlags.None, globalText, imageName), (int)(SceneryMaterialOptions.None | SceneryMaterialOptions.AlphaBlendingBlend), 0);
+                material = Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(Viewer.Simulator, Helpers.TextureFlags.None, globalText, imageName), (int)(options), 0);
             }
             else
             {
@@ -2443,9 +2534,9 @@ namespace Orts.Viewer3D.RollingStock
                 {
                     Trace.TraceInformation("Ignored missing " + imageName + " using default. You can copy the " + imageName + " from OR\'s AddOns folder to " + globalText +
                         ", or place it under " + TrainCarShape.SharedShape.ReferencePath);
-                    material = Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(Viewer.Simulator, Helpers.TextureFlags.None, globalText, imageName), (int)(SceneryMaterialOptions.None | SceneryMaterialOptions.AlphaBlendingBlend), 0);
+                    material = Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(Viewer.Simulator, Helpers.TextureFlags.None, globalText, imageName), (int)(options), 0);
                 }
-                else material = Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(Viewer.Simulator, Helpers.TextureFlags.None, TrainCarShape.SharedShape.ReferencePath + @"\", imageName), (int)(SceneryMaterialOptions.None | SceneryMaterialOptions.AlphaBlendingBlend), 0);
+                else material = Viewer.MaterialManager.Load("Scenery", Helpers.GetTextureFile(Viewer.Simulator, Helpers.TextureFlags.None, TrainCarShape.SharedShape.ReferencePath + @"\", imageName), (int)(options), 0);
             }
 
             return material;

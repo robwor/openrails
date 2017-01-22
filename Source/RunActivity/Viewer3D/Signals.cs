@@ -221,8 +221,54 @@ namespace Orts.Viewer3D
 
                 if (SignalTypeData.Semaphore)
                 {
+                    // Check whether we have to correct the Semaphore position indexes following the strange rule of MSTS
+                    // Such strange rule is that, if there are only two animation steps in the related .s file, MSTS behaves as follows:
+                    // a SemaphorePos (2) in sigcfg.dat is executed as SemaphorePos (1)
+                    // a SemaphorePos (1) in sigcfg.dat is executed as SemaphorePos (0)
+                    // a SemaphorePos (0) in sigcfg.dat is executed as SemaphorePos (0)
+                    // First we check if there are only two animation steps
+                    if (signalShape.SharedShape.Animations != null && signalShape.SharedShape.Animations.Count != 0 && MatrixIndices.Count > 0 &&
+                            signalShape.SharedShape.Animations[0].anim_nodes[MatrixIndices[0]].controllers.Count != 0 &&
+                            signalShape.SharedShape.Animations[0].anim_nodes[MatrixIndices[0]].controllers[0].Count == 2)
+                    {
+
+                        // OK, now we check if maximum SemaphorePos is 2 (we won't correct if there are only SemaphorePos 1 and 0,
+                        // because they would both be executed as SemaphorePos (0) accordingly to above law, therefore leading to a static semaphore)
+                        float maxIndex = float.MinValue;
+                        foreach (SignalAspectData drAsp in SignalTypeData.DrawAspects.Values)
+                        {
+                            if (drAsp.SemaphorePos > maxIndex) maxIndex = drAsp.SemaphorePos;
+                        }
+                        if (maxIndex == 2)
+                        {
+                            // in this case we modify the SemaphorePositions for compatibility with MSTS.
+                            foreach (SignalAspectData drAsp in SignalTypeData.DrawAspects.Values)
+                            {
+                                switch ((int)drAsp.SemaphorePos)
+                                {
+                                    case 2:
+                                        drAsp.SemaphorePos = 1;
+                                        break;
+                                    case 1:
+                                        drAsp.SemaphorePos = 0;
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            }
+                            if (!SignalTypeData.AreSemaphoresReindexed)
+                            {
+                                Trace.TraceInformation("Reindexing semaphore entries of signal type {0} for compatibility with MSTS", mstsSignalType.Name);
+                                SignalTypeData.AreSemaphoresReindexed = true;
+                            }
+                        }
+                    }
+
                     foreach (int mindex in MatrixIndices)
                     {
+                        if (mindex == 0 && (signalShape.SharedShape.Animations == null || signalShape.SharedShape.Animations.Count == 0 ||
+                            signalShape.SharedShape.Animations[0].anim_nodes[mindex].controllers.Count == 0))
+                            continue;
                         AnimatedPart SemaphorePart = new AnimatedPart(signalShape);
                         SemaphorePart.AddMatrix(mindex);
                         SemaphoreParts.Add(SemaphorePart);
@@ -247,7 +293,6 @@ namespace Orts.Viewer3D
                 Console.Write("  HEAD type={0,-8} lights={1,-2} sem={2}", SignalTypeData.Type, SignalTypeData.Lights.Count, SignalTypeData.Semaphore);
 #endif
             }
-
             [CallOnThread("Loader")]
             public void Unload()
             {
@@ -363,6 +408,7 @@ namespace Orts.Viewer3D
             public readonly float FlashTimeTotal;
             public readonly bool Semaphore;
             public readonly float SemaphoreAnimationTime;
+            public bool AreSemaphoresReindexed;
 
             public SignalTypeData(Viewer viewer, Orts.Formats.Msts.SignalType mstsSignalType)
             {
@@ -433,7 +479,7 @@ namespace Orts.Viewer3D
         {
             public readonly bool[] DrawLights;
             public readonly bool[] FlashLights;
-            public readonly float SemaphorePos;
+            public float SemaphorePos;
 
             public SignalAspectData(Orts.Formats.Msts.SignalType mstsSignalType, Orts.Formats.Msts.SignalDrawState drawStateData)
             {
@@ -452,7 +498,7 @@ namespace Orts.Viewer3D
                 {
                     foreach (var drawLight in drawStateData.DrawLights)
                     {
-                        if (drawLight.LightIndex < 0 || drawLight.LightIndex >= DrawLights.Length)
+                        if (drawLight.LightIndex < 0 || DrawLights == null || drawLight.LightIndex >= DrawLights.Length)
                             Trace.TraceWarning("Skipped extra draw light {0}", drawLight.LightIndex);
                         else
                         {
@@ -510,7 +556,7 @@ namespace Orts.Viewer3D
             : base(viewer, textureName)
         {
             SceneryShader = Viewer.MaterialManager.SceneryShader;
-            Texture = Viewer.TextureManager.Get(textureName);
+            Texture = Viewer.TextureManager.Get(textureName, true);
         }
 
         public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)

@@ -16,6 +16,7 @@
 // along with Open Rails.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
+using ORTS.Common;
 
 namespace ORTS.Scripting.Api
 {
@@ -28,9 +29,13 @@ namespace ORTS.Scripting.Api
         /// </summary>
         public Func<bool> IsTrainControlEnabled;
         /// <summary>
-        /// False if vigilance monitor was switched off in game options, thus requested to be auto reset.
+        /// True if vigilance monitor was switched on in game options.
         /// </summary>
         public Func<bool> IsAlerterEnabled;
+        /// <summary>
+        /// True if speed control was switched on in game options.
+        /// </summary>
+        public Func<bool> IsSpeedControlEnabled;
         /// <summary>
         /// True if alerter sound rings, otherwise false
         /// </summary>
@@ -76,6 +81,18 @@ namespace ORTS.Scripting.Api
         /// </summary>
         public Func<float> SpeedMpS;
         /// <summary>
+        /// Train's direction.
+        /// </summary>
+        public Func<Direction> CurrentDirection;
+        /// <summary>
+        /// True if train direction is forward.
+        /// </summary>
+        public Func<bool> IsDirectionForward;
+        /// <summary>
+        /// True if train direction is neutral.
+        /// </summary>
+        public Func<bool> IsDirectionNeutral;
+        /// <summary>
         /// True if train direction is reverse.
         /// </summary>
         public Func<bool> IsDirectionReverse;
@@ -88,13 +105,37 @@ namespace ORTS.Scripting.Api
         /// </summary>
         public Func<bool> IsBrakeFullService;
         /// <summary>
-        /// True if circuit breaker or power contactor close authorization is true.
+        /// True if circuit breaker or power contactor closing authorization is true.
         /// </summary>
         public Func<bool> PowerAuthorization;
+        /// <summary>
+        /// True if circuit breaker or power contactor closing order is true.
+        /// </summary>
+        public Func<bool> CircuitBreakerClosingOrder;
+        /// <summary>
+        /// True if circuit breaker or power contactor opening order is true.
+        /// </summary>
+        public Func<bool> CircuitBreakerOpeningOrder;
+        /// <summary>
+        /// True if traction is authorized.
+        /// </summary>
+        public Func<bool> TractionAuthorization;
         /// <summary>
         /// Train brake pipe pressure. Returns float.MaxValue if no data is available.
         /// </summary>
         public Func<float> BrakePipePressureBar;
+        /// <summary>
+        /// Locomotive brake cylinder pressure. Returns float.MaxValue if no data is available.
+        /// </summary>
+        public Func<float> LocomotiveBrakeCylinderPressureBar;
+        /// <summary>
+        /// True if power must be cut if the brake is applied.
+        /// </summary>
+        public Func<bool> DoesBrakeCutPower;
+        /// <summary>
+        /// Train brake pressure value which triggers the power cut-off.
+        /// </summary>
+        public Func<float> BrakeCutsPowerAtBrakeCylinderPressureBar;
 
         // TODO: The following will be available in .NET 4 as normal Func:
         public delegate TResult Func5<T1, T2, T3, T4, T5, TResult>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5);
@@ -136,9 +177,21 @@ namespace ORTS.Scripting.Api
         /// </summary>
         public Action SetPantographsDown;
         /// <summary>
-        /// Set the circuit breaker or power contactor close authorization.
+        /// Set the circuit breaker or power contactor closing authorization.
         /// </summary>
         public Action<bool> SetPowerAuthorization;
+        /// <summary>
+        /// Set the circuit breaker or power contactor closing order.
+        /// </summary>
+        public Action<bool> SetCircuitBreakerClosingOrder;
+        /// <summary>
+        /// Set the circuit breaker or power contactor opening order.
+        /// </summary>
+        public Action<bool> SetCircuitBreakerOpeningOrder;
+        /// <summary>
+        /// Set the traction authorization.
+        /// </summary>
+        public Action<bool> SetTractionAuthorization;
         /// <summary>
         /// Switch vigilance alarm sound on (true) or off (false).
         /// </summary>

@@ -456,7 +456,7 @@ namespace Orts.Simulation.RollingStocks.SubSystems.PowerSupplies
             DieselPowerTab = new Interpolator(copy.DieselPowerTab);
             DieselConsumptionTab = new Interpolator(copy.DieselConsumptionTab);
             ThrottleRPMTab = new Interpolator(copy.ThrottleRPMTab);
-            DieselTorqueTab = new Interpolator(copy.DieselTorqueTab);
+            if (copy.DieselTorqueTab != null) DieselTorqueTab = new Interpolator(copy.DieselTorqueTab);
             DieselUsedPerHourAtMaxPowerL = copy.DieselUsedPerHourAtMaxPowerL;
             DieselUsedPerHourAtIdleL = copy.DieselUsedPerHourAtIdleL;
             InitialExhaust = copy.InitialExhaust;
@@ -1019,7 +1019,6 @@ namespace Orts.Simulation.RollingStocks.SubSystems.PowerSupplies
             DieselTemperatureDeg = inf.ReadSingle();
 
             Boolean gearSaved    = inf.ReadBoolean();  // read boolean which indicates gear data was saved
-            Boolean gearRestored = false;
 
             if (((MSTSDieselLocomotive)locomotive).GearBox != null)
             {
@@ -1027,18 +1026,10 @@ namespace Orts.Simulation.RollingStocks.SubSystems.PowerSupplies
                     GearBox = null;
                 else
                 {
-                    GearBox = new GearBox(((MSTSDieselLocomotive)locomotive).GearBox, this);
                     GearBox.Restore(inf);
-                    gearRestored = true;
                 }
             }
 
-            // if info was saved but not restored - use dummy to load restored info
-            if (gearSaved && !gearRestored)
-            {
-                GearBox dummyGear = new GearBox();
-                dummyGear.Restore(inf);
-            }
         }
 
         public void Save(BinaryWriter outf)

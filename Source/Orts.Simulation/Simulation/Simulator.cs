@@ -130,6 +130,10 @@ namespace Orts.Simulation
         public HazzardManager HazzardManager;
         public FuelManager FuelManager;
         public bool InControl = true;//For multiplayer, a player may not control his/her own train (as helper)
+        public TurntableFile TurntableFile;
+        public List<Turntable> Turntables;
+        public ExtCarSpawnerFile ExtCarSpawnerFile;
+        public List<CarSpawnerList> CarSpawnerLists;
 
         /// <summary>
         /// Reference to the InterlockingSystem object, responsible for
@@ -158,7 +162,27 @@ namespace Orts.Simulation
         public bool PlayerIsInCab = false;
         public readonly bool MilepostUnitsMetric;
 
-        // Replacy functionality!
+        public int ActiveTurntableIndex = -1;
+        public Turntable ActiveTurntable
+        {
+            get
+            {
+                return ActiveTurntableIndex >= 0 && ActiveTurntableIndex < Turntables.Count ? Turntables[ActiveTurntableIndex] : null;
+            }
+            set
+            {
+                ActiveTurntableIndex = -1;
+                if (Turntables == null) return;
+                for (int i = 0; i < Turntables.Count; i++)
+                    if (value == Turntables[i])
+                    {
+                        ActiveTurntableIndex = i;
+                    }
+            }
+        }
+
+
+        // Replay functionality!
         public CommandLog Log { get; set; }
         public List<ICommand> ReplayCommandList { get; set; }
 
@@ -265,7 +289,9 @@ namespace Orts.Simulation
             }
 
             Trace.Write(" DAT");
-            if (Directory.Exists(RoutePath + @"\GLOBAL") && File.Exists(RoutePath + @"\GLOBAL\TSECTION.DAT"))
+            if (Directory.Exists(RoutePath + @"\Openrails") && File.Exists(RoutePath + @"\Openrails\TSECTION.DAT"))
+                TSectionDat = new TrackSectionsFile(RoutePath + @"\Openrails\TSECTION.DAT");
+            else if (Directory.Exists(RoutePath + @"\GLOBAL") && File.Exists(RoutePath + @"\GLOBAL\TSECTION.DAT"))
                 TSectionDat = new TrackSectionsFile(RoutePath + @"\GLOBAL\TSECTION.DAT");
             else
                 TSectionDat = new TrackSectionsFile(BasePath + @"\GLOBAL\TSECTION.DAT");
@@ -292,8 +318,18 @@ namespace Orts.Simulation
             var carSpawnFile = RoutePath + @"\carspawn.dat";
             if (File.Exists(carSpawnFile))
             {
+                CarSpawnerLists = new List<CarSpawnerList>();
                 Trace.Write(" CARSPAWN");
-                CarSpawnerFile = new CarSpawnerFile(RoutePath + @"\carspawn.dat", RoutePath + @"\shapes\");
+                CarSpawnerFile = new CarSpawnerFile(RoutePath + @"\carspawn.dat", RoutePath + @"\shapes\", CarSpawnerLists);
+            }
+
+            // Extended car spawner file
+            var extCarSpawnFile = RoutePath + @"\openrails\carspawn.dat";
+            if (File.Exists(extCarSpawnFile))
+            {
+                if (CarSpawnerLists == null) CarSpawnerLists = new List<CarSpawnerList>();
+                Trace.Write(" EXTCARSPAWN");
+                ExtCarSpawnerFile = new ExtCarSpawnerFile(RoutePath + @"\openrails\carspawn.dat", RoutePath + @"\shapes\", CarSpawnerLists);
             }
 
             Confirmer = new Confirmer(this, 1.5);
@@ -337,6 +373,13 @@ namespace Orts.Simulation
         public void Start(CancellationToken cancellation)
         {
             Signals = new Signals(this, SIGCFG, cancellation);
+            var turntableFile = RoutePath + @"\openrails\turntables.dat";
+            if (File.Exists(turntableFile))
+            {
+                Turntables = new List<Turntable>();
+                Trace.Write(" TURNTBL");
+                TurntableFile = new TurntableFile(RoutePath + @"\openrails\turntables.dat", RoutePath + @"\shapes\", Turntables, this);
+            }
             LevelCrossings = new LevelCrossings(this);
             FuelManager = new FuelManager(this);
             Trains = new TrainList(this);
@@ -412,6 +455,7 @@ namespace Orts.Simulation
             InitialTileZ = initialTileZ;
 
             Signals = new Signals(this, SIGCFG, inf, cancellation);
+
             RestoreTrains(inf);
             LevelCrossings = new LevelCrossings(this);
             AI = new AI(this, inf);
@@ -419,6 +463,21 @@ namespace Orts.Simulation
             OriginalPlayerTrain = Trains.Find(item => item.Number == 0);
             if (OriginalPlayerTrain == null) OriginalPlayerTrain = AI.AITrains.Find(item => item.Number == 0);
 
+            // initialization of turntables
+            ActiveTurntableIndex = inf.ReadInt32();
+            var turntableFile = RoutePath + @"\openrails\turntables.dat";
+            if (File.Exists(turntableFile))
+            {
+                Turntables = new List<Turntable>();
+                Trace.Write(" TURNTBL");
+                TurntableFile = new TurntableFile(RoutePath + @"\openrails\turntables.dat", RoutePath + @"\shapes\", Turntables, this);
+            }
+            if (Turntables != null && Turntables.Count >= 0)
+                foreach (var turntable in Turntables) turntable.Restore(inf, this);
+/*
+            if (Turntables != null && Turntables.Count >= 0)
+                foreach (var turntable in Turntables) turntable.ReInitTrainPositions();
+*/
             ActivityRun = Orts.Simulation.Activity.Restore(inf, this, ActivityRun);
             Signals.RestoreTrains(Trains);  // restore links to trains
         }
@@ -434,6 +493,10 @@ namespace Orts.Simulation
             // LevelCrossings
             // InterlockingSystem
             AI.Save(outf);
+
+            outf.Write(ActiveTurntableIndex);
+            if (Turntables != null && Turntables.Count >= 0)
+                foreach (var turntable in Turntables) turntable.Save(outf);
 
             Orts.Simulation.Activity.Save(outf, ActivityRun);
         }
@@ -536,6 +599,8 @@ namespace Orts.Simulation
                 CompleteSwitchPlayerTrain();
             }
 
+            // Must be done before trains so that during turntable rotation train follows it
+            if (ActiveTurntable != null) ActiveTurntable.Update();
 
             // Represent conditions at the specified clock time.
             List<Train> movingTrains = new List<Train>();
@@ -654,6 +719,18 @@ namespace Orts.Simulation
 
         private void FinishCoupling(Train drivenTrain, Train train, bool couple_to_front, bool sameDirection)
         {
+            // if coupled train was on turntable and static, remove it from list of trains on turntable
+            if (ActiveTurntable != null && ActiveTurntable.TrainsOnTurntable.Count != 0)
+            {
+                foreach (var trainOnTurntable in ActiveTurntable.TrainsOnTurntable)
+                {
+                    if (trainOnTurntable.Train.Number == train.Number)
+                    {
+                        ActiveTurntable.TrainsOnTurntable.Remove(trainOnTurntable);
+                        break;
+                    }
+                }
+            }
             if (train.TrainType == Train.TRAINTYPE.AI && (((AITrain)train).UncondAttach ||
                 train.TCRoute.activeSubpath < train.TCRoute.TCRouteSubpaths.Count - 1 || train.ValidRoute[0].Count > 5))
             {
@@ -1188,11 +1265,10 @@ namespace Orts.Simulation
                     train.CalculatePositionOfCars();
                     train.InitializeBrakes();
                     train.CheckFreight();
-
+                    if (Settings.Autopilot) train.ReverseFormation(false); // When using autopilot mode this is needed for correct working of train switching
                     bool validPosition = train.PostInit();
                     if (validPosition)
                         Trains.Add(train);
-                    if (Settings.Autopilot) train.ReverseFormation(false); // When using autopilot mode this is needed for correct working of train switching
                 }
                 catch (Exception error)
                 {
@@ -1543,6 +1619,11 @@ namespace Orts.Simulation
             }
             if (Confirmer != null && IsReplaying) Confirmer.Confirm(CabControl.Uncouple, train.LastCar.CarID);
             if (AI != null) AI.aiListChanged = true;
+            if (train2.TrainType == Train.TRAINTYPE.STATIC && (train.TrainType == Train.TRAINTYPE.PLAYER || train.TrainType == Train.TRAINTYPE.AI_PLAYERDRIVEN))
+            {
+                // check if detached on turntable
+               if (ActiveTurntable != null) ActiveTurntable.CheckTrainOnTurntable(train2);
+            }
         }
 
         //uncouple behind car in Timetable mode
@@ -1762,13 +1843,14 @@ namespace Orts.Simulation
                 var selectedAsPlayer = TrainSwitcher.SelectedAsPlayer;
                 var oldTrainReverseFormation = false;
                 var newTrainReverseFormation = false;
-                if (PlayerLocomotive.Train is AITrain)
+                if (PlayerLocomotive.Train is AITrain && !PlayerLocomotive.Train.IsPathless)
                 {
                     var playerTrain = PlayerLocomotive.Train as AITrain;
                     if (playerTrain != null)
                     {
                         if (playerTrain.ControlMode == Train.TRAIN_CONTROL.MANUAL) TrainSwitcher.SuspendOldPlayer = true; // force suspend state to avoid disappearing of train;
-                        if (TrainSwitcher.SuspendOldPlayer && playerTrain.SpeedMpS != 0)
+                        if (TrainSwitcher.SuspendOldPlayer && 
+                            (playerTrain.SpeedMpS < -0.025 || playerTrain.SpeedMpS > 0.025 || playerTrain.PresentPosition[0].TCOffset != playerTrain.PreviousPosition[0].TCOffset))
                         {
                             Confirmer.Message(ConfirmLevel.Warning, Catalog.GetString("Train can't be suspended with speed not equal 0"));
                             TrainSwitcher.SuspendOldPlayer = false;

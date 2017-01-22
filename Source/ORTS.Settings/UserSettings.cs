@@ -112,6 +112,8 @@ namespace ORTS.Settings
         public bool Alerter { get; set; }
         [Default(true)]
         public bool AlerterDisableExternal { get; set; }
+        [Default(true)]
+        public bool SpeedControl { get; set; }
         [Default(false)]
         public bool ViewDispatcher { get; set; }
         [Default(false)]
@@ -227,7 +229,7 @@ namespace ORTS.Settings
         public int LODBias { get; set; }
         [Default(false)]
         public bool PerformanceTuner { get; set; }
-        [Default(false)]
+        [Default(true)]
         public bool SuppressShapeWarnings { get; set; }
         [Default(60)]
         public int PerformanceTunerTarget { get; set; }

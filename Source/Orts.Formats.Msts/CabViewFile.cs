@@ -151,7 +151,15 @@ namespace Orts.Formats.Msts
         LEFTDOOR,
         RIGHTDOOR,
         MIRRORS,
-        GEARS_DISPLAY
+        GEARS_DISPLAY,
+        ORTS_CIRCUIT_BREAKER_DRIVER_CLOSING_ORDER,
+        ORTS_CIRCUIT_BREAKER_DRIVER_OPENING_ORDER,
+        ORTS_CIRCUIT_BREAKER_DRIVER_CLOSING_AUTHORIZATION,
+        ORTS_CIRCUIT_BREAKER_STATE,
+        ORTS_CIRCUIT_BREAKER_CLOSED,
+        ORTS_CIRCUIT_BREAKER_OPEN,
+        ORTS_CIRCUIT_BREAKER_AUTHORIZED,
+        ORTS_CIRCUIT_BREAKER_OPEN_AND_AUTHORIZED
     }
 
     public enum CABViewControlStyles
@@ -667,6 +675,8 @@ namespace Orts.Formats.Msts
         public List<int> Positions = new List<int>();
 
         private int _ValuesRead;
+        private int numPositions;
+        private bool canFill = true;
 
         public CVCDiscrete(STFReader stf, string basepath)
         {
@@ -707,7 +717,7 @@ namespace Orts.Formats.Msts
                         stf.MustMatch("(");
                         // If Positions are not filled before by Values
                         bool shouldFill = (Positions.Count == 0);
-                        stf.ReadInt(null); // Number of Positions - Ignore it
+                        numPositions = stf.ReadInt(null); // Number of Positions
 
                         var minPosition = 0;
                         var positionsRead = 0;
@@ -730,9 +740,12 @@ namespace Orts.Formats.Msts
                             //   NumPositions ( 5 8 7 2 1 0 )
                             positionsRead++;
 
-                        for (int iPos = 0; iPos <= Positions.Count - 1; iPos++)
-                        {
-                            Positions[iPos] -= minPosition;
+                        if (minPosition < 0)
+                        { 
+                            for (int iPos = 0; iPos <= Positions.Count - 1; iPos++)
+                            {
+                                Positions[iPos] -= minPosition;
+                            }
                         }
 
                         // This is a hack for SLI locomotives which have the positions listed as "1056964608 0 0 0 ...".
@@ -742,10 +755,37 @@ namespace Orts.Formats.Msts
                             for (var i = 0; i < Positions.Count; i++)
                                 Positions[i] = i;
                         }
+
+                        // Check if eligible for filling
+
+                        if (Positions.Count > 1 && Positions[0] != 0) canFill = false;
+                        else 
+                        { 
+                            for (var iPos = 1; iPos <= Positions.Count - 1; iPos++)
+                            {
+                                if (Positions[iPos] > Positions[iPos-1]) continue;
+                                canFill = false;
+                                break;
+                            }
+                        }
+
+                        // This is a protection against GP40 locomotives that erroneously have positions pointing beyond frame count limit.
+
+                        if (Positions.Count > 1 && canFill && Positions.Count < FramesCount && Positions[Positions.Count-1] >= FramesCount && Positions[0] == 0)
+                        {
+                            STFException.TraceInformation(stf, "Some NumPositions entries refer to non-exisiting frames, trying to renumber");
+                            Positions[Positions.Count - 1] = FramesCount - 1;
+                            for (var iPos = Positions.Count -2 ; iPos >= 1; iPos--)
+                            {
+                                if ((Positions[iPos] >= FramesCount || Positions[iPos] >= Positions[iPos + 1])) Positions[iPos] = Positions[iPos + 1] - 1;
+                                else break;
+                            }
+                        }
+
                     }),
                     new STFReader.TokenProcessor("numvalues", ()=>{
                         stf.MustMatch("(");
-                        stf.ReadDouble(null); // Number of Values - ignore it
+                        var numValues = stf.ReadDouble(null); // Number of Values
                         while (!stf.EndOfBlock())
                         {
                             double v = stf.ReadDouble(null);
@@ -756,12 +796,16 @@ namespace Orts.Formats.Msts
                             }
                             // Avoid later repositioning, put every value to its Position
                             // But before resize Values if needed
-                            while (Values.Count <= Positions[_ValuesRead])
-                            {
-                                Values.Add(0);
+                            if (numValues != numPositions)
+                            { 
+                                while (Values.Count <= Positions[_ValuesRead])
+                                {
+                                    Values.Add(0);
+                                }
+                                // Avoid later repositioning, put every value to its Position
+                                Values[Positions[_ValuesRead]] = v;
                             }
-                            // Avoid later repositioning, put every value to its Position
-                            Values[Positions[_ValuesRead]] = v;
+                            Values.Add(v);
                             _ValuesRead++;
                         }
                     }),
@@ -776,7 +820,8 @@ namespace Orts.Formats.Msts
                 // If read any Values, or the control requires Values to control
                 //     The twostate, tristate, signal displays are not in these
                 // Need check the Values collection for validity
-                if (_ValuesRead > 0 || ControlStyle == CABViewControlStyles.SPRUNG || ControlStyle == CABViewControlStyles.NOT_SPRUNG)
+                if (_ValuesRead > 0 || ControlStyle == CABViewControlStyles.SPRUNG || ControlStyle == CABViewControlStyles.NOT_SPRUNG ||
+                    FramesCount  > 0 || (FramesX > 0 && FramesY > 0 ))
                 {
                     // Check max number of Frames
                     if (FramesCount == 0)
@@ -797,80 +842,131 @@ namespace Orts.Formats.Msts
 
                     // Now we have an ACE and Frames for it.
 
-                    // Fixup Positions and Values collections first
+                    // Only shuffle data in following cases
 
-                    // If the read Positions and Values are not match
-                    // Or we didn't read Values but have Frames to draw
-                    // Do not test if FramesCount equals Values count, we trust in the creator -
-                    //     maybe did not want to display all Frames
-                    // (If there are more Values than Frames it will checked at draw time)
-                    // Need to fix the whole Values
-                    if (Positions.Count != _ValuesRead || (FramesCount > 0 && Values.Count == 0))
+                    if (Values.Count != Positions.Count || (Values.Count < FramesCount & canFill)|| ( Values.Count > 0 && Values[0] == Values[Values.Count - 1] && Values[0] == 0))
                     {
-                        // Clear existing
-                        Positions.Clear();
-                        Values.Clear();
 
-                        // Add the two sure positions, the two ends
-                        Positions.Add(0);
-                        // We will need the FramesCount later!
-                        // We use Positions only here
-                        Positions.Add(FramesCount);
+                        // Fixup Positions and Values collections first
 
-                        // Fill empty Values
-                        for (int i = 0; i < FramesCount; i++)
-                            Values.Add(0);
-                        Values[0] = MinValue;
-
-                        Values.Add(MaxValue);
-                    }
-                    // The Positions, Values are correct
-                    else
-                    {
-                        // Check if read Values at all
-                        if (Values.Count > 0 && Values[0] <= Values[Values.Count-1])
-                            // Set Min for sure
-                            Values[0] = MinValue;
-                        else if (Values.Count == 0)
-                            Values.Add(MinValue);
-
-                        // Fill empty Values
-                        for (int i = Values.Count; i < FramesCount; i++)
-                            Values.Add(Values[Values.Count-1]);
-
-                        // Add the maximums to the end, the Value will be removed
-                        // We use Positions only here
-                        if (Values.Count > 0 && Values[0] <= Values[Values.Count - 1]) Values.Add(MaxValue);
-                        else if (Values.Count > 0 && Values[0] > Values[Values.Count - 1]) Values.Add(MinValue);
-                        Positions.Add(FramesCount);
-                    }
-
-                    // OK, we have a valid size of Positions and Values
-
-                    // Now it is the time for checking holes in the given data
-                    if (Positions.Count < FramesCount - 1 && Values[0] <= Values[Values.Count - 1])
-                    {
-                        int j = 1;
-                        int p = 0;
-                        // Skip the 0 element, that is the default MinValue
-                        for (int i = 1; i < Positions.Count; i++)
+                        // If the read Positions and Values are not match
+                        // Or we didn't read Values but have Frames to draw
+                        // Do not test if FramesCount equals Values count, we trust in the creator -
+                        //     maybe did not want to display all Frames
+                        // (If there are more Values than Frames it will checked at draw time)
+                        // Need to fix the whole Values
+                        if (Positions.Count != _ValuesRead || (FramesCount > 0 && (Values.Count == 0 || Values.Count == 1)))
                         {
-                            // Found a hole
-                            if (Positions[i] != p + 1)
-                            {
-                                // Iterate to the next valid data and fill the hole
-                                for (j = p + 1; j < Positions[i]; j++)
-                                {
-                                    // Extrapolate into the hole
-                                    Values[j] = MathHelper.Lerp((float)Values[p], (float)Values[Positions[i]], (float)j / (float)Positions[i]);
-                                }
-                            }
-                            p = Positions[i];
-                        }
-                    }
+                            //This if clause covers among others following cases:
+                            // Case 1 (e.g. engine brake lever of Dash 9):
+                            //NumFrames ( 22 11 2 )
+			                //NumPositions ( 1 0 )
+			                //NumValues ( 1 0 )
+			                //Orientation ( 1 )
+			                //DirIncrease ( 1 )
+			                //ScaleRange ( 0 1 )
+                            //
+                            // Case 2 (e.g. throttle lever of Acela):
+			                //NumFrames ( 25 5 5 )
+			                //NumPositions ( 0 )
+			                //NumValues ( 0 )
+			                //Orientation ( 1 )
+			                //DirIncrease ( 1 )
+			                //ScaleRange ( 0 1 )
+                            //
+                            // Clear existing
+                            Positions.Clear();
+                            Values.Clear();
 
-                    // Don't need the MaxValue added before, remove it
-                    Values.RemoveAt(FramesCount);
+                            // Add the two sure positions, the two ends
+                            Positions.Add(0);
+                            // We will need the FramesCount later!
+                            // We use Positions only here
+                            Positions.Add(FramesCount);
+
+                            // Fill empty Values
+                            for (int i = 0; i < FramesCount; i++)
+                                Values.Add(0);
+                            Values[0] = MinValue;
+
+                            Values.Add(MaxValue);
+                        }
+                        else if (Values.Count == 2 && Values[0] == 0 && Values[1] < MaxValue && Positions[0] == 0 && Positions[1] == 1 && Values.Count < FramesCount)
+                        {
+                            //This if clause covers among others following cases:
+                            // Case 1 (e.g. engine brake lever of gp38):
+			                //NumFrames ( 18 2 9 )
+			                //NumPositions ( 2 0 1 )
+			                //NumValues ( 2 0 0.3 )
+			                //Orientation ( 0 )
+			                //DirIncrease ( 0 )
+			                //ScaleRange ( 0 1 )
+                            Positions.Add(FramesCount);
+                            // Fill empty Values
+                            for (int i = Values.Count; i < FramesCount; i++)
+                                Values.Add(Values[1]);
+                            Values.Add(MaxValue);                            
+                        }
+
+                        else
+                        {
+                            //This if clause covers among others following cases:
+                            // Case 1 (e.g. train brake lever of Acela): 
+			                //NumFrames ( 12 4 3 )
+			                //NumPositions ( 5 0 1 9 10 11 )
+			                //NumValues ( 5 0 0.2 0.85 0.9 0.95 )
+			                //Orientation ( 1 )
+			                //DirIncrease ( 1 )
+			                //ScaleRange ( 0 1 )
+                            //
+                            // Fill empty Values
+                            int iValues = 1;
+                            for (int i = 1; i < FramesCount && i <= Positions.Count - 1 && Values.Count < FramesCount; i++)
+                            {
+                                var deltaPos = Positions[i] - Positions[i - 1];
+                                while (deltaPos > 1 && Values.Count < FramesCount)
+                                {
+
+                                    Values.Insert(iValues, 0);
+                                    iValues++;
+                                    deltaPos--;
+                                }
+                                iValues++;
+                            }
+
+                            // Add the maximums to the end, the Value will be removed
+                            // We use Positions only here
+                            if (Values.Count > 0 && Values[0] <= Values[Values.Count - 1]) Values.Add(MaxValue);
+                            else if (Values.Count > 0 && Values[0] > Values[Values.Count - 1]) Values.Add(MinValue);
+                        }
+
+                        // OK, we have a valid size of Positions and Values
+
+                        // Now it is the time for checking holes in the given data
+                        if ((Positions.Count < FramesCount - 1 && Values[0] <= Values[Values.Count - 1]) || (Values.Count > 1 && Values[0] == Values[Values.Count - 2] && Values[0] == 0))
+                        {
+                            int j = 1;
+                            int p = 0;
+                            // Skip the 0 element, that is the default MinValue
+                            for (int i = 1; i < Positions.Count; i++)
+                            {
+                                // Found a hole
+                                if (Positions[i] != p + 1)
+                                {
+                                    // Iterate to the next valid data and fill the hole
+                                    for (j = p + 1; j < Positions[i]; j++)
+                                    {
+                                        // Extrapolate into the hole
+                                        Values[j] = MathHelper.Lerp((float)Values[p], (float)Values[Positions[i]], (float)j / (float)Positions[i]);
+                                    }
+                                }
+                                p = Positions[i];
+                            }
+                        }
+
+                        // Don't need the MaxValue added before, remove it
+                        Values.RemoveAt(Values.Count - 1);
+                    }
                 }
 
                 // MSTS ignores/overrides various settings by the following exceptional cases:

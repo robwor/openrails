@@ -1602,7 +1602,7 @@ namespace Orts.Viewer3D
         public ORTSVariableTrigger(SoundStream soundStream, Orts.Formats.Msts.Variable_Trigger smsData)
         {
             SMS = smsData;
-            car = soundStream.SoundSource.Car;
+            car = soundStream.SoundSource.Car != null ? soundStream.SoundSource.Car : (MSTSWagon)soundStream.SoundSource.Viewer.Camera.AttachedCar;
             SoundStream = soundStream;
             SoundCommand = ORTSSoundCommand.FromMSTS(smsData.SoundCommand, soundStream);
             Initialize();
@@ -2236,11 +2236,26 @@ namespace Orts.Viewer3D
                     // int.MaxValue means do not change the current region even if we left it
                     retval = int.MaxValue;
                 }
+                //  they are different types and far from each other
+                //  So we are in a neutral zone, retval is 0, default track type
             }
-            // If none of the conditions above apply,
-            //  - Missing items before or behind us, 
-            //  - or they are different types and far from each other
-            //  So we are in a neutral zone, retval is 0, default track type
+            else if (prevItem != null)
+            {
+                // only one, take it!
+                retval = prevItem.SoundRegionTrackType;
+                outPrevDist = prevDist;
+            }
+            else if (nextItem != null)
+            {
+                // only one, take it!
+                retval = nextItem.SoundRegionTrackType;
+                outNextDist = nextDist;
+            }
+            //  - Missing items before or behind us, maintain last sound
+            else
+            {
+                retval = int.MaxValue;
+            }
             return retval;
         }
 

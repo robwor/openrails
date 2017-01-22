@@ -44,6 +44,7 @@
 
 using Microsoft.Xna.Framework;
 using Orts.Formats.Msts;
+using Orts.Formats.OR;
 using ORTS.Common;
 using System;
 using System.Collections.Generic;
@@ -244,6 +245,29 @@ namespace Orts.Viewer3D
             // read the world file 
             var WFile = new Orts.Formats.Msts.WorldFile(WFilePath);
 
+            // check for existence of world file in OpenRails subfolder
+
+            WFilePath = viewer.Simulator.RoutePath + @"\World\Openrails\" + WFileName;
+            if (File.Exists(WFilePath))
+            {
+                // We have an OR-specific addition to world file
+                WFile.InsertORSpecificData(WFilePath);
+            }
+
+
+
+            // to avoid loop checking for every object this pre-check is performed
+            bool containsTurntable = false;
+            if (Program.Simulator.Turntables != null)
+            {
+                foreach (var turntable in Program.Simulator.Turntables)
+                    if (turntable.WFile == WFileName)
+                    {
+                        containsTurntable = true;
+                        break;
+                    }
+            }
+
             // create all the individual scenery objects specified in the WFile
             foreach (var worldObject in WFile.Tr_Worldfile)
             {
@@ -324,8 +348,23 @@ namespace Orts.Viewer3D
                                 //if (success == 0) sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
                             }
                             //otherwise, use shapes
-                            else sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
-
+                            else if (!containsTurntable) sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
+                            else
+                            {
+                                var found = false;
+                                foreach (var turntable in Program.Simulator.Turntables)
+                                {
+                                    if (worldObject.UID == turntable.UID && WFileName == turntable.WFile)
+                                    {
+                                        found = true;
+                                        turntable.ComputeCenter(worldMatrix);
+                                        var startingY = Math.Asin(-2 * (worldObject.QDirection.A * worldObject.QDirection.C - worldObject.QDirection.B * worldObject.QDirection.D));
+                                        sceneryObjects.Add(new TurntableShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None, turntable, startingY));
+                                        break;
+                                    }
+                                }
+                                if (!found) sceneryObjects.Add(new StaticTrackShape(viewer, shapeFilePath, worldMatrix));
+                            }
                         }
                         if (viewer.Simulator.Settings.Wire == true && viewer.Simulator.TRK.Tr_RouteFile.Electrified == true
                             && worldObject.StaticDetailLevel != 2   // Make it compatible with routes that use 'HideWire', a workaround for MSTS that 
@@ -375,6 +414,12 @@ namespace Orts.Viewer3D
                     }
                     else if (worldObject.GetType() == typeof(CarSpawnerObj))
                     {
+                        if (Program.Simulator.CarSpawnerLists != null && ((CarSpawnerObj)worldObject).ListName != null)
+                        {
+                            ((CarSpawnerObj)worldObject).CarSpawnerListIdx = Program.Simulator.CarSpawnerLists.FindIndex(x => x.ListName == ((CarSpawnerObj)worldObject).ListName);
+                            if (((CarSpawnerObj)worldObject).CarSpawnerListIdx < 0 || ((CarSpawnerObj)worldObject).CarSpawnerListIdx > Program.Simulator.CarSpawnerLists.Count-1) ((CarSpawnerObj)worldObject).CarSpawnerListIdx = 0;
+                        }
+                        else ((CarSpawnerObj)worldObject).CarSpawnerListIdx = 0;
                         carSpawners.Add(new RoadCarSpawner(viewer, worldMatrix, (CarSpawnerObj)worldObject));
                     }
                     else if (worldObject.GetType() == typeof(SidingObj))
@@ -390,7 +435,7 @@ namespace Orts.Viewer3D
                         if (animated)
                             sceneryObjects.Add(new AnimatedShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
                         else
-                            sceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));
+                            sceneryObjects.Add(new StaticShape(viewer, shapeFilePath, worldMatrix, shadowCaster ? ShapeFlags.ShadowCaster : ShapeFlags.None));                     
                     }
                     else if (worldObject.GetType() == typeof(PickupObj))
                     {

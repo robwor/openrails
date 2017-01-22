@@ -251,6 +251,8 @@ namespace Orts.MultiPlayer
         public double seconds;
         public int season, weather;
         public int pantofirst, pantosecond;
+        public string frontorrearcab;
+        public int headlight;
         public string leadingID;
         public string[] cars;
         public string[] ids;
@@ -289,6 +291,8 @@ namespace Orts.MultiPlayer
                 weather = int.Parse(data[10]);
                 pantofirst = int.Parse(data[11]);
                 pantosecond = int.Parse(data[12]);
+                frontorrearcab = data[13];
+                headlight = int.Parse(data[14]);
                 //user = areas[0].Trim();
                 con = areas[2].Trim();
                 route = areas[3].Trim();
@@ -374,6 +378,8 @@ namespace Orts.MultiPlayer
             {
                 pantofirst = w.Pantographs[1].CommandUp ? 1 : 0;
                 pantosecond = w.Pantographs[2].CommandUp ? 1 : 0;
+                frontorrearcab = (w as MSTSLocomotive).UsingRearCab ? "R" : "F";
+                headlight = w.Headlight;
             }
 
             cars = new string[t.Cars.Count];
@@ -386,7 +392,7 @@ namespace Orts.MultiPlayer
                 ids[i] = t.Cars[i].CarID;
                 if (t.Cars[i].Flipped == true) flipped[i] = 1;
                 else flipped[i] = 0;
-                lengths[i] = (int)(t.Cars[i].CarLengthM);
+                lengths[i] = (int)(t.Cars[i].CarLengthM * 100);
             }
             if (t.LeadLocomotive != null) leadingID = t.LeadLocomotive.CarID;
             else leadingID = "NA";
@@ -399,7 +405,7 @@ namespace Orts.MultiPlayer
         public override string ToString()
         {
             string tmp = "PLAYER " + user + " " + code + " " + num + " " + TileX + " " + TileZ + " " + X.ToString(CultureInfo.InvariantCulture) + " " + Z.ToString(CultureInfo.InvariantCulture)
-                + " " + Travelled.ToString(CultureInfo.InvariantCulture) + " " + seconds.ToString(CultureInfo.InvariantCulture) + " " + season + " " + weather + " " + pantofirst + " " + pantosecond + " \r" +
+                + " " + Travelled.ToString(CultureInfo.InvariantCulture) + " " + seconds.ToString(CultureInfo.InvariantCulture) + " " + season + " " + weather + " " + pantofirst + " " + pantosecond + " " + frontorrearcab + " " + headlight + " \r" +
                 leadingID + "\r" + con + "\r" + route + "\r" + path + "\r" + dir + "\r" + url + "\r";
             for (var i = 0; i < cars.Length; i++)
             {
@@ -1829,19 +1835,22 @@ namespace Orts.MultiPlayer
         int num;
         string engine;
         string user;
+        string frontOrRearCab;
         public MSGLocoChange(string m)
         {
             m.Trim();
             string[] t = m.Split('\t');
             user = t[0];
             engine = t[1];
-            num = int.Parse(t[2]);
+            frontOrRearCab = t[2];
+            num = int.Parse(t[3]);
         }
 
-        public MSGLocoChange(string u, string l, Train t)
+        public MSGLocoChange(string u, string l, string f, Train t)
         {
             user = u;
             engine = l;
+            frontOrRearCab = f;
             num = t.Number;
         }
 
@@ -1854,11 +1863,16 @@ namespace Orts.MultiPlayer
                     if (car.CarID == engine)
                     {
                         car.Train.LeadLocomotive = car;
+                        (car.Train.LeadLocomotive as MSTSLocomotive).UsingRearCab = frontOrRearCab == "F" ? false : true;
                         foreach (var p in MPManager.OnlineTrains.Players)
                         {
-                            if (p.Value.Train == t) { p.Value.LeadingLocomotiveID = car.CarID; break; }
+                            if (p.Value.Train == t)
+                            {
+                                p.Value.LeadingLocomotiveID = car.CarID;                              
+                                break;
+                            }
                         }
-                        if (MPManager.IsServer()) MPManager.BroadCast((new MSGLocoChange(user, engine, t)).ToString());
+                        if (MPManager.IsServer()) MPManager.BroadCast((new MSGLocoChange(user, engine, frontOrRearCab, t)).ToString());
                         return;
                     }
                 }
@@ -1867,7 +1881,7 @@ namespace Orts.MultiPlayer
 
         public override string ToString()
         {
-            string tmp = "LOCCHANGE " + user + "\t" + engine + "\t" + num;
+            string tmp = "LOCCHANGE " + user + "\t" + engine + "\t" + frontOrRearCab + "\t" + num;
             return " " + tmp.Length + ": " + tmp;
         }
     }
@@ -1912,7 +1926,7 @@ namespace Orts.MultiPlayer
 
             if (EventName == "HORN")
             {
-                t.SignalEvent(EventState == 1 ? Event.HornOn : Event.HornOff);
+                if (t.LeadLocomotive is MSTSLocomotive) (t.LeadLocomotive as MSTSLocomotive).ManualHorn = (EventState == 1);
                 MPManager.BroadCast(this.ToString()); //if the server, will broadcast
             }
             else if (EventName == "PANTO1")
@@ -1929,7 +1943,7 @@ namespace Orts.MultiPlayer
             }
             else if (EventName == "BELL")
             {
-                if (t.LeadLocomotive != null) t.LeadLocomotive.SignalEvent(EventState == 0 ? Event.BellOff : Event.BellOn);
+                if (t.LeadLocomotive is MSTSLocomotive) (t.LeadLocomotive as MSTSLocomotive).ManualBell = (EventState == 1);
                 MPManager.BroadCast(this.ToString()); //if the server, will broadcast
             }
             else if (EventName == "WIPER")
@@ -2935,7 +2949,7 @@ namespace Orts.MultiPlayer
     public class MSGLocoInfo : Message
     {
 
-        float EB, DB, TT, VL, CC, BC, DC, FC, I1, I2, SH;
+        float EB, DB, TT, VL, CC, BC, DC, FC, I1, I2, SH, SE;
         string user;
         int tnum; //train number
 
@@ -2943,11 +2957,11 @@ namespace Orts.MultiPlayer
         public MSGLocoInfo(TrainCar c, string u)
         {
             MSTSLocomotive loco = (MSTSLocomotive)c;
-            EB = DB = TT = VL = CC = BC = DC = FC = I1 = I2 = SH = 0.0f;
+            EB = DB = TT = VL = CC = BC = DC = FC = I1 = I2 = SH = SE = 0.0f;
             if (loco is MSTSSteamLocomotive)
             {
                 MSTSSteamLocomotive loco1 = (MSTSSteamLocomotive)loco;
-                loco1.GetLocoInfo(ref CC, ref BC, ref DC, ref FC, ref I1, ref I2, ref SH);
+                loco1.GetLocoInfo(ref CC, ref BC, ref DC, ref FC, ref I1, ref I2, ref SH, ref SE);
             }
             if (loco.EngineBrakeController != null)
             {
@@ -3009,7 +3023,7 @@ namespace Orts.MultiPlayer
             if (loco is MSTSSteamLocomotive)
             {
                 MSTSSteamLocomotive loco1 = (MSTSSteamLocomotive)loco;
-                loco1.GetLocoInfo(ref CC, ref BC, ref DC, ref FC, ref I1, ref I2, ref SH);
+                loco1.GetLocoInfo(ref CC, ref BC, ref DC, ref FC, ref I1, ref I2, ref SH, ref SE);
             }
             if (loco.EngineBrakeController != null)
             {

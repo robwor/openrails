@@ -30,6 +30,9 @@
 //#define ALLOW_ORTS_SPECIFIC_ENG_PARAMETERS
 //#define DEBUG_AUXTENDER
 
+// Debug for Friction Force
+//#define DEBUG_FRICTION
+
 using Microsoft.Xna.Framework;
 using Orts.Formats.Msts;
 using Orts.Parsers.Msts;
@@ -73,6 +76,8 @@ namespace Orts.Simulation.RollingStocks
         public bool IsDavisFriction = true; // Default to new Davis type friction
         public bool IsLowSpeed = true; // set indicator for low speed operation  0 - 5mph
 
+        Interpolator BrakeShoeFrictionFactor;  // Factor of friction for wagon brake shoes
+
         // simulation parameters
         public float Variable1;  // used to convey status to soundsource
         public float Variable2;
@@ -112,7 +117,9 @@ namespace Orts.Simulation.RollingStocks
         public float AdhesionK = 0.7f;   //slip characteristics slope
         //public AntislipControl AntislipControl = AntislipControl.None;
         public float AxleInertiaKgm2;    //axle inertia
+        public float AdhesionDriveWheelRadiusM;
         public float WheelSpeedMpS;
+        public float WheelSpeedSlipMpS; // speed of wheel if locomotive is slipping
         public float SlipWarningThresholdPercent = 70;
         public float NumWheelsBrakingFactor = 4;   // MSTS braking factor loosely based on the number of braked wheels. Not used yet.
         public MSTSNotchController WeightLoadController; // Used to control freight loading in freight cars
@@ -330,6 +337,11 @@ namespace Orts.Simulation.RollingStocks
                     CentreOfGravityM.X = stf.ReadFloat(STFReader.UNITS.Distance, null);
                     CentreOfGravityM.Y = stf.ReadFloat(STFReader.UNITS.Distance, null);
                     CentreOfGravityM.Z = stf.ReadFloat(STFReader.UNITS.Distance, null);
+                    if (Math.Abs(CentreOfGravityM.Z) > 1)
+                    {
+                        STFException.TraceWarning(stf, string.Format("Ignored CentreOfGravity Z value {0} outside range -1 to +1", CentreOfGravityM.Z));
+                        CentreOfGravityM.Z = 0;
+                    }
                     stf.SkipRestOfBlock();
                     break;
                 case "wagon(ortsunbalancedsuperelevation": UnbalancedSuperElevationM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
@@ -344,6 +356,7 @@ namespace Orts.Simulation.RollingStocks
                 case "wagon(wheelradius": WheelRadiusM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
                 case "engine(wheelradius": DriverWheelRadiusM = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); break;
                 case "wagon(sound": MainSoundFileName = stf.ReadStringBlock(null); break;
+                case "wagon(ortsbrakeshoefriction": BrakeShoeFrictionFactor = new Interpolator(stf); break;
                 case "wagon(ortsdavis_a": DavisAN = stf.ReadFloatBlock(STFReader.UNITS.Force, null); break;
                 case "wagon(ortsdavis_b": DavisBNSpM = stf.ReadFloatBlock(STFReader.UNITS.Resistance, null); break;
                 case "wagon(ortsdavis_c": DavisCNSSpMM = stf.ReadFloatBlock(STFReader.UNITS.ResistanceDavisC, null); break;
@@ -436,8 +449,7 @@ namespace Orts.Simulation.RollingStocks
                     break;
                 case "wagon(ortsadhesion(wheelset(axle(ortsradius":
                     stf.MustMatch("(");
-                    // <CJComment> Shouldn't this be "WheelRadiusM = " ? </CJComment>
-                    AxleInertiaKgm2 = stf.ReadFloatBlock(STFReader.UNITS.Distance, null);
+                    AdhesionDriveWheelRadiusM = stf.ReadFloat(STFReader.UNITS.Distance, null);
                     stf.SkipRestOfBlock();
                     break;
                 case "wagon(lights":
@@ -490,6 +502,7 @@ namespace Orts.Simulation.RollingStocks
             WheelRadiusM = copy.WheelRadiusM;
             DriverWheelRadiusM = copy.DriverWheelRadiusM;
             MainSoundFileName = copy.MainSoundFileName;
+            BrakeShoeFrictionFactor = copy.BrakeShoeFrictionFactor;
             DavisAN = copy.DavisAN;
             DavisBNSpM = copy.DavisBNSpM;
             DavisCNSSpMM = copy.DavisCNSSpMM;
@@ -520,6 +533,7 @@ namespace Orts.Simulation.RollingStocks
             Curtius_KnifflerC = copy.Curtius_KnifflerC;
             AdhesionK = copy.AdhesionK;
             AxleInertiaKgm2 = copy.AxleInertiaKgm2;
+            AdhesionDriveWheelRadiusM = copy.AdhesionDriveWheelRadiusM;
             SlipWarningThresholdPercent = copy.SlipWarningThresholdPercent;
             Lights = copy.Lights;
             foreach (PassengerViewPoint passengerViewPoint in copy.PassengerViewpoints)
@@ -897,21 +911,41 @@ namespace Orts.Simulation.RollingStocks
                 {
                     FrictionForceN = DavisAN + AbsSpeedMpS * (DavisBNSpM + AbsSpeedMpS * DavisCNSSpMM); // for normal speed operation
                 }
+
+#if DEBUG_FRICTION
+
+                Trace.TraceInformation("========================== Debug Friction in MSTSWagon.cs ==========================================");
+                Trace.TraceInformation("Stationary - CarID {0} Force0N {1} Force5N {2} Speed {3} Factor {4}", CarID, Friction0N, Friction5N, AbsSpeedMpS, StaticFrictionFactorLb);
+                Trace.TraceInformation("Stationary - Mass {0} Mass (US-tons) {1}", MassKG, Kg.ToTUS(MassKG));
+                Trace.TraceInformation("Stationary - Weather Type (1 for Snow) {0}", (int)Simulator.WeatherType);
+                Trace.TraceInformation("Stationary - Force0 lbf {0} Force5 lbf {1}", N.ToLbf(Friction0N), N.ToLbf(Friction5N));
+
+#endif
+
             }
 
 
             foreach (MSTSCoupling coupler in Couplers)
             {
-                if (-CouplerForceU > coupler.Break1N || IsCriticalSpeed == true)  // break couplers if forces exceeded onm coupler or train has "overturned" on curve
+                if (IsPlayerTrain) // Only break couplers on player trains
                 {
-                    CouplerOverloaded = true;
+                    if (-CouplerForceU > coupler.Break1N || IsCriticalSpeed == true)  // break couplers if forces exceeded onm coupler or train has "overturned" on curve
+                    {
+                        CouplerOverloaded = true;
+                    }
+                    else
+                    {
+                        CouplerOverloaded = false;
+                    }
                 }
-                else
+                else // if not a player train then don't ever break the couplers
+                {
                     CouplerOverloaded = false;
+                }
             }
 
             Pantographs.Update(elapsedClockSeconds);
-
+            
             MSTSBrakeSystem.Update(elapsedClockSeconds);
 
             if (WeightLoadController != null)
@@ -927,6 +961,11 @@ namespace Orts.Simulation.RollingStocks
                             Simulator.Confirmer.UpdateWithPerCent(CabControl.FreightLoad,
                                 CabSetting.Increase, WeightLoadController.CurrentValue * 100);
                     }
+                }
+                if (WeightLoadController.UpdateValue == 0.0 && FreightAnimations.LoadedOne != null && FreightAnimations.LoadedOne.LoadPerCent == 0.0)
+                {
+                    FreightAnimations.LoadedOne = null;
+                    FreightAnimations.FreightType = PickupType.None;
                 }
                 if (FreightAnimations.WagonEmptyWeight != -1) MassKG = FreightAnimations.WagonEmptyWeight + FreightAnimations.FreightWeight + FreightAnimations.StaticFreightWeight;
                 if (WaitForAnimationReady && WeightLoadController.CommandStartTime + FreightAnimations.UnloadingStartDelay <= Simulator.ClockTime)
@@ -1173,6 +1212,46 @@ namespace Orts.Simulation.RollingStocks
             return fraction;
         }
 
+        /// <summary>
+        /// Returns the Brake shoe coefficient.
+        /// </summary>
+
+        public override float GetUserBrakeShoeFrictionFactor()
+        {
+            var frictionfraction = 0.0f;
+            if ( BrakeShoeFrictionFactor == null)
+            {
+                frictionfraction = 0.0f;
+            }
+            else
+            {
+                frictionfraction = BrakeShoeFrictionFactor[MpS.ToKpH(AbsSpeedMpS)];
+            }
+            
+            return frictionfraction;
+        }
+
+        /// <summary>
+        /// Returns the Brake shoe coefficient at zero speed.
+        /// </summary>
+
+        public override float GetZeroUserBrakeShoeFrictionFactor()
+        {
+            var frictionfraction = 0.0f;
+            if (BrakeShoeFrictionFactor == null)
+            {
+                frictionfraction = 0.0f;
+            }
+            else
+            {
+                frictionfraction = BrakeShoeFrictionFactor[0.0f];
+            }
+
+            return frictionfraction;
+        }       
+      
+        
+        
         /// <summary>
         /// Starts a continuous increase in controlled value.
         /// </summary>

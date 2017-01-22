@@ -5,54 +5,46 @@ New in This Release
 *******************
 
 Here are the features which have been added or substantially changed since
-v1.0 was released:
+v1.1 was released, mostly to provide more realism:
 
-- Further enhanced compatibility with MSTS content
-- Extended engine brake to tenders (A6ET brake)
-- Keyboard commands for fast throttle and brake zeroing
-- Support for domain names in multiplayer
-- Further improvements towards realistic train physics, among this steam 
-  heating for steam locomotives 
-- Multiple freight animations on single wagon or engine; wagon freight 
-  load/unload
-- Water refueling from trough
-- New sound triggers related to brakes 
-- New sound triggers related to curve force (e.g. for flange squeal)
-- Support for auxiliary tenders
-- Blended braking
-- Switching to manual mode also at speed
-- Direct access to OR documentation from main menu
 
-The features which have been added or substantially changed since
-v0.9 was released:
+Operation Additions
+-------------------
 
-- Train operation accordingly to timetables in .csv format, entered with
-  a specific editor
-- Support for languages other than English
-- Support of 3D cabs
-- Train physics far more realistic than in MSTS
-- A *Timetable* mode
+- The player's loco or a wagon may be turned on a turntable in an activity or in explore mode, with sound and multi-user support too.
+- UK distant semaphore signals, when on the same post as a home signal, have been enhanced to work prototypically.
+- Mileposts and diverging switches are now included in the Track Monitor window.
+- Braking friction is now related to speed and locos and stock will now skid if braking is excessive.
+- Improved modelling of the brake pressure and leakage so that brake controls are more realistic.
+- The Head Up Display (HUD) has better information on brake pressures and now shows the load weight of freight or passengers.
+- Time of day waiting points are easier to use as they no longer require a train to stop if the time has already passed.
+- The Car ID is now visible when using the Car Operation menu.
 
-Some experimental features have been added which you can turn on; some of
-them may affect performance. They include (v1.0):
+Locomotive Additions
+--------------------
 
-- Conditional permission for AI trains to pass a signal at stop 
-- Further improvements to AI train shunting
-- Optional runtime correction for braking parameters (improves driveability)
+- The switch to night time textures in cabs has been delayed about 45 mins, so that daylight has more time to fade for more realism.
+- For steam locos, wheel-slip has been added to match electric and diesel and the level in the water-glass is now affected by an incline for more realism.
+- The tilting behaviour of tilting trains on super-elevated track was accidentally removed and has now been restored.
+- The circuit breaker of an electric locomotive can now be controlled by the driver. The behaviour of the circuit breaker can be modified using scripts. Specific cabview controls and sound triggers are available for content creators.
+- Double wires and pantograph operation for electric locos with synchronous triphase motors are now supported. 
 
-v0.9:
+General Improvements
+--------------------
 
-- Compatibility with MSTS environment files
-- Extended AI train shunting
-- Adhesion linked to weather
-- Support for DDS textures
-- Extended viewing distance
-- The ability to change the driven train during an activity
-- Weather controlled within an activity (dynamic weather)
-- Water fill from water troughs is now implemented.
-- The Start/Stop keys for Diesel locomotives have changed.
+- The tracking cameras (no. 2 and 3) no longer tilt on super-elevated track.
+- Each road can now have different traffic.
+- Each route can now have different track shapes through the use of include files.
 
-The overall code architecture has been cleaned up, providing better separation 
-between simulation and viewing.
+System Additions
+----------------
 
-... and again, many many bugs were removed.
+- Loading screens can now fill a wide screen and be specific to Open Rails.
+- The multiple warnings when the loading of shape files fail are now disabled by default. 
+
+Bug Fixes
+---------
+A lot of minor bugs (e.g. AI trains, freight loading and refuelling) have also been fixed but our code is reaching
+the point where these problems are seen only by a few users and not in our regular testing. We need you to 
+`report these events in the usual way <http://openrails.org/contribute/reporting-bugs/>`_
+as we never see them.

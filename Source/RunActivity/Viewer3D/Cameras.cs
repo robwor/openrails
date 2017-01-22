@@ -797,7 +797,12 @@ namespace Orts.Viewer3D
             base.Restore(inf);
             var carIndex = inf.ReadInt32();
             if (carIndex != -1 && Viewer.SelectedTrain != null)
-                attachedCar = Viewer.SelectedTrain.Cars[carIndex];
+            {
+                if (carIndex < Viewer.SelectedTrain.Cars.Count)
+                    attachedCar = Viewer.SelectedTrain.Cars[carIndex];
+                else if (Viewer.SelectedTrain.Cars.Count > 0)
+                    attachedCar = Viewer.SelectedTrain.Cars[Viewer.SelectedTrain.Cars.Count -1];
+            }
             attachedLocation.X = inf.ReadSingle();
             attachedLocation.Y = inf.ReadSingle();
             attachedLocation.Z = inf.ReadSingle();
@@ -912,9 +917,15 @@ namespace Orts.Viewer3D
             lookAtPosition.Z *= -1;
             lookAtPosition = Vector3.Transform(lookAtPosition, attachedCar.WorldPosition.XNAMatrix);
             // Don't forget to rotate the up vector so the camera rotates with us.
-            var upRotation = attachedCar.WorldPosition.XNAMatrix;
-            upRotation.Translation = Vector3.Zero;
-            var up = Vector3.Transform(Vector3.Up, upRotation);
+            Vector3 up;
+            if (Viewer.Camera is TrackingCamera)
+                up = Vector3.Up;
+            else
+            {
+                var upRotation = attachedCar.WorldPosition.XNAMatrix;
+                upRotation.Translation = Vector3.Zero;
+                up = Vector3.Transform(Vector3.Up, upRotation);
+            }
             return Matrix.CreateLookAt(XnaLocation(cameraLocation), lookAtPosition, up);
         }
 
@@ -1574,12 +1585,9 @@ namespace Orts.Viewer3D
         {
             var loco = attachedCar as MSTSLocomotive;
 
-            // Get inclination offset due to PanUp() from previous view. 
-            // Inclination or up/down angle is a rotation about the X axis.
             var viewpointList = (loco.UsingRearCab)
             ? loco.CabViewList[(int)CabViewType.Rear].ViewPointList
             : loco.CabViewList[(int)CabViewType.Front].ViewPointList;
-            var rotationXRadiansOffset = RotationXRadians - MathHelper.ToRadians(viewpointList[sideLocation].StartDirection.X);
 
             sideLocation += index;
 
@@ -1593,8 +1601,6 @@ namespace Orts.Viewer3D
                 sideLocation = 0;
 
             SetCameraCar(attachedCar);
-            // Apply inclination offset due to PanUp() from previous view.
-            RotationXRadians += rotationXRadiansOffset;
         }
 
         /// <summary>
@@ -1627,7 +1633,7 @@ namespace Orts.Viewer3D
                 return;
             }
             // Adjust inclination (up/down angle) of external view to match.
-            var viewSpeed = speed * 0.00105f; // factor found by trial and error.
+            var viewSpeed = (int)speed * 0.00105f; // factor found by trial and error.
             RotationXRadians -= (up) ? viewSpeed : -viewSpeed;
         }
 
@@ -1644,7 +1650,7 @@ namespace Orts.Viewer3D
             ? loco.CabViewList[(int)CabViewType.Rear].ViewPointList
             : loco.CabViewList[(int)CabViewType.Front].ViewPointList;
 
-            RotationXRadians = MathHelper.ToRadians(viewpoints[sideLocation].StartDirection.X);
+            RotationXRadians = MathHelper.ToRadians(viewpoints[sideLocation].StartDirection.X) - 0.00105f * (Viewer.CabYOffsetPixels + Viewer.CabExceedsDisplay / 2);
             RotationYRadians = MathHelper.ToRadians(viewpoints[sideLocation].StartDirection.Y);
         }
 

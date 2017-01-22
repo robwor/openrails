@@ -31,6 +31,7 @@
 //#define ALLOW_ORTS_SPECIFIC_ENG_PARAMETERS
 
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework;
 using Orts.Formats.Msts;
 using Orts.Parsers.Msts;
 using Orts.Simulation.Physics;
@@ -66,7 +67,7 @@ namespace Orts.Simulation.RollingStocks
         float EngineRPMold;
         float EngineRPMRatio; // used to compute Variable1 and Variable2
 
-        public MSTSNotchController FuelController = new MSTSNotchController(0, 1, 0.1f);
+        public MSTSNotchController FuelController = new MSTSNotchController(0, 1, 0.0025f);
         public float MaxDieselLevelL = 5000.0f;
         public float DieselLevelL
         {
@@ -98,7 +99,7 @@ namespace Orts.Simulation.RollingStocks
 
         public DieselEngines DieselEngines;
 
-        public GearBox GearBox = new GearBox();
+        public GearBox GearBox = new GearBox(); // this is the same instance present in the first engine of the locomotive; instead instances in other engines, if any, are copies
 
         /// <summary>
         /// Used to accumulate a quantity that is not lost because of lack of precision when added to the Fuel level
@@ -164,6 +165,26 @@ namespace Orts.Simulation.RollingStocks
                 DieselEngines[0].Initialize(true);
             }
 
+            if (GearBox != null && GearBox.IsInitialized)
+            {
+                GearBox.CopyFromMSTSParams(DieselEngines[0]);
+                if (DieselEngines[0].GearBox == null)
+                {
+                    DieselEngines[0].GearBox = GearBox;
+                    DieselEngines[0].GearBox.UseLocoGearBox(DieselEngines[0]);
+                }
+                for (int i = 1; i < DieselEngines.Count; i++)
+                {
+                    if (DieselEngines[i].GearBox == null)
+                        DieselEngines[i].GearBox = new GearBox(GearBox, DieselEngines[i]);
+                }
+
+                if (GearBoxController == null)
+                {
+                    GearBoxController = new MSTSNotchController(GearBox.NumOfGears + 1);
+                }
+            }
+
             InitialMassKg = MassKG;
         }
 
@@ -204,6 +225,12 @@ namespace Orts.Simulation.RollingStocks
                 GearBoxController = new MSTSNotchController(locoCopy.GearBoxController);
 
             DieselEngines = new DieselEngines(locoCopy.DieselEngines, this);
+            if (DieselEngines[0].GearBox != null) GearBox = DieselEngines[0].GearBox;
+            for (int i = 1; i < DieselEngines.Count; i++)
+            {
+                if (DieselEngines[i].GearBox == null)
+                    DieselEngines[i].GearBox = new GearBox(GearBox, DieselEngines[i]);
+            }
             foreach (DieselEngine de in DieselEngines)
             {
                 de.Initialize(true);
@@ -212,26 +239,22 @@ namespace Orts.Simulation.RollingStocks
 
         public override void Initialize()
         {
-            if ((GearBox != null) && (GearBoxController == null))
+            if (GearBox != null && !GearBox.IsInitialized)
             {
-                if (!GearBox.IsInitialized)
-                    GearBox = null;
-                else
-                {
-                    foreach (DieselEngine de in DieselEngines)
-                    {
-                        if (de.GearBox == null)
-                            de.GearBox = new GearBox(GearBox, de);
-                        //if (this.Train.TrainType == Train.TRAINTYPE.AI)
-                        //    de.GearBox.GearBoxOperation = GearBoxOperation.Automatic;
-                    }
-                    GearBoxController = new MSTSNotchController(DieselEngines[0].GearBox.NumOfGears + 1);
-                }
+                GearBox = null;
             }
 
             DieselEngines.Initialize(false);
 
             base.Initialize();
+
+            // If DrvWheelWeight is not in ENG file, then calculate drivewheel weight freom FoA
+
+            if (DrvWheelWeightKg == 0) // if DrvWheelWeightKg not in ENG file.
+            {
+                DrvWheelWeightKg = MassKG; // set Drive wheel weight to total wagon mass if not in ENG file
+            }
+
         }
 
         /// <summary>
@@ -244,8 +267,8 @@ namespace Orts.Simulation.RollingStocks
             // outf.Write(Pan);
             base.Save(outf);
             outf.Write(DieselLevelL);
-            ControllerFactory.Save(GearBoxController, outf);
             DieselEngines.Save(outf);
+            ControllerFactory.Save(GearBoxController, outf);
         }
 
         /// <summary>
@@ -256,8 +279,8 @@ namespace Orts.Simulation.RollingStocks
         {
             base.Restore(inf);
             DieselLevelL = inf.ReadSingle();
-            ControllerFactory.Restore(GearBoxController, inf);
             DieselEngines.Restore(inf);
+            ControllerFactory.Restore(GearBoxController, inf);
         }
 
         //================================================================================================//
@@ -390,6 +413,11 @@ namespace Orts.Simulation.RollingStocks
                 {
                     PowerOn = false;
                     SignalEvent(Event.EnginePowerOff);
+                    foreach (DieselEngine de in DieselEngines)
+                    {
+                        if (de.EngineStatus != DieselEngine.Status.Stopping || de.EngineStatus != DieselEngine.Status.Stopped)
+                            de.Stop();
+                    }
                 }
                 MassKG = InitialMassKg - MaxDieselLevelL * DieselWeightKgpL + DieselLevelL * DieselWeightKgpL;
             }

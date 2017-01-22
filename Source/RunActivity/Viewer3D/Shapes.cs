@@ -387,13 +387,15 @@ namespace Orts.Viewer3D
     public class AnimatedShape : PoseableShape
     {
         protected float AnimationKey;  // advances with time
+        protected float FrameRateMultiplier = 1; // e.g. in passenger view shapes MSTS divides by 30 the frame rate; this is the inverse
 
         /// <summary>
         /// Construct and initialize the class
         /// </summary>
-        public AnimatedShape(Viewer viewer, string path, WorldPosition initialPosition, ShapeFlags flags)
+        public AnimatedShape(Viewer viewer, string path, WorldPosition initialPosition, ShapeFlags flags, float frameRateDivisor = 1.0f)
             : base(viewer, path, initialPosition, flags)
         {
+            FrameRateMultiplier = 1 / frameRateDivisor;
         }
 
         public AnimatedShape(Viewer viewer, string path, WorldPosition initialPosition)
@@ -406,7 +408,7 @@ namespace Orts.Viewer3D
             // if the shape has animations
             if (SharedShape.Animations != null && SharedShape.Animations.Count > 0 && SharedShape.Animations[0].FrameCount > 1)
             {
-                AnimationKey += SharedShape.Animations[0].FrameRate * elapsedTime.ClockSeconds;
+                AnimationKey += SharedShape.Animations[0].FrameRate * elapsedTime.ClockSeconds * FrameRateMultiplier;
                 while (AnimationKey > SharedShape.Animations[0].FrameCount) AnimationKey -= SharedShape.Animations[0].FrameCount;
                 while (AnimationKey < 0) AnimationKey += SharedShape.Animations[0].FrameCount;
 
@@ -643,8 +645,8 @@ namespace Orts.Viewer3D
     public class LevelCrossingShape : PoseableShape
     {
         readonly LevelCrossingObj CrossingObj;
-		readonly SoundSource Sound;
-		readonly LevelCrossing Crossing;
+        readonly SoundSource Sound;
+        readonly LevelCrossing Crossing;
 
         readonly float AnimationFrames;
         readonly float AnimationSpeed;
@@ -744,67 +746,67 @@ namespace Orts.Viewer3D
         }
     }
 
-	public class HazzardShape : PoseableShape
-	{
-		readonly HazardObj HazardObj;
-		readonly Hazzard Hazzard;
+    public class HazzardShape : PoseableShape
+    {
+        readonly HazardObj HazardObj;
+        readonly Hazzard Hazzard;
 
-		readonly int AnimationFrames;
-		float Moved = 0f;
-		float AnimationKey;
+        readonly int AnimationFrames;
+        float Moved = 0f;
+        float AnimationKey;
         float DelayHazAnimation;
 
-		public static HazzardShape CreateHazzard(Viewer viewer, string path, WorldPosition position, ShapeFlags shapeFlags, HazardObj hObj)
-		{
-			var h = viewer.Simulator.HazzardManager.AddHazzardIntoGame(hObj.itemId, hObj.FileName);
-			if (h == null) return null;
-			return new HazzardShape(viewer, viewer.Simulator.BasePath + @"\Global\Shapes\" + h.HazFile.Tr_HazardFile.FileName + "\0" + viewer.Simulator.BasePath + @"\Global\Textures", position, shapeFlags, hObj, h);
+        public static HazzardShape CreateHazzard(Viewer viewer, string path, WorldPosition position, ShapeFlags shapeFlags, HazardObj hObj)
+        {
+            var h = viewer.Simulator.HazzardManager.AddHazzardIntoGame(hObj.itemId, hObj.FileName);
+            if (h == null) return null;
+            return new HazzardShape(viewer, viewer.Simulator.BasePath + @"\Global\Shapes\" + h.HazFile.Tr_HazardFile.FileName + "\0" + viewer.Simulator.BasePath + @"\Global\Textures", position, shapeFlags, hObj, h);
 
-		}
+        }
 
-		public HazzardShape(Viewer viewer, string path, WorldPosition position, ShapeFlags shapeFlags, HazardObj hObj, Hazzard h)
-			: base(viewer, path, position, shapeFlags)
-		{
-			HazardObj = hObj;
-			Hazzard = h;
-			AnimationFrames = SharedShape.Animations[0].FrameCount;
-		}
+        public HazzardShape(Viewer viewer, string path, WorldPosition position, ShapeFlags shapeFlags, HazardObj hObj, Hazzard h)
+            : base(viewer, path, position, shapeFlags)
+        {
+            HazardObj = hObj;
+            Hazzard = h;
+            AnimationFrames = SharedShape.Animations[0].FrameCount;
+        }
 
-		public override void Unload()
-		{
-			Viewer.Simulator.HazzardManager.RemoveHazzardFromGame(HazardObj.itemId);
+        public override void Unload()
+        {
+            Viewer.Simulator.HazzardManager.RemoveHazzardFromGame(HazardObj.itemId);
             base.Unload();
-		}
+        }
 
-		public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
-		{
-			if (Hazzard == null) return;
-			Vector2 CurrentRange;
-			AnimationKey += elapsedTime.ClockSeconds* 24f;
+        public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
+        {
+            if (Hazzard == null) return;
+            Vector2 CurrentRange;
+            AnimationKey += elapsedTime.ClockSeconds * 24f;
             DelayHazAnimation += elapsedTime.ClockSeconds;
-			switch (Hazzard.state)
-			{
-				case Hazzard.State.Idle1:
-					CurrentRange = Hazzard.HazFile.Tr_HazardFile.Idle_Key; break;
-				case Hazzard.State.Idle2:
-					CurrentRange = Hazzard.HazFile.Tr_HazardFile.Idle_Key2; break;
-				case Hazzard.State.LookLeft:
-					CurrentRange = Hazzard.HazFile.Tr_HazardFile.Surprise_Key_Left; break;
-				case Hazzard.State.LookRight:
-					CurrentRange = Hazzard.HazFile.Tr_HazardFile.Surprise_Key_Right; break;
-				case Hazzard.State.Scared:
-				default:
-					CurrentRange = Hazzard.HazFile.Tr_HazardFile.Success_Scarper_Key;
-					if (Moved < Hazzard.HazFile.Tr_HazardFile.Distance)
-					{
-						var m = Hazzard.HazFile.Tr_HazardFile.Speed * elapsedTime.ClockSeconds;
-						Moved += m;
-						this.HazardObj.Position.Move(this.HazardObj.QDirection, m);
-						Location.Location = new Vector3(this.HazardObj.Position.X, this.HazardObj.Position.Y, this.HazardObj.Position.Z);
-					}
-					else { Moved = 0; Hazzard.state = Hazzard.State.Idle1; }
-					break;
-			}
+            switch (Hazzard.state)
+            {
+                case Hazzard.State.Idle1:
+                    CurrentRange = Hazzard.HazFile.Tr_HazardFile.Idle_Key; break;
+                case Hazzard.State.Idle2:
+                    CurrentRange = Hazzard.HazFile.Tr_HazardFile.Idle_Key2; break;
+                case Hazzard.State.LookLeft:
+                    CurrentRange = Hazzard.HazFile.Tr_HazardFile.Surprise_Key_Left; break;
+                case Hazzard.State.LookRight:
+                    CurrentRange = Hazzard.HazFile.Tr_HazardFile.Surprise_Key_Right; break;
+                case Hazzard.State.Scared:
+                default:
+                    CurrentRange = Hazzard.HazFile.Tr_HazardFile.Success_Scarper_Key;
+                    if (Moved < Hazzard.HazFile.Tr_HazardFile.Distance)
+                    {
+                        var m = Hazzard.HazFile.Tr_HazardFile.Speed * elapsedTime.ClockSeconds;
+                        Moved += m;
+                        this.HazardObj.Position.Move(this.HazardObj.QDirection, m);
+                        Location.Location = new Vector3(this.HazardObj.Position.X, this.HazardObj.Position.Y, this.HazardObj.Position.Z);
+                    }
+                    else { Moved = 0; Hazzard.state = Hazzard.State.Idle1; }
+                    break;
+            }
 
             if (Hazzard.state == Hazzard.State.Idle1 || Hazzard.state == Hazzard.State.Idle2)
             {
@@ -829,7 +831,7 @@ namespace Orts.Viewer3D
                 if (AnimationKey < CurrentRange.X) AnimationKey = CurrentRange.X;
                 if (AnimationKey > CurrentRange.Y) AnimationKey = CurrentRange.Y;
             }
-            
+
             if (Hazzard.state == Hazzard.State.Scared)
             {
                 if (AnimationKey < CurrentRange.X) AnimationKey = CurrentRange.X;
@@ -837,21 +839,21 @@ namespace Orts.Viewer3D
                 if (AnimationKey > CurrentRange.Y) AnimationKey = CurrentRange.X;
             }
 
-			for (var i = 0; i < SharedShape.Matrices.Length; ++i)
-				AnimateMatrix(i, AnimationKey);
-			
-			//var pos = this.HazardObj.Position;
-            			
-			SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
-		}
-	}
+            for (var i = 0; i < SharedShape.Matrices.Length; ++i)
+                AnimateMatrix(i, AnimationKey);
+
+            //var pos = this.HazardObj.Position;
+
+            SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
+        }
+    }
 
     public class FuelPickupItemShape : PoseableShape
     {
         readonly PickupObj FuelPickupItemObj;
         readonly FuelPickupItem FuelPickupItem;
         readonly SoundSource Sound;
-        readonly int FrameRate;
+        readonly float FrameRate;
 
         readonly int AnimationFrames;
         protected float AnimationKey;
@@ -907,7 +909,7 @@ namespace Orts.Viewer3D
                     }
                 }
             }
-            if (viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS != null && FuelPickupItemObj.PickupType == 6)
+            if (viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS != null && (FuelPickupItemObj.PickupType == 6 || FuelPickupItemObj.PickupType == 2))
             {
                 var soundPath = viewer.Simulator.RoutePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultCoalTowerSMS;
                 try
@@ -934,7 +936,7 @@ namespace Orts.Viewer3D
             FrameRate = 1;
             if (SharedShape.Animations != null && SharedShape.Animations.Count > 0 && SharedShape.Animations[0].anim_nodes != null && SharedShape.Animations[0].anim_nodes.Count > 0)
             {
-                FrameRate = (int)(SharedShape.Animations[0].FrameCount / FuelPickupItemObj.PickupAnimData.AnimationSpeed);
+                FrameRate = SharedShape.Animations[0].FrameCount / FuelPickupItemObj.PickupAnimData.AnimationSpeed;
                 foreach (var anim_node in SharedShape.Animations[0].anim_nodes)
                     if (anim_node.Name == "ANIMATED_PARTS")
                     {
@@ -957,7 +959,7 @@ namespace Orts.Viewer3D
         public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
         {
 
-             // 0 can be used as a setting for instant animation.
+            // 0 can be used as a setting for instant animation.
             if (FuelPickupItem.ReFill() && FuelPickupItemObj.UID == MSTSWagon.RefillProcess.ActivePickupObjectUID)
                 if (FuelPickupItemObj.PickupAnimData.AnimationSpeed == 0) AnimationKey = 1.0f;
                 else if (AnimationKey < AnimationFrames)
@@ -989,8 +991,106 @@ namespace Orts.Viewer3D
     public class RoadCarShape : AnimatedShape
     {
         public RoadCarShape(Viewer viewer, string path)
-            : base(viewer, path, new WorldPosition())
+            : base(viewer, path, new WorldPosition(), ShapeFlags.ShadowCaster)
         {
+        }
+    }
+
+    public class TurntableShape : PoseableShape
+    {
+        protected float AnimationKey;  // advances with time
+        protected Turntable Turntable; // linked turntable data
+        readonly SoundSource Sound;
+        bool Rotating = false;
+        protected int IAnimationMatrix = -1; // index of animation matrix
+
+        /// <summary>
+        /// Construct and initialize the class
+        /// </summary>
+        public TurntableShape(Viewer viewer, string path, WorldPosition initialPosition, ShapeFlags flags, Turntable turntable, double startingY)
+            : base(viewer, path, initialPosition, flags)
+        {
+            Turntable = turntable;
+            Turntable.StartingY = (float)startingY;
+            AnimationKey = (Turntable.YAngle / (float)Math.PI * 1800.0f + 3600) % 3600.0f;
+            for (var imatrix = 0; imatrix < SharedShape.Matrices.Length; ++imatrix)
+            {
+                if (SharedShape.MatrixNames[imatrix].ToLower() == turntable.Animations[0].ToLower())
+                {
+                    IAnimationMatrix = imatrix;
+                    break;
+                }
+            }
+            if (viewer.Simulator.TRK.Tr_RouteFile.DefaultTurntableSMS != null)
+            {
+                var soundPath = viewer.Simulator.RoutePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultTurntableSMS;
+                try
+                {
+                    Sound = new SoundSource(viewer, initialPosition.WorldLocation, Events.Source.ORTSTurntable, soundPath);
+                    viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
+                }
+                catch
+                {
+                    soundPath = viewer.Simulator.BasePath + @"\\sound\\" + viewer.Simulator.TRK.Tr_RouteFile.DefaultTurntableSMS;
+                    try
+                    {
+                        Sound = new SoundSource(viewer, initialPosition.WorldLocation, Events.Source.ORTSTurntable, soundPath);
+                        viewer.SoundProcess.AddSoundSources(this, new List<SoundSourceBase>() { Sound });
+                    }
+                    catch (Exception error)
+                    {
+                        Trace.WriteLine(new FileLoadException(soundPath, error));
+                    }
+                }
+            }
+            for (var matrix = 0; matrix < SharedShape.Matrices.Length; ++matrix)
+                AnimateMatrix(matrix, AnimationKey);
+
+            var absAnimationMatrix = XNAMatrices[IAnimationMatrix];
+            Matrix.Multiply(ref absAnimationMatrix, ref Location.XNAMatrix, out absAnimationMatrix);
+            Turntable.ReInitTrainPositions(absAnimationMatrix);
+        }
+
+        public override void PrepareFrame(RenderFrame frame, ElapsedTime elapsedTime)
+        {
+            if (Turntable.GoToTarget)
+            {
+                AnimationKey = (Turntable.TargetY / (float)Math.PI * 1800.0f + 3600) % 3600.0f;
+            }
+
+            else if (Turntable.Counterclockwise)
+            {
+                AnimationKey += SharedShape.Animations[0].FrameRate * elapsedTime.ClockSeconds;
+            }
+            else if (Turntable.Clockwise)
+            {
+                AnimationKey -= SharedShape.Animations[0].FrameRate * elapsedTime.ClockSeconds;
+            }
+            while (AnimationKey > SharedShape.Animations[0].FrameCount) AnimationKey -= SharedShape.Animations[0].FrameCount;
+            while (AnimationKey < 0) AnimationKey += SharedShape.Animations[0].FrameCount;
+
+            Turntable.YAngle = MathHelper.WrapAngle(AnimationKey / 1800.0f * (float)Math.PI);
+
+            if ((Turntable.Clockwise || Turntable.Counterclockwise) && !Rotating)
+            {
+                Rotating = true;
+                if (Sound != null) Sound.HandleEvent(Turntable.TrainsOnTurntable.Count == 1 &&
+                    Turntable.TrainsOnTurntable[0].FrontOnBoard && Turntable.TrainsOnTurntable[0].BackOnBoard ? Event.TurntableTurningLoaded : Event.TurntableTurningEmpty);
+            }
+            else if ((!Turntable.Clockwise && !Turntable.Counterclockwise && Rotating))
+            {
+                Rotating = false;
+                if (Sound != null) Sound.HandleEvent(Event.TurntableStopped);
+            }
+
+            // Update the pose for each matrix
+            for (var matrix = 0; matrix < SharedShape.Matrices.Length; ++matrix)
+                AnimateMatrix(matrix, AnimationKey);
+
+            var absAnimationMatrix = XNAMatrices[IAnimationMatrix];
+            Matrix.Multiply(ref absAnimationMatrix, ref Location.XNAMatrix, out absAnimationMatrix);
+            Turntable.PerformUpdateActions(absAnimationMatrix);
+            SharedShape.PrepareFrame(frame, Location, XNAMatrices, Flags);
         }
     }
 
@@ -1176,6 +1276,7 @@ namespace Orts.Viewer3D
         public LodControl[] LodControls;
         public bool HasNightSubObj;
         public int RootSubObjectIndex = 0;
+        public bool negativeBogie = false;
 
         readonly Viewer Viewer;
         public readonly string FilePath;
@@ -1216,7 +1317,17 @@ namespace Orts.Viewer3D
         void LoadContent()
         {
             Trace.Write("S");
-            var sFile = new ShapeFile(FilePath, Viewer.Settings.SuppressShapeWarnings);
+            var filePath = FilePath;
+            // commented lines allow reading the animation block from an additiona file in an Openrails subfolder
+//           string dir = Path.GetDirectoryName(filePath);
+//            string file = Path.GetFileName(filePath);
+//            string orFilePath = dir + @"\openrails\" + file;
+            var sFile = new ShapeFile(filePath, Viewer.Settings.SuppressShapeWarnings);
+//            if (file.ToLower().Contains("turntable") && File.Exists(orFilePath))
+//            {
+//                sFile.ReadAnimationBlock(orFilePath);
+//            }
+
 
             var textureFlags = Helpers.TextureFlags.None;
             if (File.Exists(FilePath + "d"))
@@ -1238,21 +1349,21 @@ namespace Orts.Viewer3D
             Animations = sFile.shape.animations;
 
 #if DEBUG_SHAPE_HIERARCHY
-			var debugShapeHierarchy = new StringBuilder();
-			debugShapeHierarchy.AppendFormat("Shape {0}:\n", Path.GetFileNameWithoutExtension(FilePath).ToUpper());
-			for (var i = 0; i < MatrixNames.Count; ++i)
-				debugShapeHierarchy.AppendFormat("  Matrix {0,-2}: {1}\n", i, MatrixNames[i]);
-			for (var i = 0; i < sFile.shape.prim_states.Count; ++i)
-				debugShapeHierarchy.AppendFormat("  PState {0,-2}: flags={1,-8:X8} shader={2,-15} alpha={3,-2} vstate={4,-2} lstate={5,-2} zbias={6,-5:F3} zbuffer={7,-2} name={8}\n", i, sFile.shape.prim_states[i].flags, sFile.shape.shader_names[sFile.shape.prim_states[i].ishader], sFile.shape.prim_states[i].alphatestmode, sFile.shape.prim_states[i].ivtx_state, sFile.shape.prim_states[i].LightCfgIdx, sFile.shape.prim_states[i].ZBias, sFile.shape.prim_states[i].ZBufMode, sFile.shape.prim_states[i].Name);
-			for (var i = 0; i < sFile.shape.vtx_states.Count; ++i)
-				debugShapeHierarchy.AppendFormat("  VState {0,-2}: flags={1,-8:X8} lflags={2,-8:X8} lstate={3,-2} material={4,-3} matrix2={5,-2}\n", i, sFile.shape.vtx_states[i].flags, sFile.shape.vtx_states[i].LightFlags, sFile.shape.vtx_states[i].LightCfgIdx, sFile.shape.vtx_states[i].LightMatIdx, sFile.shape.vtx_states[i].Matrix2);
-			for (var i = 0; i < sFile.shape.light_model_cfgs.Count; ++i)
-			{
-				debugShapeHierarchy.AppendFormat("  LState {0,-2}: flags={1,-8:X8} uv_ops={2,-2}\n", i, sFile.shape.light_model_cfgs[i].flags, sFile.shape.light_model_cfgs[i].uv_ops.Count);
-				for (var j = 0; j < sFile.shape.light_model_cfgs[i].uv_ops.Count; ++j)
-					debugShapeHierarchy.AppendFormat("    UV OP {0,-2}: texture_address_mode={1,-2}\n", j, sFile.shape.light_model_cfgs[i].uv_ops[j].TexAddrMode);
-			}
-			Console.Write(debugShapeHierarchy.ToString());
+            var debugShapeHierarchy = new StringBuilder();
+            debugShapeHierarchy.AppendFormat("Shape {0}:\n", Path.GetFileNameWithoutExtension(FilePath).ToUpper());
+            for (var i = 0; i < MatrixNames.Count; ++i)
+                debugShapeHierarchy.AppendFormat("  Matrix {0,-2}: {1}\n", i, MatrixNames[i]);
+            for (var i = 0; i < sFile.shape.prim_states.Count; ++i)
+                debugShapeHierarchy.AppendFormat("  PState {0,-2}: flags={1,-8:X8} shader={2,-15} alpha={3,-2} vstate={4,-2} lstate={5,-2} zbias={6,-5:F3} zbuffer={7,-2} name={8}\n", i, sFile.shape.prim_states[i].flags, sFile.shape.shader_names[sFile.shape.prim_states[i].ishader], sFile.shape.prim_states[i].alphatestmode, sFile.shape.prim_states[i].ivtx_state, sFile.shape.prim_states[i].LightCfgIdx, sFile.shape.prim_states[i].ZBias, sFile.shape.prim_states[i].ZBufMode, sFile.shape.prim_states[i].Name);
+            for (var i = 0; i < sFile.shape.vtx_states.Count; ++i)
+                debugShapeHierarchy.AppendFormat("  VState {0,-2}: flags={1,-8:X8} lflags={2,-8:X8} lstate={3,-2} material={4,-3} matrix2={5,-2}\n", i, sFile.shape.vtx_states[i].flags, sFile.shape.vtx_states[i].LightFlags, sFile.shape.vtx_states[i].LightCfgIdx, sFile.shape.vtx_states[i].LightMatIdx, sFile.shape.vtx_states[i].Matrix2);
+            for (var i = 0; i < sFile.shape.light_model_cfgs.Count; ++i)
+            {
+                debugShapeHierarchy.AppendFormat("  LState {0,-2}: flags={1,-8:X8} uv_ops={2,-2}\n", i, sFile.shape.light_model_cfgs[i].flags, sFile.shape.light_model_cfgs[i].uv_ops.Count);
+                for (var j = 0; j < sFile.shape.light_model_cfgs[i].uv_ops.Count; ++j)
+                    debugShapeHierarchy.AppendFormat("    UV OP {0,-2}: texture_address_mode={1,-2}\n", j, sFile.shape.light_model_cfgs[i].uv_ops[j].TexAddrMode);
+            }
+            Console.Write(debugShapeHierarchy.ToString());
 #endif
             LodControls = (from lod_control lod in sFile.shape.lod_controls
                            select new LodControl(lod, textureFlags, sFile, this)).ToArray();
@@ -1261,16 +1372,21 @@ namespace Orts.Viewer3D
             else if (LodControls[0].DistanceLevels.Length > 0 && LodControls[0].DistanceLevels[0].SubObjects.Length > 0)
             {
                 // Look for root subobject, it is not necessarily the first (see ProTrain signal)
-                for (int soIndex=0; soIndex <= LodControls[0].DistanceLevels[0].SubObjects.Length-1; soIndex++)
+                for (int soIndex = 0; soIndex <= LodControls[0].DistanceLevels[0].SubObjects.Length - 1; soIndex++)
                 {
                     sub_object subObject = sFile.shape.lod_controls[0].distance_levels[0].sub_objects[soIndex];
-                    if (subObject.sub_object_header.geometry_info.geometry_node_map[0]==0)
+                    if (subObject.sub_object_header.geometry_info.geometry_node_map[0] == 0)
                     {
                         RootSubObjectIndex = soIndex;
                         break;
                     }
                 }
-             }
+            }
+        }
+
+        static void WagonMatrixCheck(string MSTSMatrixName, float M43)
+        {
+
         }
 
         public class LodControl
@@ -1373,8 +1489,8 @@ namespace Orts.Viewer3D
 #endif
             {
 #if DEBUG_SHAPE_HIERARCHY
-				var debugShapeHierarchy = new StringBuilder();
-				debugShapeHierarchy.AppendFormat("      Sub object {0}:\n", subObjectIndex);
+                var debugShapeHierarchy = new StringBuilder();
+                debugShapeHierarchy.AppendFormat("      Sub object {0}:\n", subObjectIndex);
 #endif
                 var vertexBufferSet = new VertexBufferSet(sub_object, sFile, sharedShape.Viewer.GraphicsDevice);
 #if DEBUG_SHAPE_NORMALS
@@ -1465,14 +1581,14 @@ namespace Orts.Viewer3D
                     }
 
 #if DEBUG_SHAPE_HIERARCHY
-					debugShapeHierarchy.AppendFormat("        Primitive {0,-2}: pstate={1,-2} vstate={2,-2} lstate={3,-2} matrix={4,-2}", primitiveIndex, primitive.prim_state_idx, primitiveState.ivtx_state, vertexState.LightCfgIdx, vertexState.imatrix);
+                    debugShapeHierarchy.AppendFormat("        Primitive {0,-2}: pstate={1,-2} vstate={2,-2} lstate={3,-2} matrix={4,-2}", primitiveIndex, primitive.prim_state_idx, primitiveState.ivtx_state, vertexState.LightCfgIdx, vertexState.imatrix);
                     var debugMatrix = vertexState.imatrix;
                     while (debugMatrix >= 0)
                     {
-						debugShapeHierarchy.AppendFormat(" {0}", sharedShape.MatrixNames[debugMatrix]);
+                        debugShapeHierarchy.AppendFormat(" {0}", sharedShape.MatrixNames[debugMatrix]);
                         debugMatrix = hierarchy[debugMatrix];
                     }
-					debugShapeHierarchy.Append("\n");
+                    debugShapeHierarchy.Append("\n");
 #endif
 
 #if OPTIMIZE_SHAPES_ON_LOAD
@@ -1545,9 +1661,9 @@ namespace Orts.Viewer3D
 #endif
 
 #if DEBUG_SHAPE_HIERARCHY
-				Console.Write(debugShapeHierarchy.ToString());
+                Console.Write(debugShapeHierarchy.ToString());
 #endif
-			}
+            }
 
             [CallOnThread("Loader")]
             internal void Mark()
@@ -1736,23 +1852,23 @@ namespace Orts.Viewer3D
                     distanceDetail.ViewingDistance = float.MaxValue;
 
                 for (var i = 0; i < displayDetail.SubObjects.Length; i++)
-				{
+                {
                     var subObject = displayDetail.SubObjects[i];
-                   
-                    // The 1st subobject (note that index 0 is the main object itself) is hidden during the day if HasNightSubObj is true.
-					if ((subObjVisible != null && !subObjVisible[i]) || (i == 1 && HasNightSubObj && Viewer.MaterialManager.sunDirection.Y >= 0))
-						continue;
 
-					foreach (var shapePrimitive in subObject.ShapePrimitives)
-					{
-						var xnaMatrix = Matrix.Identity;
-						var hi = shapePrimitive.HierarchyIndex;
-						while (hi >= 0 && hi < shapePrimitive.Hierarchy.Length && shapePrimitive.Hierarchy[hi] != -1)
-						{
-							Matrix.Multiply(ref xnaMatrix, ref animatedXNAMatrices[hi], out xnaMatrix);
-							hi = shapePrimitive.Hierarchy[hi];
-						}
-						Matrix.Multiply(ref xnaMatrix, ref xnaDTileTranslation, out xnaMatrix);
+                    // The 1st subobject (note that index 0 is the main object itself) is hidden during the day if HasNightSubObj is true.
+                    if ((subObjVisible != null && !subObjVisible[i]) || (i == 1 && HasNightSubObj && Viewer.MaterialManager.sunDirection.Y >= 0))
+                        continue;
+
+                    foreach (var shapePrimitive in subObject.ShapePrimitives)
+                    {
+                        var xnaMatrix = Matrix.Identity;
+                        var hi = shapePrimitive.HierarchyIndex;
+                        while (hi >= 0 && hi < shapePrimitive.Hierarchy.Length && shapePrimitive.Hierarchy[hi] != -1)
+                        {
+                            Matrix.Multiply(ref xnaMatrix, ref animatedXNAMatrices[hi], out xnaMatrix);
+                            hi = shapePrimitive.Hierarchy[hi];
+                        }
+                        Matrix.Multiply(ref xnaMatrix, ref xnaDTileTranslation, out xnaMatrix);
 
                         // TODO make shadows depend on shape overrides
 
@@ -1769,6 +1885,28 @@ namespace Orts.Viewer3D
             Matrix matrix = Matrix.Identity;
             while (iNode != -1)
             {
+                // The rare situation when equipment use dummy axles that use repeating offset that happen to be opposite(negative) from the bogie(positive)
+                // OR was unable to process the axles so the process below will make changes so that OR can work with the axles.
+                if (MatrixNames[iNode].Contains("BOGIE"))
+                {
+                    if (Matrices[iNode].M43 < 0)
+                        negativeBogie = true;
+                    else
+                        negativeBogie = false;
+                }
+                else if ( iNode > 0 && MatrixNames[iNode].Contains("WHEELS") && Matrices[iNode].M43 == Matrices[iNode - 1].M43)
+                {
+                    if (Matrices[iNode].M43 > 0 && negativeBogie)
+                    {
+                        Matrices[iNode].M43 *= -1;
+                        Matrices[iNode - 1].M43 *= -1;
+                    }
+                    else if (Matrices[iNode].M43 < 0 && !negativeBogie)
+                    {
+                        Matrices[iNode].M43 *= -1;
+                        Matrices[iNode - 1].M43 *= -1;
+                    }
+                }
                 matrix *= Matrices[iNode];
                 iNode = h[iNode];
             }

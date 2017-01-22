@@ -118,7 +118,15 @@ namespace Orts.Simulation.RollingStocks.SubSystems.Controllers
         /// Knowing actual notch and its change is needed for proper repeatability of mouse and RailDriver operation
         /// </summary>
         public int CurrentNotch { get { return Script is MSTSBrakeController ? (Script as MSTSBrakeController).NotchController.CurrentNotch : 0; } set { } }
-        
+
+        public ControllerState TrainBrakeControllerState
+        {
+            get
+            {
+                return Notches[CurrentNotch].Type;
+            }
+        }
+
         float OldValue;
 
         public float CurrentValue { get; set; }
@@ -421,7 +429,7 @@ namespace Orts.Simulation.RollingStocks.SubSystems.Controllers
             if (Script != null)
             {
                 string state = ControllerStateDictionary.Dict[Script.GetState()];
-                string fraction = GetStateFraction();
+                string fraction = GetStateFractionScripted();
 
                 if (String.IsNullOrEmpty(state) && String.IsNullOrEmpty(fraction))
                     return String.Empty;
@@ -436,7 +444,7 @@ namespace Orts.Simulation.RollingStocks.SubSystems.Controllers
                 return String.Empty;
         }
 
-        private string GetStateFraction()
+        public string GetStateFractionScripted()
         {
             if (Script != null)
             {

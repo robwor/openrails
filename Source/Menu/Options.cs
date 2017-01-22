@@ -136,6 +136,7 @@ namespace ORTS
             checkAlerter.Checked = Settings.Alerter;
             checkAlerterExternal.Enabled = Settings.Alerter;
             checkAlerterExternal.Checked = Settings.Alerter && !Settings.AlerterDisableExternal;
+            checkSpeedControl.Checked = Settings.SpeedControl;
             checkConfirmations.Checked = !Settings.SuppressConfirmations;
             checkViewDispatcher.Checked = Settings.ViewDispatcher;
             checkUseLargeAddressAware.Checked = Settings.UseLargeAddressAware;
@@ -415,6 +416,7 @@ namespace ORTS
             // General tab
             Settings.Alerter = checkAlerter.Checked;
             Settings.AlerterDisableExternal = !checkAlerterExternal.Checked;
+            Settings.SpeedControl = checkSpeedControl.Checked;
             Settings.SuppressConfirmations = !checkConfirmations.Checked;
             Settings.ViewDispatcher = checkViewDispatcher.Checked;
             Settings.UseLargeAddressAware = checkUseLargeAddressAware.Checked;
@@ -538,16 +540,6 @@ namespace ORTS
                 MessageBox.Show(errors, Application.ProductName);
             else
                 MessageBox.Show(catalog.GetString("No errors found."), Application.ProductName);
-        }
-
-        private void comboBoxWindowSize_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            var windowSizeParts = comboWindowSize.Text.Split(new[] { 'x' }, 2);
-            double width = Convert.ToDouble(windowSizeParts[0]);
-            double height = Convert.ToDouble(windowSizeParts[1]);
-            double aspectRatio = width / height;
-            bool wideScreen = aspectRatio > (4.0 / 3.0);
-            numericCab2DStretch.Enabled = wideScreen;
         }
 
         private void numericUpDownFOV_ValueChanged(object sender, EventArgs e)

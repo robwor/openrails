@@ -104,7 +104,17 @@ namespace Orts.Formats.Msts
 				new STFReader.TokenProcessor("ortsuserpreferenceforestcleardistance", ()=>{ ForestClearDistance = stf.ReadFloatBlock(STFReader.UNITS.Distance, 0); }),
                 // values for superelevation
                 new STFReader.TokenProcessor("ortstracksuperelevation", ()=>{ SuperElevationHgtpRadiusM = new Interpolator(stf); }),
-                
+                // images
+                new STFReader.TokenProcessor("graphic", ()=>{ Thumbnail = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("loadingscreen", ()=>{ LoadingScreen = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("ortsloadingscreenwide", ()=>{ LoadingScreenWide = stf.ReadStringBlock(null); }),
+                 // values for OHLE
+                new STFReader.TokenProcessor("ortsdoublewireenabled", ()=>{ DoubleWireEnabled = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("ortsdoublewireheight", ()=>{ DoubleWireHeight = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                new STFReader.TokenProcessor("ortstriphaseenabled", ()=>{ TriphaseEnabled = stf.ReadStringBlock(null); }),
+                new STFReader.TokenProcessor("ortstriphasewidth", ()=>{ TriphaseWidth = stf.ReadFloatBlock(STFReader.UNITS.Distance, null); }),
+                // default sms file for turntables
+                new STFReader.TokenProcessor("ortsdefaultturntablesms", ()=>{ DefaultTurntableSMS = stf.ReadStringBlock(null); }),
            });
             //TODO This should be changed to STFException.TraceError() with defaults values created
             if (RouteID == null) throw new STFException(stf, "Missing RouteID");
@@ -139,6 +149,19 @@ namespace Orts.Formats.Msts
         public float DoubleTunnelPerimeterM; 
 
         public float ForestClearDistance = 0;
+
+        // images
+        public string Thumbnail;
+        public string LoadingScreen;
+        public string LoadingScreenWide;
+
+        // Values for OHLE
+        public string DoubleWireEnabled;
+        public float DoubleWireHeight;
+        public string TriphaseEnabled;
+        public float TriphaseWidth;
+
+        public string DefaultTurntableSMS;
 
     }
 

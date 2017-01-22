@@ -189,21 +189,24 @@ namespace ORTS.Scripting.Api
     public enum ControllerState
     {
         // MSTS values (DO NOT CHANGE THE ORDER !)
-        Dummy,
+        Dummy,              // Dummy
         Release,            // TrainBrakesControllerReleaseStart 
         FullQuickRelease,   // TrainBrakesControllerFullQuickReleaseStart
         Running,            // TrainBrakesControllerRunningStart 
         Neutral,            // TrainBrakesControllerNeutralhandleOffStart
         SelfLap,            // TrainBrakesControllerSelfLapStart 
-        Lap,
+        Lap,                // TrainBrakesControllerHoldLapStart  and TrainBrakesControllerHoldStart
         Apply,              // TrainBrakesControllerApplyStart 
         EPApply,            // TrainBrakesControllerEPApplyStart 
-        GSelfLap,
-        GSelfLapH,
+        GSelfLap,           // TrainBrakesControllerGraduatedSelfLapLimitedStart
+        GSelfLapH,          // TrainBrakesControllerGraduatedSelfLapLimitedHoldStart
         Suppression,        // TrainBrakesControllerSuppressionStart 
         ContServ,           // TrainBrakesControllerContinuousServiceStart 
         FullServ,           // TrainBrakesControllerFullServiceStart 
         Emergency,          // TrainBrakesControllerEmergencyStart
+
+        // Extra MSTS values
+        MinimalReductionStart,  // TrainBrakesControllerMinimalReductionStart,
 
         // OR values
         Overcharge,         // Overcharge
@@ -226,13 +229,14 @@ namespace ORTS.Scripting.Api
             {ControllerState.Apply, Catalog.GetString("Apply")},
             {ControllerState.EPApply, Catalog.GetString("EPApply")},
             {ControllerState.Emergency, Catalog.GetString("Emergency")},
-            {ControllerState.SelfLap, Catalog.GetString("Lap")},
+            {ControllerState.SelfLap, Catalog.GetString("Self Lap")},
             {ControllerState.GSelfLap, Catalog.GetString("Service")},
             {ControllerState.GSelfLapH, Catalog.GetString("Service")},
             {ControllerState.Lap, Catalog.GetString("Lap")},
             {ControllerState.Suppression, Catalog.GetString("Suppression")},
             {ControllerState.ContServ, Catalog.GetString("Cont. Service")},
             {ControllerState.FullServ, Catalog.GetString("Full Service")},
+            {ControllerState.MinimalReductionStart, Catalog.GetString("Minimum Reduction")},
             {ControllerState.Overcharge, Catalog.GetString("Overcharge")},
             {ControllerState.EBPB, Catalog.GetString("Emergency Braking Push Button")},
             {ControllerState.TCSEmergency, Catalog.GetString("TCS Emergency Braking")},

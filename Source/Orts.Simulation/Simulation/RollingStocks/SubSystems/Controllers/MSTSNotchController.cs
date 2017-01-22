@@ -31,7 +31,7 @@ namespace Orts.Simulation.RollingStocks.SubSystems.Controllers
         {
             Value = v;
             Smooth = s == 0 ? false : true;
-            Type = ControllerState.Dummy;
+            Type = ControllerState.Dummy;  // Default to a dummy controller state if no valid alternative state used
             string lower = type.ToLower();
             if (lower.StartsWith("trainbrakescontroller"))
                 lower = lower.Substring(21);
@@ -55,9 +55,9 @@ namespace Orts.Simulation.RollingStocks.SubSystems.Controllers
                 case "suppressionstart": Type = ControllerState.Suppression; break;
                 case "fullservicestart": Type = ControllerState.FullServ; break;
                 case "emergencystart": Type = ControllerState.Emergency; break;
+                case "minimalreductionstart": Type = ControllerState.MinimalReductionStart; break;
                 case "epapplystart": Type = ControllerState.EPApply; break;
-                case "epholdstart": Type = ControllerState.Lap; break;
-                case "minimalreductionstart": Type = ControllerState.Lap; break;
+                case "epholdstart": Type = ControllerState.SelfLap; break;
                 default:
                     STFException.TraceInformation(stf, "Skipped unknown notch type " + type);
                     break;

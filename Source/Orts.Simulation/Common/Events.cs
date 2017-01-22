@@ -30,6 +30,15 @@ namespace Orts.Common
         BellOff,
         BellOn,
         BlowerChange,
+        CircuitBreakerOpen,
+        CircuitBreakerClosing,
+        CircuitBreakerClosed,
+        CircuitBreakerClosingOrderOff,
+        CircuitBreakerClosingOrderOn,
+        CircuitBreakerOpeningOrderOff,
+        CircuitBreakerOpeningOrderOn,
+        CircuitBreakerClosingAuthorizationOff,
+        CircuitBreakerClosingAuthorizationOn,
         CompressorOff,
         CompressorOn,
         ControlError,
@@ -82,11 +91,12 @@ namespace Orts.Common
         SanderOff,
         SanderOn,
         SemaphoreArm,
-        SteamEjector1Off,
-        SteamEjector1On,
-        SteamEjector2Off,
-        SteamEjector2On,
-        SteamHeatChange, // NOTE: Currently not used in Open Rails.
+        SmallEjectorChange,
+        WaterInjector1Off,
+        WaterInjector1On,
+        WaterInjector2Off,
+        WaterInjector2On,
+        SteamHeatChange, 
         SteamPulse1,
         SteamPulse2,
         SteamPulse3,
@@ -119,6 +129,9 @@ namespace Orts.Common
         TrainControlSystemPenalty2,
         TrainControlSystemWarning1,
         TrainControlSystemWarning2,
+        TurntableTurningEmpty,
+        TurntableTurningLoaded,
+        TurntableStopped,
         Uncouple,
         UncoupleB, // NOTE: Currently not used in Open Rails.
         UncoupleC, // NOTE: Currently not used in Open Rails.
@@ -153,6 +166,7 @@ namespace Orts.Common
             MSTSFuelTower,
             MSTSInGame,
             MSTSSignal,
+            ORTSTurntable
         }
 
         // PLEASE DO NOT EDIT THESE FUNCTIONS without references and testing!
@@ -206,11 +220,11 @@ namespace Orts.Common
                         // Event 24 is unused in MSTS.
                         // Event 25 is possibly a vigilance reset in MSTS sound files but is never used.
                         // Event 26 is a sander toggle in MSTS sound files but is never used.
-                        case 27: return Event.SteamEjector2On;
-                        case 28: return Event.SteamEjector2Off;
+                        case 27: return Event.WaterInjector2On;
+                        case 28: return Event.WaterInjector2Off;
                         // Event 29 is unused in MSTS.
-                        case 30: return Event.SteamEjector1On;
-                        case 31: return Event.SteamEjector1Off;
+                        case 30: return Event.WaterInjector1On;
+                        case 31: return Event.WaterInjector1Off;
                         case 32: return Event.DamperChange;
                         case 33: return Event.BlowerChange;
                         case 34: return Event.CylinderCocksToggle;
@@ -291,6 +305,18 @@ namespace Orts.Common
                         case 142: return Event.BrakePipePressureDecrease;
                         case 143: return Event.BrakePipePressureStoppedChanging;
 
+                        case 150: return Event.CircuitBreakerOpen;
+                        case 151: return Event.CircuitBreakerClosing;
+                        case 152: return Event.CircuitBreakerClosed;
+                        case 153: return Event.CircuitBreakerClosingOrderOn;
+                        case 154: return Event.CircuitBreakerClosingOrderOff;
+                        case 155: return Event.CircuitBreakerOpeningOrderOn;
+                        case 156: return Event.CircuitBreakerOpeningOrderOff;
+                        case 157: return Event.CircuitBreakerClosingAuthorizationOn;
+                        case 158: return Event.CircuitBreakerClosingAuthorizationOff;
+
+                        case 160: return Event.SmallEjectorChange; 
+                        
                         //
 
                         default: return 0;
@@ -332,6 +358,15 @@ namespace Orts.Common
                     {
                         // Calculated from inspection of existing signal.sms files.
                         case 1: return Event.SemaphoreArm;
+                        default: return 0;
+                    }
+                case Source.ORTSTurntable:
+                    switch (eventID)
+                    {
+                        // related file is turntable.sms
+                        case 1: return Event.TurntableTurningEmpty;
+                        case 2: return Event.TurntableTurningLoaded;
+                        case 3: return Event.TurntableStopped;
                         default: return 0;
                     }
                 default: return 0;

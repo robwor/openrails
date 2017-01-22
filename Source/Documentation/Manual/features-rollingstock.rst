@@ -49,11 +49,9 @@ Tenders:
   origin, in meters.
 - Third numeric parameter: set to any positive value, or omitted, causes the 
   shape to drop - see below.
-- As long as the second parameter is lower than the first and the third 
-  parameter is either omitted or has a non-zero value, the shape will drop, based 
-  on fuel consumption.
-- If the second parameter is not lower than the first, no movement will take 
-  place irrespective of the 3rd parameter.
+
+  - As long as the second parameter is lower than the first and the third parameter is either omitted or has a non-zero value, the shape will drop, based  on fuel consumption.
+  - If the second parameter is not lower than the first, no movement will take place irrespective of the 3rd parameter.
 
 Other Vehicles:
 
@@ -241,3 +239,4 @@ Because more static OR freightanims may be defined for a wagon, in the case of a
 container wagon that is able to carry more than one container, even as a double 
 stack, it is therefore possible to use a static OR freightanim for each 
 container, defining its position within the wagon. 
+

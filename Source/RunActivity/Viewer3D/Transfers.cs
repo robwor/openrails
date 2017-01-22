@@ -157,7 +157,7 @@ namespace Orts.Viewer3D
         public TransferMaterial(Viewer viewer, string textureName)
             : base(viewer, textureName)
         {
-            Texture = Viewer.TextureManager.Get(textureName);
+            Texture = Viewer.TextureManager.Get(textureName, true);
         }
 
         public override void SetState(GraphicsDevice graphicsDevice, Material previousMaterial)
@@ -169,9 +169,8 @@ namespace Orts.Viewer3D
             shader.ReferenceAlpha = 10;
 
             var samplerState = graphicsDevice.SamplerStates[0];
-            samplerState.AddressU = TextureAddressMode.Border;
-            samplerState.AddressV = TextureAddressMode.Border;
-            samplerState.BorderColor = Color.TransparentBlack;
+            samplerState.AddressU = TextureAddressMode.Clamp;
+            samplerState.AddressV = TextureAddressMode.Clamp;
 
             var rs = graphicsDevice.RenderState;
             rs.AlphaBlendEnable = true;

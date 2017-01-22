@@ -172,6 +172,9 @@ namespace ORTS.Settings
         [GetString("Control Light")] ControlLight,
         [GetString("Control Pantograph 1")] ControlPantograph1,
         [GetString("Control Pantograph 2")] ControlPantograph2,
+        [GetString("Control Circuit Breaker Closing Order")] ControlCircuitBreakerClosingOrder,
+        [GetString("Control Circuit Breaker Opening Order")] ControlCircuitBreakerOpeningOrder,
+        [GetString("Control Circuit Breaker Closing Authorization")] ControlCircuitBreakerClosingAuthorization,
         [GetString("Control Diesel Player")] ControlDieselPlayer,
         [GetString("Control Diesel Helper")] ControlDieselHelper,
         [GetString("Control Headlight Increase")] ControlHeadlightIncrease,
@@ -194,11 +197,15 @@ namespace ORTS.Settings
         [GetString("Control Firing Rate Decrease")] ControlFiringRateDecrease,
         [GetString("Control Fire Shovel Full")] ControlFireShovelFull,
         [GetString("Control Cylinder Cocks")] ControlCylinderCocks,
+        [GetString("Control Small Ejector Increase")] ControlSmallEjectorIncrease,
+        [GetString("Control Small Ejector Decrease")] ControlSmallEjectorDecrease,
         [GetString("Control Cylinder Compound")] ControlCylinderCompound,
         [GetString("Control Firing")] ControlFiring,
         [GetString("Control Refill")] ControlRefill,
         [GetString("Control TroughRefill")] ControlTroughRefill,
         [GetString("Control ImmediateRefill")]ControlImmediateRefill,
+        [GetString("Control Turntable Clockwise")]ControlTurntableClockwise,
+        [GetString("Control Turntable Counterclockwise")]ControlTurntableCounterclockwise,
     }
 
     /// <summary>
@@ -511,7 +518,12 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.ControlSteamHeatIncrease] = new UserCommandKeyInput(0x16, KeyModifiers.Alt);
             Commands[(int)UserCommands.ControlBrakeHoseConnect] = new UserCommandKeyInput(0x2B);
             Commands[(int)UserCommands.ControlBrakeHoseDisconnect] = new UserCommandKeyInput(0x2B, KeyModifiers.Shift);
+            Commands[(int)UserCommands.ControlCircuitBreakerClosingOrder] = new UserCommandKeyInput(0x18);
+            Commands[(int)UserCommands.ControlCircuitBreakerOpeningOrder] = new UserCommandKeyInput(0x17);
+            Commands[(int)UserCommands.ControlCircuitBreakerClosingAuthorization] = new UserCommandKeyInput(0x18, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlCylinderCocks] = new UserCommandKeyInput(0x2E);
+            Commands[(int)UserCommands.ControlSmallEjectorIncrease] = new UserCommandKeyInput(0x24);
+            Commands[(int)UserCommands.ControlSmallEjectorDecrease] = new UserCommandKeyInput(0x24, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlCylinderCompound] = new UserCommandKeyInput(0x19);
             Commands[(int)UserCommands.ControlDamperDecrease] = new UserCommandKeyInput(0x32, KeyModifiers.Shift);
             Commands[(int)UserCommands.ControlDamperIncrease] = new UserCommandKeyInput(0x32);
@@ -565,6 +577,9 @@ namespace ORTS.Settings
             Commands[(int)UserCommands.ControlTrainBrakeIncrease] = new UserCommandKeyInput(0x28);
             Commands[(int)UserCommands.ControlTrainBrakeZero] = new UserCommandKeyInput(0x27, KeyModifiers.Control);
             Commands[(int)UserCommands.ControlTroughRefill] = new UserCommandKeyInput(0x15);
+            Commands[(int)UserCommands.ControlTurntableClockwise] = new UserCommandKeyInput(0x2E, KeyModifiers.Alt);
+            Commands[(int)UserCommands.ControlTurntableCounterclockwise] = new UserCommandKeyInput(0x2E, KeyModifiers.Control);
+
             Commands[(int)UserCommands.ControlWiper] = new UserCommandKeyInput(0x2F);
 
             Commands[(int)UserCommands.DebugClockBackwards] = new UserCommandKeyInput(0x0C);

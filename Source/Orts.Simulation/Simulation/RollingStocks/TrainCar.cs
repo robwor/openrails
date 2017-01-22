@@ -30,6 +30,9 @@
 // Debug User SuperElevation
 //#define DEBUG_USER_SUPERELEVATION
 
+// Debug Brake Slide Calculations
+//#define DEBUG_BRAKE_SLIDE
+
 using Microsoft.Xna.Framework;
 using Orts.Formats.Msts;
 using Orts.Simulation.AIs;
@@ -113,6 +116,17 @@ namespace Orts.Simulation.RollingStocks
         public float CarHeatVolumeM3;     // Volume of car for heating purposes
         public float CarHeatPipeAreaM2;  // Area of surface of car pipe
 
+        // Used to calculate wheel sliding for locked brake
+        public bool BrakeSkid = false;
+        public bool HUDBrakeSkid = false;
+        public float BrakeShoeCoefficientFriction = 1.0f; // Brake Shoe coefficient - for simple adhesion model set to 1
+        public float BrakeShoeCoefficientFrictionAdjFactor = 1.0f; // Factor to adjust Brake force by - based upon changing friction coefficient with speed, will change when wheel goes into skid
+        public float BrakeShoeRetardCoefficientFrictionAdjFactor = 1.0f; // Factor of adjust Retard Brake force by - independent of skid
+        float DefaultBrakeShoeCoefficientFriction;  // A default value of brake shoe friction is no user settings are present.
+        float BrakeWheelTreadForceN; // The retarding force apparent on the tread of the wheel
+        float WagonBrakeAdhesiveForceN; // The adhesive force existing on the wheels of the wagon
+        public float SkidFriction = 0.08f; // Friction if wheel starts skidding - based upon wheel dynamic friction of approx 0.08
+
         public float AuxTenderWaterMassKG;    // Water mass in auxiliary tender
         public string AuxWagonType;           // Store wagon type for use with auxilary tender calculations
 
@@ -138,12 +152,14 @@ namespace Orts.Simulation.RollingStocks
         public float CouplerSlack2M;  // slack calculated using draft gear force
         public bool WheelSlip;  // true if locomotive wheels slipping
         public bool WheelSlipWarning;
+        public bool WheelSkid;  // True if wagon wheels lock up.
         public float _AccelerationMpSS;
         protected IIRFilter AccelerationFilter = new IIRFilter(IIRFilter.FilterTypes.Butterworth, 1, 1.0f, 0.1f);
 
         public bool AcceptMUSignals = true; //indicates if the car accepts multiple unit signals
         public bool IsMetric;
         public bool IsUK;
+        public float prevElev = -100f;
 
         public float SpeedMpS
         {
@@ -171,7 +187,16 @@ namespace Orts.Simulation.RollingStocks
             get
             {
                 if (AcceptMUSignals && Train != null)
-                    return Train.MUThrottlePercent;
+                {
+                    if (Train.LeadLocomotive != null && !((MSTSLocomotive)Train.LeadLocomotive).TrainControlSystem.TractionAuthorization && Train.MUThrottlePercent > 0)
+                    {
+                        return 0;
+                    }
+                    else
+                    {
+                        return Train.MUThrottlePercent;
+                    }
+                }
                 else
                     return LocalThrottlePercent;
             }
@@ -242,7 +267,8 @@ namespace Orts.Simulation.RollingStocks
 
         public float TunnelForceN;  // Resistive force due to tunnel, in Newtons
         public float FrictionForceN; // in Newtons ( kg.m/s^2 ) unsigned, includes effects of curvature
-        public float BrakeForceN;    // brake force in Newtons
+        public float BrakeForceN;    // brake force applied to slow train (Newtons) - will be impacted by wheel/rail friction
+        public float BrakeRetardForceN;    // brake force applied to wheel by brakeshoe (Newtons) independent of friction wheel/rail friction
         public float TotalForceN; // sum of all the forces active on car relative train direction
 
         public string CarBrakeSystemType;
@@ -287,8 +313,18 @@ namespace Orts.Simulation.RollingStocks
         protected float RouteSpeedMpS; // Max Route Speed Limit
         protected const float GravitationalAccelerationMpS2 = 9.80665f; // Acceleration due to gravity 9.80665 m/s2
         protected float WagonNumWheels; // Number of wheels on a wagon
-        protected float LocoNumDrvWheels = 4; // Number of drive wheels on locomotive
+        protected float LocoNumDrvWheels = 4; // Number of drive axles (wheels / 2) on locomotive
         public float DriverWheelRadiusM = 1.5f; // Drive wheel radius of locomotive wheels
+
+        public enum SteamEngineTypes
+        {
+            Unknown,
+            Simple,
+            Geared,
+            Compound,
+        }
+
+        public SteamEngineTypes SteamEngineType;
 
         public enum WagonTypes
         {
@@ -308,8 +344,9 @@ namespace Orts.Simulation.RollingStocks
         }
         public EngineTypes EngineType;
 
+
+
         protected float CurveResistanceZeroSpeedFactor = 0.5f; // Based upon research (Russian experiments - 1960) the older formula might be about 2x actual value
-        protected float CoefficientFriction = 0.5f; // Initialise coefficient of Friction - 0.5 for dry rails, 0.1 - 0.3 for wet rails
         protected float RigidWheelBaseM;   // Vehicle rigid wheelbase, read from MSTS Wagon file
         protected float TrainCrossSectionAreaM2; // Cross sectional area of the train
         protected float DoubleTunnelCrossSectAreaM2;
@@ -451,6 +488,7 @@ namespace Orts.Simulation.RollingStocks
             UpdateCurveForce(elapsedClockSeconds);
             UpdateTunnelForce();
             UpdateCarriageHeatLoss();
+            UpdateBrakeSlideCalculation();
 
             // acceleration
             if (elapsedClockSeconds > 0.0f)
@@ -464,6 +502,137 @@ namespace Orts.Simulation.RollingStocks
             }
         }
 
+
+        #region Calculate Brake Skid
+
+        /// <summary>
+        /// This section calculates:
+        /// i) Changing brake shoe friction coefficient due to changes in speed
+        /// ii) force on the wheel due to braking, and whether sliding will occur.
+        /// 
+        /// </summary>
+
+        public virtual void UpdateBrakeSlideCalculation()
+        {
+
+            // Only apply slide, and advanced brake friction, if advanced adhesion is selected, and it is a Player train
+            if (Simulator.UseAdvancedAdhesion && IsPlayerTrain)
+            {
+
+                // Get user defined brake shoe coefficient if defined in WAG file
+                float UserFriction = GetUserBrakeShoeFrictionFactor();
+                float ZeroUserFriction = GetZeroUserBrakeShoeFrictionFactor();
+                float AdhesionMultiplier = Simulator.Settings.AdhesionFactor / 100.0f; // User set adjustment factor - convert to a factor where 100% = no change to adhesion
+
+                // This section calculates an adjustment factor for the brake force dependent upon the "base" (zero speed) friction value. 
+                //For a user defined case the base value is the zero speed value from the curve entered by the user.
+                // For a "default" case where no user data has been added to the WAG file, the base friction value has been assumed to be 0.2, thus maximum value of 20% applied.
+
+                if (UserFriction != 0)  // User defined friction has been applied in WAG file - Assume MaxBrakeForce is correctly set in the WAG, so no adjustment required 
+                {
+                    BrakeShoeCoefficientFrictionAdjFactor = UserFriction / ZeroUserFriction * AdhesionMultiplier; // Factor calculated by normalising zero speed value on friction curve applied in WAG file
+                    BrakeShoeRetardCoefficientFrictionAdjFactor = UserFriction / ZeroUserFriction * AdhesionMultiplier;
+                    BrakeShoeCoefficientFriction = UserFriction * AdhesionMultiplier; // For display purposes on HUD
+                }
+                else
+                // User defined friction NOT applied in WAG file - Assume MaxBrakeForce is incorrectly set in the WAG, so adjustment is required 
+                {
+                    DefaultBrakeShoeCoefficientFriction = (7.6f / (MpS.ToKpH(AbsSpeedMpS) + 17.5f) + 0.07f) * AdhesionMultiplier; // Base Curtius - Kniffler equation - u = 0.50, all other values are scaled off this formula
+                    BrakeShoeCoefficientFrictionAdjFactor = DefaultBrakeShoeCoefficientFriction / 0.2f * AdhesionMultiplier;  // Assuming that current MaxBrakeForce has been set with an existing Friction Coff of 0.2f, an adjustment factor needs to be developed to reduce the MAxBrakeForce by a relative amount
+                    BrakeShoeRetardCoefficientFrictionAdjFactor = DefaultBrakeShoeCoefficientFriction / 0.2f * AdhesionMultiplier;
+                    BrakeShoeCoefficientFriction = DefaultBrakeShoeCoefficientFriction * AdhesionMultiplier;  // For display purposes on HUD
+                }
+
+                // Clamp adjustment factor to a value of 1.0 - i.e. the brakeforce can never exceed the Brake Force value defined in the WAG file
+                BrakeShoeCoefficientFrictionAdjFactor = MathHelper.Clamp(BrakeShoeCoefficientFrictionAdjFactor, 0.01f, 1.0f);
+                BrakeShoeRetardCoefficientFrictionAdjFactor = MathHelper.Clamp(BrakeShoeRetardCoefficientFrictionAdjFactor, 0.01f, 1.0f);
+
+
+                // ************  Check if diesel or electric - assumed already be cover by advanced adhesion model *********
+
+                if (this is MSTSDieselLocomotive || this is MSTSElectricLocomotive)
+                {
+                   if (WheelSlip && ThrottlePercent < 0.1f && BrakeRetardForceN > 25.0) // If advanced adhesion model indicates wheel slip, then check other conditiond (throttle and brake force) to determine whether it is a wheel slip or brake skid
+                    {
+                       BrakeSkid = true;  // set brake skid flag true
+                    } 
+                   else
+                   {
+                       BrakeSkid = false;
+                   }
+                }
+
+                else if (!(this is MSTSDieselLocomotive) || !(this is MSTSElectricLocomotive))
+                {
+
+                    // Calculate tread force on wheel - use the retard force as this is related to brakeshoe coefficient, and doesn't vary with skid.
+                    BrakeWheelTreadForceN = BrakeRetardForceN;
+
+
+                    // Calculate adhesive force based upon whether in skid or not
+                    if (BrakeSkid)
+                    {
+                        WagonBrakeAdhesiveForceN = MassKG * GravitationalAccelerationMpS2 * SkidFriction;  // Adhesive force if wheel skidding
+                    }
+                    else
+                    {
+                        WagonBrakeAdhesiveForceN = MassKG * GravitationalAccelerationMpS2 * Train.WagonCoefficientFriction; // Adhesive force wheel normal
+                    }
+
+                    // Test if wheel forces are high enough to induce a slip. Set slip flag if slip occuring 
+                    if (!BrakeSkid && AbsSpeedMpS > 0.01)  // Train must be moving forward to experience skid
+                    {
+                        if (BrakeWheelTreadForceN > WagonBrakeAdhesiveForceN)
+                        {
+                            BrakeSkid = true; 	// wagon wheel is slipping
+                            var message = "Car ID: " + CarID + " - experiencing braking force wheel skid.";
+                            Simulator.Confirmer.Message(ConfirmLevel.Warning, message);
+                        }
+                    }
+                    else if (BrakeSkid && AbsSpeedMpS > 0.01)
+                    {
+                        if (BrakeWheelTreadForceN < WagonBrakeAdhesiveForceN || BrakeForceN == 0.0f)
+                        {
+                            BrakeSkid = false; 	// wagon wheel is not slipping
+                        }
+                        
+                    }
+                    else
+                    {
+                        BrakeSkid = false; 	// wagon wheel is not slipping
+
+                    }
+                }
+                else
+                {
+                    BrakeSkid = false; 	// wagon wheel is not slipping
+                    BrakeShoeRetardCoefficientFrictionAdjFactor = 1.0f;
+                }
+            }
+            else  // set default values if simple adhesion model, or if diesel or electric locomotive is used, which doesn't check for brake skid.
+            {
+                BrakeSkid = false; 	// wagon wheel is not slipping
+                BrakeShoeCoefficientFrictionAdjFactor = 1.0f;  // Default value set to leave existing brakeforce constant regardless of changing speed
+                BrakeShoeRetardCoefficientFrictionAdjFactor = 1.0f;
+                BrakeShoeCoefficientFriction = 1.0f;  // Default value for display purposes
+
+            }
+
+#if DEBUG_BRAKE_SLIDE
+
+            Trace.TraceInformation("================================== Brake Force Slide (TrainCar.cs) ===================================");
+            Trace.TraceInformation("Brake Shoe Friction- Car: {0} Speed: {1} Brake Force: {2} Advanced Adhesion: {3}", CarID, MpS.ToMpH(SpeedMpS), BrakeForceN, Simulator.UseAdvancedAdhesion);
+            Trace.TraceInformation("BrakeSkidCheck: {0}", BrakeSkidCheck);
+            Trace.TraceInformation("Brake Shoe Friction- Coeff: {0} Adjust: {1}", BrakeShoeCoefficientFriction, BrakeShoeCoefficientFrictionAdjFactor);
+            Trace.TraceInformation("Brake Shoe Force - Ret: {0} Adjust: {1} Skid {2} Adj {3}", BrakeRetardForceN, BrakeShoeRetardCoefficientFrictionAdjFactor, BrakeSkid, SkidFriction);
+            Trace.TraceInformation("Tread: {0} Adhesive: {1}", BrakeWheelTreadForceN, WagonBrakeAdhesiveForceN);
+            Trace.TraceInformation("Mass: {0} Rail Friction: {1}", MassKG, Train.WagonCoefficientFriction);
+#endif
+
+        }
+
+
+#endregion
 
         #region Calculate Heat loss for Passenger Cars
 
@@ -828,6 +997,7 @@ namespace Orts.Simulation.RollingStocks
 
         #endregion
 
+    
         #region Calculate friction force in curves
 
         /// <summary>
@@ -845,19 +1015,8 @@ namespace Orts.Simulation.RollingStocks
 
                     if (RigidWheelBaseM == 0)   // Calculate default values if no value in Wag File
                     {
-                        // Determine whether the track is wet due to rain or snow.
 
-                        int FrictionWeather = (int)Simulator.WeatherType;
-
-                        if (FrictionWeather == 1 | FrictionWeather == 2)
-                        {
-                            CoefficientFriction = 0.25f;  // Weather snowing or raining
-                        }
-                        else
-                        {
-                            CoefficientFriction = 0.5f;  // Clear
-                        }
-
+                        
                         float Axles = WheelAxles.Count;
                         float Bogies = Parts.Count - 1;
                         float BogieSize = Axles / Bogies;
@@ -940,7 +1099,7 @@ namespace Orts.Simulation.RollingStocks
                     // Curve Resistance = (Vehicle mass x Coeff Friction) * (Track Gauge + Vehicle Fixed Wheelbase) / (2 * curve radius)
                     // Vehicle Fixed Wheel base is the distance between the wheels, ie bogie or fixed wheels
 
-                    CurveForceN = MassKG * CoefficientFriction * (TrackGaugeM + RigidWheelBaseM) / (2.0f * CurrentCurveRadius);
+                    CurveForceN = MassKG * Train.WagonCoefficientFriction * (TrackGaugeM + RigidWheelBaseM) / (2.0f * CurrentCurveRadius);
                     float CurveResistanceSpeedFactor = Math.Abs((MaxCurveEqualLoadSpeedMps - AbsSpeedMpS) / MaxCurveEqualLoadSpeedMps) * StartCurveResistanceFactor;
                     CurveForceN *= CurveResistanceSpeedFactor * CurveResistanceZeroSpeedFactor;
                     CurveForceN *= GravitationalAccelerationMpS2; // to convert to Newtons
@@ -1007,6 +1166,7 @@ namespace Orts.Simulation.RollingStocks
             outf.Write(SpeedMpS);
             outf.Write(CouplerSlackM);
             outf.Write(Headlight);
+            outf.Write(PrevTiltingZRot);
         }
 
         // Game restore
@@ -1022,6 +1182,7 @@ namespace Orts.Simulation.RollingStocks
             _PrevSpeedMpS = SpeedMpS;
             CouplerSlackM = inf.ReadSingle();
             Headlight = inf.ReadInt32();
+            PrevTiltingZRot = inf.ReadSingle();
         }
 
         //================================================================================================//
@@ -1158,33 +1319,22 @@ namespace Orts.Simulation.RollingStocks
             }
 
             //some old stocks have only two wheels, but defined to have four, two share the same offset, thus all computing of rotations will have problem
-            //will check, if so, make the offset different a bit. 
+            //will check, if so, make the offset different a bit.
             foreach (var axles in WheelAxles)
-                if (!offset.Equals(0))
-                    if (offset.AlmostEqual(axles.OffsetM, 0.05f)) { offset = axles.OffsetM + 0.7f; break; }
+                if (offset.AlmostEqual(axles.OffsetM, 0.05f)) { offset = axles.OffsetM + 0.7f; break; }
 
             // Came across a model where the axle offset that is part of a bogie would become 0 during the initial process.  This is something we must test for.
-            if (offset != 0)
+            if (wheels.Length == 8 && Parts.Count > 0)
             {
-                if (wheels.Length == 8 && Parts.Count > 0)
-                {
-                    if (wheels == "WHEELS11" || wheels == "WHEELS12" || wheels == "WHEELS13")
-                        WheelAxles.Add(new WheelAxle(offset, bogieID, parentMatrix));
+                if (wheels == "WHEELS11" || wheels == "WHEELS12" || wheels == "WHEELS13")
+                    WheelAxles.Add(new WheelAxle(offset, bogieID, parentMatrix));
 
-                    if (wheels == "WHEELS21" || wheels == "WHEELS22" || wheels == "WHEELS23")
-                        WheelAxles.Add(new WheelAxle(offset, bogieID, parentMatrix));
-                }
-                else
+                if (wheels == "WHEELS21" || wheels == "WHEELS22" || wheels == "WHEELS23")
                     WheelAxles.Add(new WheelAxle(offset, bogieID, parentMatrix));
             }
-            // Process below will install axles with 0 offset when part of a bogie.  This is not the norm and hopefully is a rare occurrence.
             else
-            {
-                if (wheels.Length == 8 && Parts.Count > 0)
-                    for (var i = 1; i < Parts.Count; i++)
-                        if (parentMatrix == Parts[i].iMatrix)
-                            WheelAxles.Add(new WheelAxle(Parts[i].OffsetM, Parts[i].iMatrix, 0));
-            }
+                WheelAxles.Add(new WheelAxle(offset, bogieID, parentMatrix));
+
         } // end AddWheelSet()
 
         public void AddBogie(float offset, int matrix, int id, string bogie, int numBogie1, int numBogie2, int numBogie)
@@ -1403,42 +1553,43 @@ namespace Orts.Simulation.RollingStocks
 
         public void ComputePosition(Traveller traveler, bool backToFront, float elapsedTimeS, float distance, float speed)
         {
-            for (int j = 0; j < Parts.Count; j++)
+            for (var j = 0; j < Parts.Count; j++)
                 Parts[j].InitLineFit();
-            int tileX = traveler.TileX;
-            int tileZ = traveler.TileZ;
+            var tileX = traveler.TileX;
+            var tileZ = traveler.TileZ;
             if (Flipped == backToFront)
             {
-                float o = -CarLengthM / 2;
-                for (int k = 0; k < WheelAxles.Count; k++)
+                var o = -CarLengthM / 2 - CentreOfGravityM.Z;
+                for (var k = 0; k < WheelAxles.Count; k++)
                 {
-                    float d = WheelAxles[k].OffsetM - o;
+                    var d = WheelAxles[k].OffsetM - o;
                     o = WheelAxles[k].OffsetM;
                     traveler.Move(d);
-                    float x = traveler.X + 2048 * (traveler.TileX - tileX);
-                    float y = traveler.Y;
-                    float z = traveler.Z + 2048 * (traveler.TileZ - tileZ);
+                    var x = traveler.X + 2048 * (traveler.TileX - tileX);
+                    var y = traveler.Y;
+                    var z = traveler.Z + 2048 * (traveler.TileZ - tileZ);
                     WheelAxles[k].Part.AddWheelSetLocation(1, o, x, y, z, 0, traveler);
                 }
-                o = CarLengthM / 2 - o;
+                o = CarLengthM / 2 - CentreOfGravityM.Z - o;
                 traveler.Move(o);
             }
             else
             {
-                float o = CarLengthM / 2;
-                for (int k = WheelAxles.Count - 1; k >= 0; k--)
+                var o = CarLengthM / 2 - CentreOfGravityM.Z;
+                for (var k = WheelAxles.Count - 1; k >= 0; k--)
                 {
-                    float d = o - WheelAxles[k].OffsetM;
+                    var d = o - WheelAxles[k].OffsetM;
                     o = WheelAxles[k].OffsetM;
                     traveler.Move(d);
-                    float x = traveler.X + 2048 * (traveler.TileX - tileX);
-                    float y = traveler.Y;
-                    float z = traveler.Z + 2048 * (traveler.TileZ - tileZ);
+                    var x = traveler.X + 2048 * (traveler.TileX - tileX);
+                    var y = traveler.Y;
+                    var z = traveler.Z + 2048 * (traveler.TileZ - tileZ);
                     WheelAxles[k].Part.AddWheelSetLocation(1, o, x, y, z, 0, traveler);
                 }
-                o = CarLengthM / 2 + o;
+                o = CarLengthM / 2 + CentreOfGravityM.Z + o;
                 traveler.Move(o);
             }
+
             TrainCarPart p0 = Parts[0];
             for (int i = 1; i < Parts.Count; i++)
             {
@@ -1473,7 +1624,7 @@ namespace Orts.Simulation.RollingStocks
             WorldPosition.XNAMatrix = m;
             WorldPosition.TileX = tileX;
             WorldPosition.TileZ = tileZ;
-
+            
             UpdatedTraveler(traveler, elapsedTimeS, distance, speed);
 
             // calculate truck angles
@@ -1513,7 +1664,7 @@ namespace Orts.Simulation.RollingStocks
         }
 
         #region Traveller-based updates
-        protected float CurrentCurveRadius;
+        public float CurrentCurveRadius;
 
         internal void UpdatedTraveler(Traveller traveler, float elapsedTimeS, float distanceM, float speedMpS)
         {
@@ -1522,27 +1673,35 @@ namespace Orts.Simulation.RollingStocks
                 return;
 
             CurrentCurveRadius = traveler.GetCurveRadius();
-            UpdateVibration(traveler, elapsedTimeS, distanceM, speedMpS);
-            UpdateSuperElevation(traveler);
+            UpdateVibrationAndTilting(traveler, elapsedTimeS, distanceM, speedMpS);
+            UpdateSuperElevation(traveler, elapsedTimeS);
         }
         #endregion
 
         #region Super-elevation
-        void UpdateSuperElevation(Traveller traveler)
+        void UpdateSuperElevation(Traveller traveler,  float elapsedTimeS)
         {
-            if (Simulator.Settings.UseSuperElevation == 0 && !Train.IsTilting)
+            if (Simulator.Settings.UseSuperElevation == 0)
                 return;
+            if (prevElev < -30f) { prevElev += 40f; return; }//avoid the first two updates as they are not valid
 
             // Because the traveler is at the FRONT of the TrainCar, smooth the super-elevation out with the rear.
             var z = traveler.GetSuperElevation(-CarLengthM);
             if (Flipped)
                 z *= -1;
+            // TODO This is a hack until we fix the super-elevation code as described in http://www.elvastower.com/forums/index.php?/topic/28751-jerky-superelevation-effect/
+            if (prevElev < -10f || prevElev > 10f) prevElev = z;//initial, will jump to the desired value
+            else
+            {
+                z = prevElev + (z - prevElev) * Math.Min(elapsedTimeS, 1);//smooth rotation
+                prevElev = z;
+            }
 
             WorldPosition.XNAMatrix = Matrix.CreateRotationZ(z) * WorldPosition.XNAMatrix;
         }
         #endregion
 
-        #region Vibration
+        #region Vibration and tilting
         public Matrix VibrationInverseMatrix = Matrix.Identity;
 
         // https://en.wikipedia.org/wiki/Newton%27s_laws_of_motion#Newton.27s_2nd_Law
@@ -1587,84 +1746,98 @@ namespace Orts.Simulation.RollingStocks
         int VibrationTrackVectorSection;
         float VibrationTrackCurvaturepM;
 
-        internal void UpdateVibration(Traveller traveler, float elapsedTimeS, float distanceM, float speedMpS)
+        float PrevTiltingZRot; // previous tilting angle
+        float TiltingZRot; // actual tilting angle
+
+        internal void UpdateVibrationAndTilting(Traveller traveler, float elapsedTimeS, float distanceM, float speedMpS)
         {
             // NOTE: Traveller is at the FRONT of the TrainCar!
 
-            // Don't add vibrations to train cars less than 1 meter in length; they're unsuitable for these calculations.
-            if (Simulator.Settings.CarVibratingLevel == 0 || CarLengthM < 1)
-                return;
-
-            //var elapsedTimeS = Math.Abs(speedMpS) > 0.001f ? distanceM / speedMpS : 0;
-            if (VibrationOffsetM.X == 0)
+            // Don't add vibrations to train cars less than 2.5 meter in length; they're unsuitable for these calculations.
+            if (CarLengthM < 2.5f) return;
+            if (Simulator.Settings.CarVibratingLevel != 0)
             {
-                // Initialize three different offsets (0 - 1 meters) so that the different components of the vibration motion don't align.
-                VibrationOffsetM.X = (float)Simulator.Random.NextDouble();
-                VibrationOffsetM.Y = (float)Simulator.Random.NextDouble();
-                VibrationOffsetM.Z = (float)Simulator.Random.NextDouble();
-            }
 
-            if (VibrationTrackVectorSection == 0)
-                VibrationTrackVectorSection = traveler.TrackVectorSectionIndex;
-            if (VibrationTrackNode == 0)
-                VibrationTrackNode = traveler.TrackNodeIndex;
-
-            // Apply suspension/spring and damping.
-            // https://en.wikipedia.org/wiki/Simple_harmonic_motion
-            //   Let F be the force in N
-            //   Let k be the spring constant in N/m or kg/s/s
-            //   Let x be the displacement in m
-            //   Then F = -k * x
-            // Given F = m * a, solve for a:
-            //   a = F / m
-            // Substitute F:
-            //   a = -k * x / m
-            // Because our spring constant was never multiplied by m, we can cancel that out:
-            //   a = -k' * x
-            var rotationAccelerationRadpSpS = -VibrationSpringConstantPrimepSpS * VibrationRotationRad;
-            var translationAccelerationMpSpS = -VibrationSpringConstantPrimepSpS * VibrationTranslationM;
-            // https://en.wikipedia.org/wiki/Damping
-            //   Let F be the force in N
-            //   Let c be the damping coefficient in N*s/m
-            //   Let v be the velocity in m/s
-            //   Then F = -c * v
-            // We apply the acceleration (let t be time in s, then dv/dt = a * t) and damping (-c * v) to the velocities:
-            VibrationRotationVelocityRadpS += rotationAccelerationRadpSpS * elapsedTimeS - VibratioDampingCoefficient * VibrationRotationVelocityRadpS;
-            VibrationTranslationVelocityMpS += translationAccelerationMpSpS * elapsedTimeS - VibratioDampingCoefficient * VibrationTranslationVelocityMpS;
-            // Now apply the velocities (dx/dt = v * t):
-            VibrationRotationRad += VibrationRotationVelocityRadpS * elapsedTimeS;
-            VibrationTranslationM += VibrationTranslationVelocityMpS * elapsedTimeS;
-
-            // Add new vibrations every CarLengthM in either direction.
-            if (Math.Round((VibrationOffsetM.X + DistanceM) / CarLengthM) != Math.Round((VibrationOffsetM.X + DistanceM + distanceM) / CarLengthM))
-            {
-                AddVibrations(VibrationFactorDistance);
-            }
-
-            // Add new vibrations every track vector section which changes the curve radius.
-            if (VibrationTrackVectorSection != traveler.TrackVectorSectionIndex)
-            {
-                var curvaturepM = MathHelper.Clamp(traveler.GetCurvature(), -VibrationMaximumCurvaturepM, VibrationMaximumCurvaturepM);
-                if (VibrationTrackCurvaturepM != curvaturepM)
+                //var elapsedTimeS = Math.Abs(speedMpS) > 0.001f ? distanceM / speedMpS : 0;
+                if (VibrationOffsetM.X == 0)
                 {
-                    // Use the difference in curvature to determine the strength of the vibration caused.
-                    AddVibrations(VibrationFactorTrackVectorSection * Math.Abs(VibrationTrackCurvaturepM - curvaturepM) / VibrationMaximumCurvaturepM);
-                    VibrationTrackCurvaturepM = curvaturepM;
+                    // Initialize three different offsets (0 - 1 meters) so that the different components of the vibration motion don't align.
+                    VibrationOffsetM.X = (float)Simulator.Random.NextDouble();
+                    VibrationOffsetM.Y = (float)Simulator.Random.NextDouble();
+                    VibrationOffsetM.Z = (float)Simulator.Random.NextDouble();
                 }
-                VibrationTrackVectorSection = traveler.TrackVectorSectionIndex;
-            }
 
-            // Add new vibrations every track node.
-            if (VibrationTrackNode != traveler.TrackNodeIndex)
+                if (VibrationTrackVectorSection == 0)
+                    VibrationTrackVectorSection = traveler.TrackVectorSectionIndex;
+                if (VibrationTrackNode == 0)
+                    VibrationTrackNode = traveler.TrackNodeIndex;
+
+                // Apply suspension/spring and damping.
+                // https://en.wikipedia.org/wiki/Simple_harmonic_motion
+                //   Let F be the force in N
+                //   Let k be the spring constant in N/m or kg/s/s
+                //   Let x be the displacement in m
+                //   Then F = -k * x
+                // Given F = m * a, solve for a:
+                //   a = F / m
+                // Substitute F:
+                //   a = -k * x / m
+                // Because our spring constant was never multiplied by m, we can cancel that out:
+                //   a = -k' * x
+                var rotationAccelerationRadpSpS = -VibrationSpringConstantPrimepSpS * VibrationRotationRad;
+                var translationAccelerationMpSpS = -VibrationSpringConstantPrimepSpS * VibrationTranslationM;
+                // https://en.wikipedia.org/wiki/Damping
+                //   Let F be the force in N
+                //   Let c be the damping coefficient in N*s/m
+                //   Let v be the velocity in m/s
+                //   Then F = -c * v
+                // We apply the acceleration (let t be time in s, then dv/dt = a * t) and damping (-c * v) to the velocities:
+                VibrationRotationVelocityRadpS += rotationAccelerationRadpSpS * elapsedTimeS - VibratioDampingCoefficient * VibrationRotationVelocityRadpS;
+                VibrationTranslationVelocityMpS += translationAccelerationMpSpS * elapsedTimeS - VibratioDampingCoefficient * VibrationTranslationVelocityMpS;
+                // Now apply the velocities (dx/dt = v * t):
+                VibrationRotationRad += VibrationRotationVelocityRadpS * elapsedTimeS;
+                VibrationTranslationM += VibrationTranslationVelocityMpS * elapsedTimeS;
+
+                // Add new vibrations every CarLengthM in either direction.
+                if (Math.Round((VibrationOffsetM.X + DistanceM) / CarLengthM) != Math.Round((VibrationOffsetM.X + DistanceM + distanceM) / CarLengthM))
+                {
+                    AddVibrations(VibrationFactorDistance);
+                }
+
+                // Add new vibrations every track vector section which changes the curve radius.
+                if (VibrationTrackVectorSection != traveler.TrackVectorSectionIndex)
+                {
+                    var curvaturepM = MathHelper.Clamp(traveler.GetCurvature(), -VibrationMaximumCurvaturepM, VibrationMaximumCurvaturepM);
+                    if (VibrationTrackCurvaturepM != curvaturepM)
+                    {
+                        // Use the difference in curvature to determine the strength of the vibration caused.
+                        AddVibrations(VibrationFactorTrackVectorSection * Math.Abs(VibrationTrackCurvaturepM - curvaturepM) / VibrationMaximumCurvaturepM);
+                        VibrationTrackCurvaturepM = curvaturepM;
+                    }
+                    VibrationTrackVectorSection = traveler.TrackVectorSectionIndex;
+                }
+
+                // Add new vibrations every track node.
+                if (VibrationTrackNode != traveler.TrackNodeIndex)
+                {
+                    AddVibrations(VibrationFactorTrackNode);
+                    VibrationTrackNode = traveler.TrackNodeIndex;
+                }
+            }
+            if (Train != null && Train.IsTilting)
             {
-                AddVibrations(VibrationFactorTrackNode);
-                VibrationTrackNode = traveler.TrackNodeIndex;
+                TiltingZRot = traveler.FindTiltedZ(speedMpS);//rotation if tilted, an indication of centrifugal force
+                TiltingZRot = PrevTiltingZRot + (TiltingZRot - PrevTiltingZRot) * elapsedTimeS;//smooth rotation
+                PrevTiltingZRot = TiltingZRot;
+                if (this.Flipped) TiltingZRot *= -1f;
             }
-
-            var rotation = Matrix.CreateFromYawPitchRoll(VibrationRotationRad.Y, VibrationRotationRad.X, VibrationRotationRad.Z);
-            var translation = Matrix.CreateTranslation(VibrationTranslationM.X, VibrationTranslationM.Y, 0);
-            WorldPosition.XNAMatrix = rotation * translation * WorldPosition.XNAMatrix;
-            VibrationInverseMatrix = Matrix.Invert(rotation * translation);
+            if (Simulator.Settings.CarVibratingLevel != 0 || Train.IsTilting)
+            {
+                var rotation = Matrix.CreateFromYawPitchRoll(VibrationRotationRad.Y, VibrationRotationRad.X, VibrationRotationRad.Z + TiltingZRot);
+                var translation = Matrix.CreateTranslation(VibrationTranslationM.X, VibrationTranslationM.Y, 0);
+                WorldPosition.XNAMatrix = rotation * translation * WorldPosition.XNAMatrix;
+                VibrationInverseMatrix = Matrix.Invert(rotation * translation);
+            }
         }
 
         private void AddVibrations(float factor)
@@ -1784,6 +1957,17 @@ namespace Orts.Simulation.RollingStocks
         {
             return 0f;
         }
+
+        public virtual float GetUserBrakeShoeFrictionFactor()
+        {
+            return 0f;
+        }
+
+        public virtual float GetZeroUserBrakeShoeFrictionFactor()
+        {
+            return 0f;
+        }
+
     }
 
     public class WheelAxle : IComparer<WheelAxle>

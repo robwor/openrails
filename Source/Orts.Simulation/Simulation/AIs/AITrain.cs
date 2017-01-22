@@ -84,8 +84,8 @@ namespace Orts.Simulation.AIs
             STOPPED_EXISTING,
             INIT_ACTION,
             HANDLE_ACTION,
-            END_ACTION, //  SPA: used by new AIActionItem as Auxiliary
             SUSPENDED,
+            FROZEN,
             UNKNOWN
         }
 
@@ -618,13 +618,13 @@ namespace Orts.Simulation.AIs
             }
 #endif
 
-            if (TrainType == TRAINTYPE.AI_INCORPORATED || TrainType == TRAINTYPE.STATIC || MovementState == AI_MOVEMENT_STATE.SUSPENDED)
+            if (TrainType == TRAINTYPE.AI_INCORPORATED || TrainType == TRAINTYPE.STATIC || MovementState == AI_MOVEMENT_STATE.SUSPENDED || MovementState == AI_MOVEMENT_STATE.FROZEN)
                 return;
             // Check if at stop point and stopped.
             //          if ((NextStopDistanceM < actClearance) || (SpeedMpS <= 0 && MovementState == AI_MOVEMENT_STATE.STOPPED))
             // <CSComment> TODO: next if block is in effect only a workaround due to OR braking physics not working well with AI trains
             if (MovementState == AI_MOVEMENT_STATE.STOPPED || MovementState == AI_MOVEMENT_STATE.STATION_STOP || MovementState == AI_MOVEMENT_STATE.AI_STATIC ||
-                MovementState == AI_MOVEMENT_STATE.INIT_ACTION || MovementState == AI_MOVEMENT_STATE.HANDLE_ACTION || MovementState == AI_MOVEMENT_STATE.END_ACTION)
+                MovementState == AI_MOVEMENT_STATE.INIT_ACTION || MovementState == AI_MOVEMENT_STATE.HANDLE_ACTION)
             {
                 SpeedMpS = 0;
                 foreach (TrainCar car in Cars)
@@ -1056,7 +1056,7 @@ namespace Orts.Simulation.AIs
             {
                 if (MovementState != AI_MOVEMENT_STATE.STATION_STOP && MovementState != AI_MOVEMENT_STATE.STOPPED)
                 {
-                    if (MovementState != AI_MOVEMENT_STATE.INIT_ACTION && MovementState != AI_MOVEMENT_STATE.HANDLE_ACTION && MovementState != AI_MOVEMENT_STATE.END_ACTION)
+                    if (MovementState != AI_MOVEMENT_STATE.INIT_ACTION && MovementState != AI_MOVEMENT_STATE.HANDLE_ACTION)
                     {
                         MovementState = AI_MOVEMENT_STATE.FOLLOWING;  // start following
                     }
@@ -1064,7 +1064,7 @@ namespace Orts.Simulation.AIs
             }
             else if (EndAuthorityType[0] == END_AUTHORITY.RESERVED_SWITCH || EndAuthorityType[0] == END_AUTHORITY.LOOP)
             {
-                if (MovementState != AI_MOVEMENT_STATE.INIT_ACTION && MovementState != AI_MOVEMENT_STATE.HANDLE_ACTION && MovementState != AI_MOVEMENT_STATE.END_ACTION &&
+                if (MovementState != AI_MOVEMENT_STATE.INIT_ACTION && MovementState != AI_MOVEMENT_STATE.HANDLE_ACTION &&
                      (nextActionInfo == null || nextActionInfo.NextAction != AIActionItem.AI_ACTION_TYPE.END_OF_AUTHORITY))
                 {
                     ResetActions(true);
@@ -1682,8 +1682,9 @@ namespace Orts.Simulation.AIs
 
                 else if (nextAspect == MstsSignalAspect.STOP)
                 {
-                    // if stop but train is well away from signal allow to close
-                    if (distanceToSignal > 5 * signalApproachDistanceM)
+                    // if stop but train is well away from signal allow to close; also if at end of path.
+                    if (distanceToSignal > 5 * signalApproachDistanceM ||
+                        (TCRoute.TCRouteSubpaths[TCRoute.activeSubpath].Count - 1 == PresentPosition[0].RouteListIndex))
                     {
                         MovementState = AI_MOVEMENT_STATE.ACCELERATING;
                         StartMoving(AI_START_MOVEMENT.PATH_ACTION);
@@ -1952,7 +1953,9 @@ namespace Orts.Simulation.AIs
             else if (thisStation.ExitSignal >= 0 && NextSignalObject[0] != null && NextSignalObject[0].thisRef == thisStation.ExitSignal)
             {
                 MstsSignalAspect nextAspect = GetNextSignalAspect(0);
-                if (nextAspect == MstsSignalAspect.STOP && !NextSignalObject[0].HasLockForTrain(Number, TCRoute.activeSubpath))
+                if (nextAspect == MstsSignalAspect.STOP && !NextSignalObject[0].HasLockForTrain(Number, TCRoute.activeSubpath) && 
+                    !(TCRoute.TCRouteSubpaths[TCRoute.activeSubpath].Count - 1 == PresentPosition[0].RouteListIndex &&
+                        TCRoute.TCRouteSubpaths.Count -1 == TCRoute.activeSubpath))
                 {
                     return;  // do not depart if exit signal at danger
                 }
@@ -2925,7 +2928,7 @@ namespace Orts.Simulation.AIs
 
                         // <CScomment> Make check when this train in same section of OtherTrain or other train at less than 50m;
                         // if other train is static or other train is in last section of this train, pass to passive coupling
-                        if (OtherTrain.SpeedMpS == 0.0f && distanceToTrain <= 2 * keepDistanceMovingTrainM)
+                        if (Math.Abs(OtherTrain.SpeedMpS) < 0.001f && distanceToTrain <= 2 * keepDistanceMovingTrainM)
                         {
                             var rearOrFront = ValidRoute[0][ValidRoute[0].Count - 1].Direction == 1 ? 0 : 1;
 
@@ -2940,7 +2943,7 @@ namespace Orts.Simulation.AIs
                             }
 
                         }
-                        if (OtherTrain.SpeedMpS != 0.0f)
+                        if (Math.Abs(OtherTrain.SpeedMpS) >= 0.001f)
                         {
                             keepDistanceTrainM = keepDistanceMovingTrainM;
                         }
@@ -2974,7 +2977,7 @@ namespace Orts.Simulation.AIs
                         }
 
                         // check distance and speed
-                        if (OtherTrain.SpeedMpS == 0.0f)
+                        if (Math.Abs(OtherTrain.SpeedMpS) < 0.001f)
                         {
                             float brakingDistance = SpeedMpS * SpeedMpS * 0.5f * (0.5f * MaxDecelMpSS);
                             float reqspeed = (float)Math.Sqrt(distanceToTrain * MaxDecelMpSS);
@@ -3200,9 +3203,9 @@ namespace Orts.Simulation.AIs
 
         public virtual void UpdateRunningState(float elapsedClockSeconds)
         {
-            float topBand = AllowedMaxSpeedMpS - ((1.5f - Efficiency) * hysterisMpS);
-            float highBand = Math.Max(0.5f, AllowedMaxSpeedMpS - ((3.0f - 2.0f * Efficiency) * hysterisMpS));
-            float lowBand = Math.Max(0.4f, AllowedMaxSpeedMpS - ((9.0f - 3.0f * Efficiency) * hysterisMpS));
+            float topBand = AllowedMaxSpeedMpS > creepSpeedMpS ? AllowedMaxSpeedMpS - ((1.5f - Efficiency) * hysterisMpS) : AllowedMaxSpeedMpS;
+            float highBand = AllowedMaxSpeedMpS > creepSpeedMpS ? Math.Max(0.5f, AllowedMaxSpeedMpS - ((3.0f - 2.0f * Efficiency) * hysterisMpS)) : AllowedMaxSpeedMpS;
+            float lowBand = AllowedMaxSpeedMpS > creepSpeedMpS ? Math.Max(0.4f, AllowedMaxSpeedMpS - ((9.0f - 3.0f * Efficiency) * hysterisMpS)) : AllowedMaxSpeedMpS;
             int throttleTop = 90;
 
             // check speed
@@ -3645,8 +3648,12 @@ namespace Orts.Simulation.AIs
 
         public void RecalculateAllowedMaxSpeed()
         {
-            var allowedMaxSpeedPathMpS = Math.Min(allowedMaxSpeedSignalMpS, allowedMaxSpeedLimitMpS);
+            var allowedMaxSpeedPathMpS = Math.Min(allowedAbsoluteMaxSpeedSignalMpS, allowedAbsoluteMaxSpeedLimitMpS);
+            allowedMaxSpeedPathMpS = Math.Min(allowedMaxSpeedPathMpS, allowedAbsoluteMaxTempSpeedLimitMpS);
             AllowedMaxSpeedMpS = Math.Min(allowedMaxSpeedPathMpS, TrainMaxSpeedMpS);
+            allowedMaxSpeedSignalMpS = (Math.Min(allowedAbsoluteMaxSpeedSignalMpS, TrainMaxSpeedMpS));
+            allowedMaxSpeedLimitMpS = (Math.Min(allowedAbsoluteMaxSpeedLimitMpS, TrainMaxSpeedMpS));
+            allowedMaxTempSpeedLimitMpS = (Math.Min(allowedAbsoluteMaxTempSpeedLimitMpS, TrainMaxSpeedMpS));
         }
 
         //================================================================================================//
@@ -3693,6 +3700,7 @@ namespace Orts.Simulation.AIs
                 if (thisSection.EndSignals[direction] != null)
                 {
                     endSectionFound = true;
+                    if (routeIndex < thisRoute.Count - 1)
                     endSignalIndex = thisSection.EndSignals[direction].thisRef;
                 }
 
@@ -3715,6 +3723,7 @@ namespace Orts.Simulation.AIs
                     {
                         endSectionFound = true;
                         lastIndex = nextIndex;
+                        if (lastIndex < thisRoute.Count - 1)
                         endSignalIndex = nextSection.EndSignals[direction].thisRef;
                     }
                     else if (nextSection.CircuitType != TrackCircuitSection.TrackCircuitType.Normal)
@@ -3797,10 +3806,16 @@ namespace Orts.Simulation.AIs
                         AuxActionsContain.Add(action);
                         if (insertSigDelegate && (waitingPoint[2] != 60002 || !Simulator.Settings.ExtendedAIShunting) && signalIndex[iWait] > -1)
                         {
-                            AIActSigDelegateRef delegateAction = new AIActSigDelegateRef(this, waitingPoint[5], 0f, waitingPoint[0], lastIndex, thisRoute[lastIndex].TCSectionIndex, direction);
+                            AIActSigDelegateRef delegateAction = new AIActSigDelegateRef(this, waitingPoint[5], 0f, waitingPoint[0], lastIndex, thisRoute[lastIndex].TCSectionIndex, direction, action);
                             signalRef.SignalObjects[signalIndex[iWait]].LockForTrain(this.Number, waitingPoint[0]);
                             delegateAction.SetEndSignalIndex(signalIndex[iWait]);
-                            delegateAction.Delay = 1;   //   waitingPoint[2] <= 5 ? 5 : waitingPoint[2];
+
+                            if (waitingPoint[2] >= 30000 && waitingPoint[2] < 40000)
+                            {
+                                delegateAction.Delay = waitingPoint[2];
+                                delegateAction.IsAbsolute = true;
+                            }
+                            else delegateAction.Delay = 0;
                             delegateAction.SetSignalObject(signalRef.SignalObjects[signalIndex[iWait]]);
 
                             AuxActionsContain.Add(delegateAction);
@@ -3810,12 +3825,13 @@ namespace Orts.Simulation.AIs
                 else if (insertSigDelegate && signalIndex[iWait] > -1)
                 {
                     AIActionWPRef action = new AIActionWPRef(this, waitingPoint[5], 0f, waitingPoint[0], lastIndex, thisRoute[lastIndex].TCSectionIndex, direction);
-                    action.SetDelay(0);
+                    action.SetDelay( (waitingPoint[2] >= 30000 && waitingPoint[2] < 40000)? waitingPoint[2] : 0);
                     AuxActionsContain.Add(action);
-                    AIActSigDelegateRef delegateAction = new AIActSigDelegateRef(this, waitingPoint[5], 0f, waitingPoint[0], lastIndex, thisRoute[lastIndex].TCSectionIndex, direction);
+                    AIActSigDelegateRef delegateAction = new AIActSigDelegateRef(this, waitingPoint[5], 0f, waitingPoint[0], lastIndex, thisRoute[lastIndex].TCSectionIndex, direction, action);
                     signalRef.SignalObjects[signalIndex[iWait]].LockForTrain(this.Number, waitingPoint[0]);
                     delegateAction.SetEndSignalIndex(signalIndex[iWait]);
-                    delegateAction.Delay = waitingPoint[2] <= 5 ? 5 : waitingPoint[2];
+                    delegateAction.Delay = waitingPoint[2];
+                    if (waitingPoint[2] >= 30000 && waitingPoint[2] < 40000) delegateAction.IsAbsolute = true;
                     delegateAction.SetSignalObject(signalRef.SignalObjects[signalIndex[iWait]]);
 
                     AuxActionsContain.Add(delegateAction);
@@ -3848,7 +3864,7 @@ namespace Orts.Simulation.AIs
                 max = maxPressurePSIVacuum;
                 fullServ = maxPressurePSIVacuum + fullServReductionPSI;
             }
-            BrakeLine1PressurePSIorInHg = BrakeLine2PressurePSI = max;
+            EqualReservoirPressurePSIorInHg = BrakeLine2PressurePSI = max;
             ConnectBrakeHoses();
             foreach (TrainCar car in Cars)
             {
@@ -3975,7 +3991,41 @@ namespace Orts.Simulation.AIs
                 File.AppendAllText(@"C:\temp\checktrain.txt", "Train " +
                      Number.ToString() + " removed\n");
             }
-            if (TrainType != TRAINTYPE.AI_PLAYERHOSTING)
+            var removeIt = true;
+            var distanceThreshold = PreUpdate ? 5.0f : 2.0f;
+            if (Simulator.TimetableMode) removeIt = true;
+            else if (TrainType == TRAINTYPE.AI_PLAYERHOSTING || Simulator.OriginalPlayerTrain == this) removeIt = false;
+            else if (TCRoute.TCRouteSubpaths.Count == 1 || TCRoute.activeSubpath != TCRoute.TCRouteSubpaths.Count - 1) removeIt = true;
+            else if (NextSignalObject[0] != null && NextSignalObject[0].isSignal && distanceToSignal < 25 && distanceToSignal >= 0 && PresentPosition[1].DistanceTravelledM < distanceThreshold)
+            {
+                removeIt = false;
+                MovementState = AI_MOVEMENT_STATE.FROZEN;
+            }
+            else if (PresentPosition[1].DistanceTravelledM < distanceThreshold && FrontTDBTraveller.TrackNodeOffset + 25 > FrontTDBTraveller.TrackNodeLength)
+            {
+                var tempTraveller = new Traveller(FrontTDBTraveller);
+                if (tempTraveller.NextTrackNode() && tempTraveller.IsEnd)
+                {
+                    removeIt = false;
+                    MovementState = AI_MOVEMENT_STATE.FROZEN;
+                }
+            }
+            else 
+            {
+                TrackCircuitSection thisSection = signalRef.TrackCircuitList[PresentPosition[1].TCSectionIndex];
+                if (TCRoute.ReversalInfo[TCRoute.activeSubpath - 1].Valid && PresentPosition[1].DistanceTravelledM < distanceThreshold && PresentPosition[1].TCOffset < 25)
+                {
+                    var tempTraveller = new Traveller(RearTDBTraveller);
+                    tempTraveller.ReverseDirection();
+                    if (tempTraveller.NextTrackNode() && tempTraveller.IsEnd)
+                    {
+                        removeIt = false;
+                        MovementState = AI_MOVEMENT_STATE.FROZEN;
+                    }
+                }
+            }
+            
+            if (removeIt)
             {
                 if (IncorporatedTrainNo >= 0 && Simulator.TrainDictionary.Count > IncorporatedTrainNo &&
                    Simulator.TrainDictionary[IncorporatedTrainNo] != null) Simulator.TrainDictionary[IncorporatedTrainNo].RemoveTrain();
@@ -4086,6 +4136,12 @@ namespace Orts.Simulation.AIs
                 if (thisTrainFront == attachTrainFront)
                 {
                     ReverseFormation(false);
+                }
+
+                if (attachTrain.TrainType == TRAINTYPE.AI_PLAYERDRIVEN)
+                {
+                    foreach (var car in Cars)
+                        if (car is MSTSLocomotive) (car as MSTSLocomotive).AntiSlip = (attachTrain.LeadLocomotive as MSTSLocomotive).AntiSlip; // <CSComment> TODO Temporary patch until AntiSlip is re-implemented
                 }
 
                 var attachCar = Cars[0];
@@ -4237,12 +4293,15 @@ namespace Orts.Simulation.AIs
             if (thisTrainFront)  // coupled to front, so rear position is still valid
             {
                 CalculatePositionOfCars();
-                DistanceTravelledM += Length;
+                DistanceTravelledM += attachTrain.Length;
+                PresentPosition[0].DistanceTravelledM = DistanceTravelledM;
+                requiredActions.ModifyRequiredDistance(attachTrain.Length);
             }
             else // coupled to rear so front position is still valid
             {
                 RepositionRearTraveller();    // fix the rear traveller
                 CalculatePositionOfCars();
+                PresentPosition[1].DistanceTravelledM = DistanceTravelledM - Length;
             }
 
             // update positions train
@@ -4263,8 +4322,6 @@ namespace Orts.Simulation.AIs
             activityClearingDistanceM = Cars.Count < standardTrainMinCarNo ? shortClearingDistanceM : standardClearingDistanceM;
             attachCar.SignalEvent(Event.Couple);
 
-            physicsUpdate(0);   // stop the wheels from moving etc
-
             // remove attached train
             if (attachTrain.TrainType == TRAINTYPE.AI)
                 ((AITrain)attachTrain).RemoveTrain();
@@ -4275,6 +4332,11 @@ namespace Orts.Simulation.AIs
                 Simulator.TrainDictionary.Remove(attachTrain.Number);
                 Simulator.NameDictionary.Remove(attachTrain.Name.ToLower());
             }
+            UpdateOccupancies();
+            AddTrackSections();
+            ResetActions(true);
+            physicsUpdate(0);
+
         }
 
         //================================================================================================//
@@ -4710,6 +4772,7 @@ namespace Orts.Simulation.AIs
             // reset AuxAction if any
             AuxActionsContain.ResetAuxAction(this);
             TrainType = TRAINTYPE.AI_INCORPORATED;
+            LeadLocomotiveIndex = -1;
             Cars.Clear();
             requiredActions.RemovePendingAIActionItems(true);
             UncondAttach = false;
@@ -4974,11 +5037,13 @@ namespace Orts.Simulation.AIs
                         ((AuxActionItem)thisAction).ProcessAction(this, presentTime);
                     }
                 }
-                else if (thisAction is AuxActionItem && !PreUpdate)
+                else if (thisAction is AuxActionItem)
                 {
-                    int presentTime = Convert.ToInt32(Math.Floor(Simulator.ClockTime));
+                    var presentTime = 0;
+                    if (!PreUpdate) presentTime = Convert.ToInt32(Math.Floor(Simulator.ClockTime));
+                    else presentTime = Convert.ToInt32(Math.Floor(AI.clockTime));
                     var actionState = ((AuxActionItem)thisAction).ProcessAction(this, presentTime);
-                    if (actionState != AI_MOVEMENT_STATE.INIT_ACTION && actionState != AI_MOVEMENT_STATE.HANDLE_ACTION && actionState != AI_MOVEMENT_STATE.END_ACTION)
+                    if (actionState != AI_MOVEMENT_STATE.INIT_ACTION && actionState != AI_MOVEMENT_STATE.HANDLE_ACTION)
                         MovementState = actionState;
                 }
             }
@@ -5349,7 +5414,8 @@ namespace Orts.Simulation.AIs
             if (actionValid && nextActionInfo != null && nextActionInfo is AuxActionWPItem &&
                 thisItem.NextAction == AIActionItem.AI_ACTION_TYPE.SIGNAL_ASPECT_STOP)
             {
-                if (thisItem.ActiveItem.ObjectDetails.HasLockForTrain(Number, TCRoute.activeSubpath) && nextActionInfo.ActivateDistanceM - thisItem.ActivateDistanceM < 40)
+                if ((thisItem.ActiveItem.ObjectDetails.HasLockForTrain(Number, TCRoute.activeSubpath) && nextActionInfo.ActivateDistanceM - thisItem.ActivateDistanceM < 40) ||
+                    nextActionInfo.ActivateDistanceM - thisItem.ActivateDistanceM < activityClearingDistanceM)
                 {
                     actionValid = false;
                     nextActionInfo.ActivateDistanceM = Math.Min(nextActionInfo.ActivateDistanceM, thisItem.ActivateDistanceM);
@@ -5429,7 +5495,8 @@ namespace Orts.Simulation.AIs
                                nextActionInfo.NextAction == AIActionItem.AI_ACTION_TYPE.SIGNAL_ASPECT_STOP)
                     {
                         // check if it is the the AI action is related to the signal linked to the WP
-                        if (nextActionInfo.ActiveItem.ObjectDetails.HasLockForTrain(Number, TCRoute.activeSubpath) && thisItem.ActivateDistanceM - nextActionInfo.ActivateDistanceM < 40)
+                        if ((nextActionInfo.ActiveItem.ObjectDetails.HasLockForTrain(Number, TCRoute.activeSubpath) && thisItem.ActivateDistanceM - nextActionInfo.ActivateDistanceM < 40) ||
+                            thisItem.ActivateDistanceM - nextActionInfo.ActivateDistanceM < activityClearingDistanceM)
                         {
                             earlier = true;
                             thisItem.ActivateDistanceM = Math.Min(nextActionInfo.ActivateDistanceM, thisItem.ActivateDistanceM);
@@ -5714,6 +5781,10 @@ namespace Orts.Simulation.AIs
                 case AI_MOVEMENT_STATE.SUSPENDED:
                     movString = "SUS ";
                     break;
+                case AI_MOVEMENT_STATE.FROZEN:
+                    movString = "FRO ";
+                    break;
+
             }
 
             string abString = AITrainThrottlePercent.ToString("000");
@@ -5722,14 +5793,14 @@ namespace Orts.Simulation.AIs
             if (MovementState == AI_MOVEMENT_STATE.STATION_STOP)
             {
                 DateTime baseDT = new DateTime();
-                if (StationStops[0].DepartTime > 0)
-                {
-                    DateTime depTime = baseDT.AddSeconds(StationStops[0].DepartTime);
-                    abString = depTime.ToString("HH:mm:ss");
-                }
-                else if (StationStops[0].ActualDepart > 0)
+                if (StationStops[0].ActualDepart > 0)
                 {
                     DateTime depTime = baseDT.AddSeconds(StationStops[0].ActualDepart);
+                    abString = depTime.ToString("HH:mm:ss");
+                }
+                else if (StationStops[0].DepartTime > 0)
+                {
+                    DateTime depTime = baseDT.AddSeconds(StationStops[0].DepartTime);
                     abString = depTime.ToString("HH:mm:ss");
                 }
                 else
@@ -6398,11 +6469,6 @@ namespace Orts.Simulation.AIs
         }
 
         public virtual AITrain.AI_MOVEMENT_STATE InitAction(Train thisTrain, int presentTime, float elapsedClockSeconds, AITrain.AI_MOVEMENT_STATE movementState)
-        {
-            return movementState;
-        }
-
-        public virtual AITrain.AI_MOVEMENT_STATE EndAction(Train thisTrain, int presentTime, float elapsedClockSeconds, AITrain.AI_MOVEMENT_STATE movementState)
         {
             return movementState;
         }
